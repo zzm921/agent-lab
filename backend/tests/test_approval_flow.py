@@ -56,6 +56,20 @@ async def test_modify_flow(settings, registry, sessions):
     assert tool_start["args"] == {"expression": "2+3"}
 
 
+async def test_modify_flow_by_name_fallback(settings, registry, sessions):
+    """工具调用未带 id 时前端按名称回填参数，后端应通过名称兜底匹配并生效。"""
+    script = [ai_with_tool("需要计算", args={"expression": "1+1"}), AIMessage(content="最终结果 2")]
+    harness = await _approval_harness(settings, registry, sessions, script)
+    events = await collect_stream(harness, approval_policy="always", enabled=["calculator"])
+    request = next(e for e in events if e["type"] == "approval_request")
+
+    resumed = []
+    async for ev in harness.resume(request["approval_id"], "modify", {"calculator": {"expression": "9+9"}}):
+        resumed.append(ev)
+    tool_start = next(e for e in resumed if e["type"] == "tool_start")
+    assert tool_start["args"] == {"expression": "9+9"}
+
+
 async def test_tool_count_accumulates_across_approvals(settings, registry, sessions):
     """同一轮内多次审批时，done 的工具调用数应累计，而非只统计最后一次 resume 之后。"""
     script = [
@@ -100,6 +114,42 @@ async def test_plan_execute_approve_flow(settings, registry, sessions):
     assert "tool_start" in types
     assert "tool_end" in types
     assert "done" in types
+
+
+async def test_plan_execute_modify_flow(settings, registry, sessions):
+    """plan_execute（StateGraph 版，旧 make_tools_node）：修改后的参数必须传入工具。"""
+    script = [
+        AIMessage(content="步骤一"),
+        ai_with_tool("需要计算", args={"expression": "1+1"}),
+        AIMessage(content="最终结果 2"),
+    ]
+    harness = await _approval_harness(settings, registry, sessions, script)
+    events = await collect_stream(harness, mode="plan_execute", approval_policy="always", enabled=["calculator"])
+    request = next(e for e in events if e["type"] == "approval_request")
+
+    resumed = []
+    async for ev in harness.resume(request["approval_id"], "modify", {"call_1": {"expression": "2+3"}}):
+        resumed.append(ev)
+    tool_start = next(e for e in resumed if e["type"] == "tool_start")
+    assert tool_start["args"] == {"expression": "2+3"}
+
+
+async def test_plan_execute_modify_flow_by_name_fallback(settings, registry, sessions):
+    """plan_execute 的 make_tools_node 按名称兜底匹配修改参数。"""
+    script = [
+        AIMessage(content="步骤一"),
+        ai_with_tool("需要计算", args={"expression": "1+1"}),
+        AIMessage(content="最终结果 2"),
+    ]
+    harness = await _approval_harness(settings, registry, sessions, script)
+    events = await collect_stream(harness, mode="plan_execute", approval_policy="always", enabled=["calculator"])
+    request = next(e for e in events if e["type"] == "approval_request")
+
+    resumed = []
+    async for ev in harness.resume(request["approval_id"], "modify", {"calculator": {"expression": "4+4"}}):
+        resumed.append(ev)
+    tool_start = next(e for e in resumed if e["type"] == "tool_start")
+    assert tool_start["args"] == {"expression": "4+4"}
 
 
 async def test_resume_unknown_approval(settings, registry, sessions):

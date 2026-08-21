@@ -126,6 +126,9 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool):
         modified = decision.get("modified_args") or {}
         if cid in modified:
             request = request.override(tool_call={**call, "args": modified[cid]})
+        elif name in modified:
+            # 兜底：部分模型未回传工具调用 id 时前端按名称回填，按名称匹配保证修改生效
+            request = request.override(tool_call={**call, "args": modified[name]})
 
     effective = request.tool_call
     emit(event("tool_start", tool=effective["name"], args=effective.get("args", {})))

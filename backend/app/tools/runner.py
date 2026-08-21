@@ -39,6 +39,9 @@ def make_tools_node(tools, emit):
             for c in calls:
                 if c.get("id") in modified:
                     effective.append({**c, "args": modified[c.get("id")]})
+                elif c["name"] in modified:
+                    # 兜底：部分模型未回传工具调用 id 时前端按名称回填，按名称匹配保证修改生效
+                    effective.append({**c, "args": modified[c["name"]]})
                 else:
                     effective.append(c)
         else:
