@@ -1,0 +1,27 @@
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 环境配置（含密钥，勿提交）
+.env
+
+# 构建产物
+dist/
+build/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 编辑器
+.idea/
+.vscode/
+*.log
+
+
+.trae/

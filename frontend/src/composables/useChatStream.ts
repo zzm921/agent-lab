@@ -1,0 +1,401 @@
+/** 对话流状态机：连接 / 接收 / rAF 节流累加 / 流水线步骤 / 错误 / 审批 / 完成。 */
+import { reactive } from 'vue'
+import { streamEvents } from '../services/sse'
+import type {
+  AgentEvent,
+  ApprovalPolicy,
+  ApprovalRequest,
+  HitItem,
+  ModeId,
+  PromptStrategy,
+} from '../types/agent'
+
+export type StreamStatus = 'idle' | 'streaming' | 'waiting_approval' | 'done' | 'error'
+
+/** 工具调用条目（ToolCallBadge 使用） */
+export interface ToolCallEntry {
+  id: number
+  tool: string
+  args: Record<string, unknown>
+  status: 'running' | 'success' | 'failed' | 'rejected'
+  result?: string
+}
+
+/** 流水线步骤类型：按发生顺序记录，用户输入与思考/工具/输出交替呈现 */
+export type StepKind =
+  | 'user' // 用户输入（右侧气泡）
+  | 'thinking' // 思考过程（reason，灰色斜体，流式增量）
+  | 'message' // 最终输出（output，流式增量）
+  | 'revise' // 反思修订稿（流式增量）
+  | 'tool' // 工具调用（running → success/failed/rejected）
+  | 'plan' // 执行计划
+  | 'retrieve' // RAG 检索
+  | 'memory_read' // 记忆召回
+  | 'memory_write' // 记忆写入
+  | 'reflect' // 反思意见
+  | 'agent_event' // 多智能体 worker 事件
+
+export interface StepEntry {
+  id: number
+  kind: StepKind
+  /** thinking / message / revise 的流式文本 */
+  text?: string
+  streaming?: boolean
+  /** tool */
+  tool?: string
+  args?: Record<string, unknown>
+  status?: 'running' | 'success' | 'failed' | 'rejected'
+  result?: string
+  /** plan */
+  steps?: string[]
+  currentStep?: number
+  planStatus?: string
+  /** retrieve / memory_read */
+  query?: string
+  hits?: HitItem[]
+  /** memory_write */
+  content?: string
+  /** reflect */
+  stage?: string
+  critique?: string
+  /** agent_event */
+  worker?: string
+  agentStatus?: string
+  task?: string
+  agentResult?: string
+}
+
+export interface ErrorInfo {
+  message: string
+  detail?: string
+}
+
+export interface SendParams {
+  message: string
+  mode: ModeId
+  enabled: string[]
+  strategy: PromptStrategy
+  policy: ApprovalPolicy
+  /** 覆盖会话 id（对比视图每个 runner 独立会话） */
+  sessionId?: string
+}
+
+export interface ChatStream {
+  status: StreamStatus
+  sessionId: string
+  mode: ModeId
+  /** 流水线时间线：按事件发生顺序排列的步骤 */
+  steps: StepEntry[]
+  done: { summary: string; stats: Record<string, unknown> } | null
+  error: ErrorInfo | null
+  approval: ApprovalRequest | null
+  elapsed: number
+  enabled: string[]
+  strategy: PromptStrategy
+  policy: ApprovalPolicy
+  send: (params: SendParams) => Promise<void>
+  decide: (decision: 'approve' | 'reject' | 'modify', modifiedArgs?: Record<string, unknown>) => Promise<void>
+  stop: () => void
+  retry: () => void
+}
+
+export function genId(): string {
+  const c = globalThis.crypto as Crypto | undefined
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)
+}
+
+/** rAF 节流的文本累加器：缓冲原始串，下一帧一次性写入当前步骤 */
+function makeStepAccumulator(append: (text: string) => void) {
+  let raf = 0
+  let raw = ''
+  return {
+    add(chunk: string) {
+      raw += chunk
+      if (!raf) {
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          const s = raw
+          raw = ''
+          append(s)
+        })
+      }
+    },
+    flush() {
+      if (raf) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      }
+      if (raw) {
+        const s = raw
+        raw = ''
+        append(s)
+      }
+    },
+  }
+}
+
+export function useChatStream(): ChatStream {
+  let stream: ChatStream
+  let controller: AbortController | null = null
+  let lastParams: SendParams | null = null
+  let seq = 0
+  let timer: ReturnType<typeof setInterval> | null = null
+
+  /** 关闭当前正在流式输出的文本步骤（新步骤出现或流程结束时调用） */
+  function closeStreamingStep() {
+    const prev = stream.steps[stream.steps.length - 1]
+    if (prev && prev.streaming) prev.streaming = false
+  }
+
+  /** 追加流式文本：与当前正在流的同类步骤合并，否则新开一步（流水线） */
+  function appendText(kind: 'thinking' | 'message' | 'revise', text: string) {
+    const last = stream.steps[stream.steps.length - 1]
+    if (last && last.kind === kind && last.streaming) {
+      last.text = (last.text ?? '') + text
+    } else {
+      closeStreamingStep()
+      stream.steps.push({ id: ++seq, kind, text, streaming: true })
+    }
+  }
+
+  /** 新增非流式步骤（工具/计划/检索/反思/代理等），并关闭上一个流式步骤 */
+  function pushStep(step: Omit<StepEntry, 'id' | 'streaming'>) {
+    closeStreamingStep()
+    stream.steps.push({ ...step, id: ++seq, streaming: false })
+  }
+
+  const accThinking = makeStepAccumulator((text) => appendText('thinking', text))
+  const accMessage = makeStepAccumulator((text) => appendText('message', text))
+  const accRevise = makeStepAccumulator((text) => appendText('revise', text))
+
+  function flushAll() {
+    accThinking.flush()
+    accMessage.flush()
+    accRevise.flush()
+  }
+
+  function finishStreaming() {
+    flushAll()
+    closeStreamingStep()
+  }
+
+  function startTimer() {
+    stream.elapsed = 0
+    stopTimer()
+    timer = setInterval(() => {
+      if (stream.status === 'streaming' || stream.status === 'waiting_approval') {
+        stream.elapsed += 0.5
+      }
+    }, 500)
+  }
+
+  function stopTimer() {
+    if (timer) {
+      clearInterval(timer)
+      timer = null
+    }
+  }
+
+  function handleEvent(ev: AgentEvent) {
+    switch (ev.type) {
+      case 'meta':
+        stream.sessionId = ev.session_id
+        stream.mode = ev.mode as ModeId
+        stream.enabled = ev.capabilities
+        break
+      case 'thinking':
+        accThinking.add(ev.delta)
+        break
+      case 'message':
+        accMessage.add(ev.delta)
+        break
+      case 'revise':
+        accRevise.add(ev.delta)
+        break
+      case 'plan': {
+        const last = stream.steps[stream.steps.length - 1]
+        if (last && last.kind === 'plan') {
+          // 同一计划就地更新进度，保持在流水线中的原始位置
+          last.steps = ev.steps
+          last.currentStep = ev.current_step
+          last.planStatus = ev.status
+        } else {
+          pushStep({
+            kind: 'plan',
+            steps: ev.steps,
+            currentStep: ev.current_step,
+            planStatus: ev.status,
+          })
+        }
+        break
+      }
+      case 'tool_start':
+        pushStep({ kind: 'tool', tool: ev.tool, args: ev.args, status: 'running' })
+        break
+      case 'tool_end': {
+        for (let i = stream.steps.length - 1; i >= 0; i--) {
+          const s = stream.steps[i]
+          if (s.kind === 'tool' && s.tool === ev.tool && s.status === 'running') {
+            s.status = ev.success ? 'success' : 'failed'
+            s.result = ev.result
+            break
+          }
+        }
+        break
+      }
+      case 'retrieve':
+        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits })
+        break
+      case 'memory_write':
+        pushStep({ kind: 'memory_write', content: ev.content })
+        break
+      case 'memory_read':
+        pushStep({ kind: 'memory_read', query: ev.query, hits: ev.hits })
+        break
+      case 'reflect':
+        pushStep({ kind: 'reflect', stage: ev.stage, critique: ev.critique })
+        break
+      case 'agent_event':
+        pushStep({
+          kind: 'agent_event',
+          worker: ev.worker,
+          agentStatus: ev.status,
+          task: ev.task,
+          agentResult: ev.result,
+        })
+        break
+      case 'approval_request':
+        stream.approval = { approval_id: ev.approval_id, tool_calls: ev.tool_calls }
+        break
+      case 'done':
+        stream.done = { summary: ev.summary, stats: ev.stats }
+        break
+      case 'error':
+        stream.error = { message: ev.message, detail: ev.detail }
+        break
+    }
+  }
+
+  async function consume(url: string, body: unknown, signal: AbortSignal) {
+    try {
+      for await (const ev of streamEvents(url, body, signal)) {
+        if (signal.aborted) break
+        handleEvent(ev)
+        if (stream.approval) {
+          stream.status = 'waiting_approval'
+          finishStreaming()
+          return
+        }
+      }
+      finishStreaming()
+      stopTimer()
+      if (signal.aborted) return
+      if (stream.error) stream.status = 'error'
+      else if (stream.done) stream.status = 'done'
+      else stream.status = 'idle'
+    } catch (err) {
+      finishStreaming()
+      stopTimer()
+      if (signal.aborted) return
+      stream.status = 'error'
+      stream.error = {
+        message: '连接失败或后端返回错误',
+        detail: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }
+
+  /** 启动/重试一轮：清空瞬态状态（保留对话历史），按需追加用户消息步骤 */
+  async function run(params: SendParams, withUserStep: boolean) {
+    stop()
+    lastParams = params
+    stream.done = null
+    stream.error = null
+    stream.approval = null
+    stream.elapsed = 0
+    if (withUserStep) pushStep({ kind: 'user', text: params.message })
+    if (params.sessionId) stream.sessionId = params.sessionId
+    else if (!stream.sessionId) stream.sessionId = genId()
+    stream.mode = params.mode
+    stream.strategy = params.strategy
+    stream.policy = params.policy
+    stream.status = 'streaming'
+    startTimer()
+    controller = new AbortController()
+    await consume(
+      '/api/stream',
+      {
+        session_id: stream.sessionId,
+        message: params.message,
+        mode: params.mode,
+        enabled_capabilities: params.enabled,
+        prompt_strategy: params.strategy,
+        approval_policy: params.policy,
+      },
+      controller.signal,
+    )
+  }
+
+  const send = (params: SendParams) => run(params, true)
+
+  const decide = async (
+    decision: 'approve' | 'reject' | 'modify',
+    modifiedArgs?: Record<string, unknown>,
+  ) => {
+    const a = stream.approval
+    if (!a) return
+    stream.approval = null
+    stream.status = 'streaming'
+    controller = new AbortController()
+    await consume(
+      '/api/approve',
+      { approval_id: a.approval_id, decision, modified_args: modifiedArgs ?? null },
+      controller.signal,
+    )
+  }
+
+  const stop = () => {
+    const sid = stream.sessionId
+    if (controller) {
+      controller.abort()
+      controller = null
+    }
+    // 通知后端立即取消该会话的后台执行，及时停止以节省 token
+    if (sid) {
+      void fetch('/api/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid }),
+      }).catch(() => {})
+    }
+    finishStreaming()
+    stopTimer()
+    if (stream.status === 'streaming' || stream.status === 'waiting_approval') {
+      stream.status = 'idle'
+    }
+  }
+
+  const retry = () => {
+    if (lastParams) void run({ ...lastParams }, false)
+  }
+
+  stream = reactive<ChatStream>({
+    status: 'idle',
+    sessionId: '',
+    mode: 'react',
+    steps: [],
+    done: null,
+    error: null,
+    approval: null,
+    elapsed: 0,
+    enabled: [],
+    strategy: 'standard',
+    policy: 'always',
+    send,
+    decide,
+    stop,
+    retry,
+  })
+  return stream
+}

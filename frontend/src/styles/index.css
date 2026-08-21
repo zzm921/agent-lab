@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-950 text-slate-200 antialiased;
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
+    system-ui, -apple-system, sans-serif;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded bg-slate-700;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
