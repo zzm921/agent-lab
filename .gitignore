@@ -13,6 +13,9 @@ venv/
 dist/
 build/
 
+# 沙箱运行数据（Agent 在沙箱中写出的文件，勿提交）
+backend/data/
+
 # 测试与覆盖率
 .pytest_cache/
 .coverage

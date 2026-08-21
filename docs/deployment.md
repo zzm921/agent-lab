@@ -103,12 +103,57 @@ MCP_SERVERS={"filesystem":{"command":"npx","args":["-y","@modelcontextprotocol/s
 - 连接失败或未配置 → 显示「不适配」并给出原因，不注入 Agent。
 - 修改 `MCP_SERVERS` 后需重启后端。
 
-## 6. 常见问题
+## 6. 命令执行沙箱（OpenSandbox，Docker 部署）
+
+`run_command` 工具默认在 OpenSandbox 中执行（`SANDBOX_BACKEND=opensandbox`），
+也可通过 `local` 切回本机轻量沙箱兜底。
+无论哪种后端，该工具调用前都**强制人工审批（HITL）**。
+
+### 6.1 部署 OpenSandbox Server
+
+```bash
+cd deploy/opensandbox
+docker compose up -d
+curl http://127.0.0.1:8090/health     # → {"status": "healthy"}
+```
+
+说明：
+- 服务端通过挂载的 `/var/run/docker.sock` 创建沙箱容器，需运行在装有 Docker 的机器上；
+- Windows/macOS（Docker Desktop）可直接用 `host.docker.internal`；Linux 宿主机请取消
+  `docker-compose.yml` 中 `extra_hosts` 注释；
+- 如需鉴权，在 `docker-compose.yml` 的 config 中设置 `api_key`，并与后端 `OPENSANDBOX_API_KEY` 一致。
+
+### 6.2 后端接入
+
+```ini
+# backend/.env
+SANDBOX_BACKEND=opensandbox
+SANDBOX_WORK_DIR=./data/sandbox-work   # 沙箱/宿主机共享工作目录（前端可下载其中的文件）
+SANDBOX_MOUNT_TARGET=/work             # 工作目录在沙箱内的挂载点
+OPENSANDBOX_DOMAIN=localhost:8090
+OPENSANDBOX_PROTOCOL=http
+OPENSANDBOX_API_KEY=                 # 与服务端 config 的 api_key 一致（未开启可留空）
+OPENSANDBOX_IMAGE=ubuntu:22.04       # 沙箱容器镜像
+```
+
+### 6.3 沙箱文件持久化与下载
+
+- `run_command` 会把 `SANDBOX_WORK_DIR` 以 Volume 挂载进沙箱（挂载到 `SANDBOX_MOUNT_TARGET`）；
+  沙箱内写入该目录的文件会**持久化到宿主机**，沙箱销毁后仍存在。
+- **必须先放行宿主机路径**：在 `deploy/opensandbox/docker-compose.yml` 的 `[storage].allowed_host_paths`
+  中加入 `SANDBOX_WORK_DIR` 的绝对路径（例如 `["D:/workspace/my-agent-lab/backend/data/sandbox-work"]`），
+  否则创建沙箱会因路径不在白名单内而失败。
+- 前端聊天页右上「沙箱文件」按钮打开面板：列出工作目录中的文件，点击「下载」即从
+  `GET /api/sandbox/files/download?path=...` 下载；`run_command` 执行结束后列表自动刷新。
+- `local` 兜底后端同样以 `SANDBOX_WORK_DIR` 作为工作目录，产物同样可下载。
+
+## 7. 常见问题
 
 | 现象 | 处理 |
 |---|---|
 | `/api/stream` 返回「未配置 LLM_API_KEY」 | 在 `backend/.env` 配置百炼 DashScope Key 后重启 |
 | RAG/记忆能力显示「不适配」 | 配置 `EMBEDDING_API_KEY/BASE_URL/MODEL`（OpenAI 兼容接口） |
 | MCP 能力「不适配」 | 检查 `MCP_SERVERS` 格式与目标服务是否可达，重启后端 |
+| `run_command` 报「创建 OpenSandbox 沙箱失败 …not in allowed host paths / 权限」 | 在 `deploy/opensandbox/docker-compose.yml` 的 `[storage].allowed_host_paths` 加入 `SANDBOX_WORK_DIR` 绝对路径，`docker compose up -d` 重启 |
 | 前端流式无响应 | 确认后端 8000 端口运行；检查浏览器控制台网络（SSE） |
 | 端口占用 | 换端口：`uvicorn app.main:app --port 8001`，并同步 `CORS_ORIGINS` |

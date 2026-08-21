@@ -29,6 +29,15 @@ BUILTIN_CAPABILITIES = [
         "code_key": "web_search",
     },
     {
+        "id": "run_command",
+        "name": "命令执行（沙箱）",
+        "source": "builtin",
+        "requires": None,
+        "desc": "在隔离沙箱中执行系统命令；无论审批策略如何，每次执行前都强制人工审批（HITL）。",
+        "example": "帮我在沙箱里查看当前目录有哪些文件",
+        "code_key": "run_command",
+    },
+    {
         "id": "rag",
         "name": "知识库检索 (RAG)",
         "source": "builtin",

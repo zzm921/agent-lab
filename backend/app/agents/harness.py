@@ -2,7 +2,8 @@
 
 行业公式：Agent = Model + Harness。模型之外的可靠性工程均属 Harness；
 本模块收敛本项目已有的护栏能力，供 AgentRunner（运行器）调用：
-- 审批策略：approval_policy=always 时工具调用需 HITL 审批（requires_approval）
+- 审批策略：approval_policy=always 时工具调用需 HITL 审批；高危工具（如命令执行）
+  无论策略如何都强制 HITL（should_approve）
 - 资源上限：迭代/递归上限（max_iterations → recursion_limit）
 - 止损：stop() 取消进行中的运行，避免继续消耗 token
 - 错误兜底：统一失败事件（error_event）
@@ -13,9 +14,13 @@ from __future__ import annotations
 import asyncio
 
 
-def requires_approval(approval_policy: str) -> bool:
-    """审批策略判定：always 时工具调用需 HITL 审批。"""
-    return approval_policy == "always"
+# 强制 HITL 的工具：无论 approval_policy 如何，调用前都必须经人工审批（高危操作，如命令执行）
+ALWAYS_APPROVE_TOOLS = {"run_command"}
+
+
+def should_approve(approval_policy: str, tool_name: str) -> bool:
+    """审批策略判定：approval_policy=always，或工具本身被标记为强制 HITL 时需审批。"""
+    return approval_policy == "always" or tool_name in ALWAYS_APPROVE_TOOLS
 
 
 class AgentHarness:
@@ -23,8 +28,9 @@ class AgentHarness:
 
     def __init__(self, settings):
         self.settings = settings
-        # approval_id → thread_id：审批会话映射（HITL 恢复用）
-        self._approvals: dict[str, str] = {}
+        # approval_id → {session, interrupt_ids}：审批会话映射（HITL 恢复用）
+        # interrupt_ids 记录该次审批覆盖的 LangGraph interrupt id（同一 superstep 可能有多个）
+        self._approvals: dict[str, dict] = {}
         # session_id → 正在运行的后台图任务：供 stop() 取消，及时停止执行以节省 token
         self._tasks: dict[str, asyncio.Task] = {}
         # session_id → [工具调用计数]：同一轮内跨 resume 累计，避免多次审批时少算
@@ -58,11 +64,17 @@ class AgentHarness:
         return self._tool_counts.get(session_id) or [0]
 
     # --- 审批会话映射 ---
-    def register_approval(self, approval_id: str, session_id: str) -> None:
-        self._approvals[approval_id] = session_id
+    def register_approval(self, approval_id: str, session_id: str, interrupt_ids=()) -> None:
+        self._approvals[approval_id] = {"session": session_id, "interrupt_ids": list(interrupt_ids)}
 
     def resolve_approval(self, approval_id: str) -> str | None:
-        return self._approvals.get(approval_id)
+        entry = self._approvals.get(approval_id)
+        return entry["session"] if entry else None
+
+    def approval_interrupt_ids(self, approval_id: str) -> list:
+        """该次审批对应的 LangGraph interrupt id 列表（用于 resume 恢复）。"""
+        entry = self._approvals.get(approval_id)
+        return entry["interrupt_ids"] if entry else []
 
     # --- 错误兜底：统一失败事件 ---
     @staticmethod

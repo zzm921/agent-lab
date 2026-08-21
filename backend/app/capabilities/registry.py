@@ -9,6 +9,7 @@ from app.memory.vector_store import VectorStore
 from app.tools.calculator import calculator
 from app.tools.memory_tool import make_memory_tools
 from app.tools.rag_tool import make_rag_tool
+from app.tools.run_command import make_run_command_tool
 from app.tools.time_now import time_now
 from app.tools.web_search import web_search
 
@@ -71,6 +72,8 @@ class CapabilityRegistry:
             return time_now
         if cap_id == "web_search":
             return web_search
+        if cap_id == "run_command":
+            return make_run_command_tool(self.settings)
         if cap_id == "rag":
             if self.corpus_store is None:
                 return None

@@ -6,7 +6,7 @@
   reasoning_content(reason) → thinking 事件（思考过程，前端灰斜体），
   content(output) → message 事件（最终输出）；
   每个片段实时打印到后端控制台，工具调用经 tool_call_chunks 合并回 AIMessage。
-- awrap_tool_call：按 config['configurable']['approval_policy'] 决定是否 interrupt 审批，
+- awrap_tool_call：按审批策略（harness.should_approve，含强制 HITL 工具）决定是否 interrupt 审批，
   随后发射 tool_start / tool_end，并执行工具（异常兜底为失败结果）。
 """
 
@@ -16,7 +16,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelResponse
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import Command, interrupt
 
-from app.agents.harness import requires_approval
+from app.agents.harness import should_approve
 from app.core.events import emit_text, event
 
 
@@ -169,8 +169,9 @@ class StreamEventsMiddleware(AgentMiddleware):
         return ModelResponse(result=[msg], structured_response=None)
 
     async def awrap_tool_call(self, request, handler):
-        # 审批策略判定统一收敛到护栏层（harness.requires_approval）
-        return await _execute_tool_call(request, handler, self._emit, requires_approval(_approval_policy(request)))
+        # 审批判定统一收敛到护栏层（harness.should_approve：always 或强制 HITL 工具）
+        name = request.tool_call["name"]
+        return await _execute_tool_call(request, handler, self._emit, should_approve(_approval_policy(request), name))
 
 
 class WorkerEventsMiddleware(AgentMiddleware):

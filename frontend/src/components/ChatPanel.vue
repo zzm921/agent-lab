@@ -12,11 +12,13 @@ const props = defineProps<{
   policy: ApprovalPolicy
   sending: boolean
   enabledCapabilities: Capability[]
+  filesOpen?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:task': [v: string]
   send: []
+  'toggle-files': [v: boolean]
 }>()
 
 // 流水线内容滚动容器：接近底部时随内容自动下滚，保证始终可见最新步骤
@@ -71,20 +73,39 @@ function onSend() {
           {{ policy === 'always' ? '执行前审批' : '自动执行' }}
         </span>
       </div>
-      <div v-if="enabledCapabilities.length" class="flex flex-wrap items-center gap-1.5">
-        <span class="text-[11px] text-slate-500">已装配</span>
-        <span
-          v-for="c in enabledCapabilities.slice(0, 4)"
-          :key="c.id"
-          class="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[11px] text-indigo-300"
+      <div class="flex items-center gap-2">
+        <div v-if="enabledCapabilities.length" class="flex flex-wrap items-center gap-1.5">
+          <span class="text-[11px] text-slate-500">已装配</span>
+          <span
+            v-for="c in enabledCapabilities.slice(0, 4)"
+            :key="c.id"
+            class="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[11px] text-indigo-300"
+          >
+            {{ c.name }}
+          </span>
+          <span v-if="enabledCapabilities.length > 4" class="text-[11px] text-slate-500">
+            +{{ enabledCapabilities.length - 4 }}
+          </span>
+        </div>
+        <div v-else class="text-[11px] text-slate-500">未装配任何能力</div>
+
+        <button
+          type="button"
+          class="flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition"
+          :class="
+            filesOpen
+              ? 'border-indigo-500/50 bg-indigo-500/15 text-indigo-300'
+              : 'border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white'
+          "
+          title="沙箱文件（Agent 在沙箱中写出的产物，可下载）"
+          @click="emit('toggle-files', !filesOpen)"
         >
-          {{ c.name }}
-        </span>
-        <span v-if="enabledCapabilities.length > 4" class="text-[11px] text-slate-500">
-          +{{ enabledCapabilities.length - 4 }}
-        </span>
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
+          沙箱文件
+        </button>
       </div>
-      <div v-else class="text-[11px] text-slate-500">未装配任何能力</div>
     </div>
 
     <div ref="stageEl" class="flex-1 overflow-y-auto p-4">

@@ -122,6 +122,7 @@ _SOURCE_FILES: dict[str, str] = {
     "calculator": "tools/calculator.py",
     "time_now": "tools/time_now.py",
     "web_search": "tools/web_search.py",
+    "run_command": "tools/run_command.py",
     "rag": "tools/rag_tool.py",
     "memory": "tools/memory_tool.py",
     "mcp": "capabilities/mcp.py",

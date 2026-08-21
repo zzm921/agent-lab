@@ -121,7 +121,14 @@ class AgentRunner:
         emit = self._make_emit(queue, tool_count)
         mode, tools = spec
         graph = self._build_graph(mode, tools, emit)
-        command = Command(resume={"action": decision, "modified_args": modified_args or {}})
+        # 同一 superstep 可能存在多个 pending interrupt（如一步内多个需审批的工具调用）：
+        # 需按 interrupt id 以 resume map 恢复（LangGraph 要求），单个时保持原样
+        interrupt_ids = self.harness.approval_interrupt_ids(approval_id)
+        decision_value = {"action": decision, "modified_args": modified_args or {}}
+        if len(interrupt_ids) > 1:
+            command = Command(resume={iid: decision_value for iid in interrupt_ids})
+        else:
+            command = Command(resume=decision_value)
         async for ev in self._run_graph(session_id, graph, config, command, queue, tool_count):
             yield ev
 
@@ -179,14 +186,20 @@ class AgentRunner:
         for run_task in snap.tasks or ():
             pending.extend(run_task.interrupts or ())
         if pending:
-            intr = pending[0]
-            payload = getattr(intr, "value", {}) or {}
+            # 同一 superstep 可能产生多个 pending interrupt（如一步内多个需审批的工具调用），
+            # 合并为一次审批请求（前端弹窗已支持多工具调用批量审批），resume 时按 interrupt id 映射恢复
+            tool_calls = []
+            interrupt_ids = []
+            for intr in pending:
+                payload = getattr(intr, "value", {}) or {}
+                tool_calls.extend(payload.get("tool_calls", []))
+                interrupt_ids.append(intr.id)
             approval_id = uuid.uuid4().hex
-            self.harness.register_approval(approval_id, config["configurable"]["thread_id"])
+            self.harness.register_approval(approval_id, config["configurable"]["thread_id"], interrupt_ids)
             yield {
                 "type": "approval_request",
                 "approval_id": approval_id,
-                "tool_calls": payload.get("tool_calls", []),
+                "tool_calls": tool_calls,
             }
             return
         yield {"type": "done", "summary": "本次任务处理完成", "stats": {"tool_calls": tool_count[0]}}

@@ -21,7 +21,7 @@ defineProps<{ steps: string[]; currentStep?: number; status?: string }>()
         >
           {{ s }}
         </p>
-        <span v-if="i === currentStep && status === 'running'" class="text-[11px] text-indigo-300">执行中…</span>
+        <span v-if="i === currentStep && status === 'running'" class="text-[11px] text-indigo-300">规划中</span>
         <span v-else-if="i === currentStep && status === 'done'" class="text-[11px] text-emerald-400">已完成</span>
       </div>
     </li>

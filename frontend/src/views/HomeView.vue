@@ -6,6 +6,7 @@ import type { Capability, ModeId, PromptStrategy, ApprovalPolicy } from '../type
 import CapabilitySidebar from '../components/CapabilitySidebar.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import ExampleFillHint from '../components/ExampleFillHint.vue'
+import SandboxFilesPanel from '../components/SandboxFilesPanel.vue'
 
 const {
   caps,
@@ -26,6 +27,8 @@ const mode = ref<ModeId>('react')
 const strategy = ref<PromptStrategy>('standard')
 const policy = ref<ApprovalPolicy>('always')
 const sidebarOpen = ref(false)
+const filesOpen = ref(false)
+const filesRefreshKey = ref(0)
 
 onMounted(() => {
   load()
@@ -47,6 +50,21 @@ watch(
     sending.value = s === 'streaming' || s === 'waiting_approval'
   },
   { immediate: true },
+)
+
+// run_command 每次执行结束（成功/失败）后刷新沙箱文件列表，便于立即下载产物
+let lastCmdEndCount = 0
+watch(
+  () =>
+    stream.steps.filter(
+      (s) => s.kind === 'tool' && s.tool === 'run_command' && s.status !== 'running',
+    ).length,
+  (n) => {
+    if (n > lastCmdEndCount) {
+      lastCmdEndCount = n
+      filesRefreshKey.value++
+    }
+  },
 )
 
 function onExample(cap: Capability) {
@@ -108,7 +126,9 @@ function send() {
         :policy="policy"
         :sending="sending"
         :enabled-capabilities="enabledCapabilities"
+        :files-open="filesOpen"
         @send="send"
+        @toggle-files="filesOpen = $event"
       />
 
       <div class="pointer-events-none absolute left-4 top-14 z-10 md:left-80 md:top-4">
@@ -123,5 +143,17 @@ function send() {
       class="fixed inset-0 z-20 bg-black/50 md:hidden"
       @click="sidebarOpen = false"
     ></div>
+
+    <div
+      v-if="filesOpen"
+      class="fixed inset-0 z-20 bg-black/50"
+      @click="filesOpen = false"
+    ></div>
+
+    <SandboxFilesPanel
+      :open="filesOpen"
+      :refresh-key="filesRefreshKey"
+      @close="filesOpen = false"
+    />
   </div>
 </template>

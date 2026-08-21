@@ -1,0 +1,86 @@
+# OpenSandbox Server（Docker Runtime）部署
+#
+# 说明：
+# - 服务端通过挂载的 /var/run/docker.sock 创建沙箱容器，因此必须运行在装有 Docker 的机器上；
+# - 默认对外端口 8090；启动后健康检查：curl http://127.0.0.1:8090/health
+# - 启动：docker compose up -d     停止：docker compose down
+# - 后端接入：backend/.env 设 SANDBOX_BACKEND=opensandbox、OPENSANDBOX_DOMAIN=localhost:8090
+# - 安全提示：OpenSandbox 默认不提供网络隔离，生产环境如有隔离要求请自行补充网络策略。
+configs:
+  opensandbox-config:
+    content: |
+      [server]
+      host = "0.0.0.0"
+      port = 8090
+      # API Key 鉴权；与 backend/.env 的 OPENSANDBOX_API_KEY 保持一致
+      api_key = "test-zhexia6854"
+
+      [log]
+      level = "INFO"
+
+      [storage]
+      # 允许 bind mount 进沙箱的宿主机路径前缀白名单（需与 backend/.env 的 SANDBOX_WORK_DIR 绝对路径一致）。
+      # 沙箱文件下载依赖该挂载，未放行时 run_command 会报 HOST_PATH_NOT_ALLOWED。
+      # Windows 路径用正斜杠；服务端匹配时会把 \ 与盘符大小写归一化。
+      allowed_host_paths = ["D:/workspace/my-agent-lab/backend/data/sandbox-work"]
+
+      [runtime]
+      type = "docker"
+      # 国内镜像优先；也可换用 Docker Hub：opensandbox/execd:v1.0.22
+      execd_image = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/execd:v1.0.22"
+
+      [egress]
+      image = "opensandbox/egress:v1.1.6"
+      # image = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/egress:v1.1.6"
+      readiness_timeout_seconds = 30.0
+
+      [docker]
+      network_mode = "bridge"
+      # 服务端运行在容器内时，沙箱端点需能被客户端访问：
+      # Windows/macOS（Docker Desktop）用 host.docker.internal；Linux 需在下方 extra_hosts 加一行。
+      host_ip = "host.docker.internal"
+      port_range_min = 40000
+      port_range_max = 60000
+      drop_capabilities = ["AUDIT_WRITE", "MKNOD", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_TIME", "SYS_TTY_CONFIG"]
+      no_new_privileges = true
+      # 并发沙箱较多时建议调高，避免 "can't start new thread"（详见 opensandbox-group/OpenSandbox#447）
+      pids_limit = 4096
+
+      [ingress]
+      mode = "direct"
+
+services:
+  opensandbox-server:
+    image: opensandbox/server:latest
+    container_name: opensandbox-server
+    networks:
+      - opensandbox-net
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    configs:
+      - source: opensandbox-config
+        target: /etc/opensandbox/config.toml
+    environment:
+      - SANDBOX_CONFIG_PATH=/etc/opensandbox/config.toml
+    # Linux 宿主机需要 host.docker.internal 指向宿主机（Windows/macOS Docker Desktop 可省略）
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # 可选：SDK 调试客户端，启动后可 exec 进入容器用 Python SDK 连接服务端做验证
+  # docker compose exec sdk-client sh
+  # sdk-client:
+  #   image: python:3.11-slim
+  #   container_name: sdk-client
+  #   networks:
+  #     - opensandbox-net
+  #   command: >
+  #     sh -c "pip install opensandbox && tail -f /dev/null"
+  #   environment:
+  #     - OPENSANDBOX_SERVER_URL=http://opensandbox-server:8090
+
+networks:
+  opensandbox-net:
+    driver: bridge

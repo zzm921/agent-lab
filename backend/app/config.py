@@ -26,5 +26,21 @@ class Settings(BaseSettings):
     context_threshold: int = 12
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
 
+    # 命令执行沙箱（run_command 工具）
+    sandbox_backend: str = "opensandbox"  # opensandbox（默认，Docker 部署）| local（本机轻量沙箱兜底）
+    sandbox_timeout: int = 10  # 单条命令最大执行秒数，超时硬杀进程树
+    sandbox_max_output: int = 4000  # 命令输出最大字符数，超出截断
+    # 沙箱/宿主机共享工作目录：沙箱写入该目录的文件会持久化到宿主机，
+    # 后端通过 /api/sandbox/files 提供列表与下载（前端可点击下载）。
+    # opensandbox 后端以 Volume 挂载进沙箱（需服务端 allowed_host_paths 放行该路径）；
+    # local 后端直接以其作为命令工作目录。
+    sandbox_work_dir: str = "./data/sandbox-work"
+    sandbox_mount_target: str = "/work"  # 工作目录在沙箱容器内的挂载点
+    # OpenSandbox 连接配置（sandbox_backend=opensandbox 时生效；服务端由用户自行 Docker 部署）
+    opensandbox_domain: str = "localhost:8090"
+    opensandbox_protocol: str = "http"
+    opensandbox_api_key: str = ""
+    opensandbox_image: str = "opensandbox/code-interpreter:latest"
+
 
 settings = Settings()

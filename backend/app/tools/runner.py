@@ -4,6 +4,7 @@ from __future__ import annotations
 from langchain_core.messages import ToolMessage
 from langgraph.types import interrupt
 
+from app.agents.harness import should_approve
 from app.core.events import event
 
 
@@ -19,7 +20,8 @@ def make_tools_node(tools, emit):
         if not calls:
             return {"messages": []}
 
-        if policy == "always":
+        # 任一本步工具需要审批（approval_policy=always 或强制 HITL 工具）即整批审批
+        if any(should_approve(policy, c["name"]) for c in calls):
             payload = [{"name": c["name"], "args": c.get("args", {}), "id": c.get("id")} for c in calls]
             decision = interrupt({"tool_calls": payload})
             action = decision.get("action", "approve")

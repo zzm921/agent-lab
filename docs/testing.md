@@ -19,7 +19,7 @@ npm run test
 
 ## 3. 测试用例清单
 
-### 3.1 后端（43 个用例，8 个文件）
+### 3.1 后端（68 个用例，8 个文件）
 
 **test_dashscope_chat.py（10）** — DashScope 原生 SDK 适配（reason/output 分离）
 - `test_parse_message_distinguishes_reason_and_output`：响应解析明确分离 `reasoning_content`(reason) 与 `content`(output)
@@ -31,12 +31,15 @@ npm run test
 - `test_to_message_carries_reasoning_in_kwargs` / `test_to_message_with_tool_calls`：DashScopeTurn → AIMessage（reasoning 入 additional_kwargs / tool_calls 转换）
 - `test_payload_sets_thinking_and_tools`：`enable_thinking` 生效、tools 透传、temperature 缺省用实例值
 
-**test_api_stream.py（6）** — API 层
+**test_api_stream.py（9）** — API 层
 - `test_health`：`/api/health` 返回状态、模型、MCP/Embedding 配置标记
 - `test_capabilities_with_fake_registry`：`/api/capabilities` 返回能力目录
 - `test_stream_sse_with_fake_runner`：`/api/stream` 产出 SSE 事件序列（meta/done）
 - `test_approve_sse`：`/api/approve` 恢复执行并产出事件
 - `test_source_returns_code` / `test_source_unknown_module`：源码接口（存在/未知模块）
+- `test_sandbox_files_list_and_download`：`/api/sandbox/files` 列出 + `/files/download` 下载（含子目录）
+- `test_sandbox_files_download_traversal_blocked`：路径穿越/绝对路径被拒绝（400）
+- `test_sandbox_files_download_not_found`：下载不存在文件 → 404
 
 **test_capabilities.py（3）** — 能力注册表
 - `test_builtin_available`：内置能力可用（有 Embedding）
@@ -48,9 +51,18 @@ npm run test
 - `test_mcp_discover_failure_marks_unavailable`：连接失败 → 标记「不适配」
 - `test_mcp_partial_failure`：多 server 部分失败不影响其它
 
-**test_tools.py（6）** — 工具与向量检索
+**test_tools.py（16）** — 工具与向量检索
 - `test_calculator_basic` / `test_calculator_chinese_operators` / `test_calculator_unsafe_rejected`：计算器基本/中文符号/不安全表达式拒绝
 - `test_time_now_format`：时间格式
+- `test_run_command_echo`：沙箱命令执行返回输出
+- `test_run_command_deny_dangerous` / `test_run_command_deny_empty`：危险命令/空命令拒绝
+- `test_run_command_timeout`：超时硬杀并提示
+- `test_run_command_output_truncated`：超长输出截断
+- `test_run_command_opensandbox_backend_dispatch`：backend=opensandbox 时命令交给 OpenSandbox 执行器
+- `test_run_command_opensandbox_sdk_missing`：SDK 未安装时优雅降级提示
+- `test_run_command_local_persists_to_work_dir`：local 后端写入的文件持久化到工作目录（供下载）
+- `test_run_command_opensandbox_mounts_work_volume`：opensandbox 后端把工作目录以 Volume 挂载进沙箱
+- `test_run_command_opensandbox_volume_passes_sdk_converter`：回归——挂载卷能通过 SDK 真实转换器（规避 0.1.15 `Unset.claim_name` bug）
 - `test_vector_store_search_topk` / `test_vector_store_empty`：余弦 top-k 检索 / 空库
 
 **test_tools_builder.py（5）** — 能力热插拔组装
@@ -68,10 +80,13 @@ npm run test
 - `test_multi_agent`：编排者分派 Worker 汇总
 - `test_unknown_mode`：未知模式报错
 
-**test_approval_flow.py（6）** — HITL 审批
-- `test_approve_flow` / `test_reject_flow` / `test_modify_flow`：批准 / 拒绝 / 修改参数后恢复
-- `test_plan_execute_approve_flow`：plan_execute（StateGraph 版）工具审批中断与恢复
+**test_approval_flow.py（14）** — HITL 审批
+- `test_approve_flow` / `test_reject_flow` / `test_modify_flow` / `test_modify_flow_by_name_fallback`：批准 / 拒绝 / 修改（按 id / 按名称兜底）后恢复
+- `test_tool_count_accumulates_across_approvals`：同轮多次审批工具数累计
+- `test_plan_execute_approve_flow` / `test_plan_execute_modify_flow` / `test_plan_execute_modify_flow_by_name_fallback`：plan_execute（StateGraph 版）审批
 - `test_resume_unknown_approval`：未知审批号 → 错误事件
+- `test_command_tool_forced_hitl_even_when_never` / `test_command_tool_reject_flow` / `test_plan_execute_command_forced_hitl`：run_command 强制 HITL（react / plan_execute）
+- `test_react_multi_forced_tools_batch_approval` / `test_react_multi_forced_tools_batch_reject`：一步内多个需审批工具批量审批 / 批量拒绝
 
 ### 3.2 前端（20 个用例，4 个文件）
 

@@ -1,9 +1,9 @@
-"""API 层测试：能力目录、SSE 流式对话、审批、源码展示、健康检查（注入 Fake 运行时）。"""
+"""API 层测试：能力目录、SSE 流式对话、审批、源码展示、健康检查、沙箱文件（注入 Fake 运行时）。"""
 import json
 
 from fastapi.testclient import TestClient
 
-from app.api import chat
+from app.api import chat, sandbox
 from app.main import app
 
 
@@ -95,3 +95,48 @@ def test_source_unknown_module():
     resp = client.get("/api/source/not_a_module")
     assert resp.status_code == 200
     assert resp.json()["content"] == ""
+
+
+def test_sandbox_files_list_and_download(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir(parents=True)
+    (work / "a.txt").write_text("hello", encoding="utf-8")
+    (work / "sub").mkdir()
+    (work / "sub" / "b.log").write_text("log", encoding="utf-8")
+    monkeypatch.setattr(sandbox, "_work_dir", lambda: work)
+
+    client = TestClient(app)
+    resp = client.get("/api/sandbox/files")
+    assert resp.status_code == 200
+    paths = [f["path"] for f in resp.json()["files"]]
+    assert paths == ["a.txt", "sub/b.log"]
+
+    dl = client.get("/api/sandbox/files/download", params={"path": "sub/b.log"})
+    assert dl.status_code == 200
+    assert dl.content == b"log"
+
+
+def test_sandbox_files_download_traversal_blocked(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir(parents=True)
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+    monkeypatch.setattr(sandbox, "_work_dir", lambda: work)
+
+    client = TestClient(app)
+    resp = client.get("/api/sandbox/files/download", params={"path": "../secret.txt"})
+    assert resp.status_code == 400
+    resp = client.get(
+        "/api/sandbox/files/download",
+        params={"path": str(tmp_path / "secret.txt")},
+    )
+    assert resp.status_code == 400
+
+
+def test_sandbox_files_download_not_found(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir(parents=True)
+    monkeypatch.setattr(sandbox, "_work_dir", lambda: work)
+
+    client = TestClient(app)
+    resp = client.get("/api/sandbox/files/download", params={"path": "missing.txt"})
+    assert resp.status_code == 404
