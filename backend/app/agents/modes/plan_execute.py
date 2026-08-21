@@ -69,10 +69,10 @@ def _step_failure(state) -> bool:
     return False
 
 
-def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None):
+def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harness=None):
     """构建 plan-and-execute 代理：planner → executor ⇄ tools → replanner。"""
     tool_list = list(tools)
-    tools_node = make_tools_node(tool_list, emit)
+    tools_node = make_tools_node(tool_list, emit, harness=harness)
     max_replans = max(1, settings.max_iterations // 2)
 
     async def planner(state):

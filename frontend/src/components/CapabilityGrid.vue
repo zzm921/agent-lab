@@ -2,8 +2,18 @@
 import CapabilityCard from './CapabilityCard.vue'
 import type { Capability } from '../types/agent'
 
-defineProps<{ caps: Capability[]; enabledIds: string[]; loading?: boolean; error?: string | null; compact?: boolean }>()
-const emit = defineEmits<{ toggle: [id: string]; example: [cap: Capability] }>()
+defineProps<{
+  caps: Capability[]
+  enabledIds: string[]
+  faults?: Record<string, string>
+  loading?: boolean
+  error?: string | null
+  compact?: boolean
+}>()
+const emit = defineEmits<{ toggle: [id: string]; example: [cap: Capability]; fault: [id: string, mode: string] }>()
+function onFault(id: string, mode: string) {
+  emit('fault', id, mode)
+}
 </script>
 
 <template>
@@ -23,9 +33,11 @@ const emit = defineEmits<{ toggle: [id: string]; example: [cap: Capability] }>()
         :key="cap.id"
         :cap="cap"
         :enabled="enabledIds.includes(cap.id)"
+        :fault="faults?.[cap.id]"
         :compact="compact"
         @toggle="emit('toggle', $event)"
         @example="emit('example', $event)"
+        @fault="onFault"
       />
     </div>
   </div>

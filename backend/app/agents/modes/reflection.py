@@ -8,7 +8,7 @@ from langchain.agents import create_agent
 from app.agents.middleware.reflection_mw import ReflectionMiddleware
 
 
-def build_reflection_agent(llm, tools, emit, settings, checkpointer=None):
+def build_reflection_agent(llm, tools, emit, settings, checkpointer=None, harness=None):
     """构建 reflection 代理：单次模型调用内完成生成-反思-修订循环。"""
     return create_agent(
         model=llm,

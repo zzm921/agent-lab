@@ -8,11 +8,11 @@ from langchain.agents import create_agent
 from app.agents.middleware.events_mw import StreamEventsMiddleware
 
 
-def build_react_agent(llm, tools, emit, settings, checkpointer=None):
+def build_react_agent(llm, tools, emit, settings, checkpointer=None, harness=None):
     """构建 ReAct 代理：模型 ⇄ 工具循环 + thinking/message 事件 + 工具 HITL。"""
     return create_agent(
         model=llm,
         tools=list(tools),
-        middleware=[StreamEventsMiddleware(emit)],
+        middleware=[StreamEventsMiddleware(emit, harness=harness)],
         checkpointer=checkpointer,
     )

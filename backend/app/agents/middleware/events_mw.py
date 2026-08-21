@@ -104,16 +104,39 @@ async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None
     return msg
 
 
-async def _execute_tool_call(request, handler, emit, do_approval: bool):
-    """执行单个工具调用：可选 HITL 审批 + tool_start/tool_end 事件 + 异常兜底。
+async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=None):
+    """执行单个工具调用：护栏检查（熔断/次数上限）+ 可选 HITL 审批 + 工具事件 + 异常兜底。
 
     返回最终 ToolMessage 或 Command。do_approval=False 时跳过 interrupt，
-    供无 checkpointer 的 multi-agent worker 使用。
+    供无 checkpointer 的 multi-agent worker 使用。harness 为 None 时跳过护栏。
     """
     call = request.tool_call
     name = call["name"]
     args = call.get("args", {})
     cid = call.get("id")
+    session_id = request.runtime.config["configurable"]["thread_id"]
+
+    # 护栏：熔断 / 工具调用次数上限。命中直接短路，不执行也不触发审批。
+    # 熔断按「工具+参数」计：相同参数重复失败才拦截，换参数重试始终放行
+    if harness is not None and not harness.circuit_allows(session_id, name, args):
+        msg = f"工具 {name} 在当前参数下已连续失败触发熔断保护，请更换参数重试或改用其它工具。"
+        emit(event("tool_start", tool=name, args=args))
+        emit(event("tool_end", tool=name, args=args, result=msg, success=False))
+        return ToolMessage(content=msg, tool_call_id=cid)
+    if harness is not None and harness.tool_calls_exceeded(session_id):
+        msg = f"本轮工具调用已达上限（{harness.tool_calls_limit()} 次），已停止执行。"
+        emit(event("tool_start", tool=name, args=args))
+        emit(event("tool_end", tool=name, args=args, result=msg, success=False))
+        return ToolMessage(content=msg, tool_call_id=cid)
+
+    # 故障注入钩子（验证熔断机制用）：命中则模拟报错/超时并计入失败，不执行工具也不触发审批
+    if harness is not None:
+        injected = harness.fault_message(name)
+        if injected is not None:
+            emit(event("tool_start", tool=name, args=args))
+            emit(event("tool_end", tool=name, args=args, result=injected, success=False))
+            harness.record_tool_failure(session_id, name, args)
+            return ToolMessage(content=injected, tool_call_id=cid)
 
     if do_approval:
         decision = interrupt({"tool_calls": [{"name": name, "args": args, "id": cid}]})
@@ -139,9 +162,13 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool):
             return result
         content = getattr(result, "content", None)
         emit(event("tool_end", tool=effective["name"], args=effective.get("args", {}), result=str(content), success=True))
+        if harness is not None:
+            harness.record_tool_success(session_id, effective["name"], effective.get("args", {}))
         return result
     except Exception as exc:  # noqa: BLE001
         emit(event("tool_end", tool=effective["name"], args=effective.get("args", {}), result=f"工具执行失败：{exc}", success=False))
+        if harness is not None:
+            harness.record_tool_failure(session_id, effective["name"], effective.get("args", {}))
         return ToolMessage(content=f"工具执行失败：{exc}", tool_call_id=cid)
 
 
@@ -152,8 +179,9 @@ def _approval_policy(request) -> str:
 class StreamEventsMiddleware(AgentMiddleware):
     """react / plan_execute / multi_agent orchestrator 通用：thinking/message + 工具事件 + HITL。"""
 
-    def __init__(self, emit):
+    def __init__(self, emit, harness=None):
         self._emit = emit
+        self._harness = harness
 
     async def awrap_model_call(self, request, handler):
         """用 astream 逐 token 生成并实时下发（复用 stream_model_call），替代 ainvoke 的一次性返回。"""
@@ -171,7 +199,11 @@ class StreamEventsMiddleware(AgentMiddleware):
     async def awrap_tool_call(self, request, handler):
         # 审批判定统一收敛到护栏层（harness.should_approve：always 或强制 HITL 工具）
         name = request.tool_call["name"]
-        return await _execute_tool_call(request, handler, self._emit, should_approve(_approval_policy(request), name))
+        return await _execute_tool_call(
+            request, handler, self._emit,
+            should_approve(_approval_policy(request), name),
+            harness=self._harness,
+        )
 
 
 class WorkerEventsMiddleware(AgentMiddleware):
@@ -181,8 +213,9 @@ class WorkerEventsMiddleware(AgentMiddleware):
     因此工具审批统一收敛到编排者层（StreamEventsMiddleware.awrap_tool_call）。
     """
 
-    def __init__(self, emit):
+    def __init__(self, emit, harness=None):
         self._emit = emit
+        self._harness = harness
 
     async def awrap_tool_call(self, request, handler):
-        return await _execute_tool_call(request, handler, self._emit, do_approval=False)
+        return await _execute_tool_call(request, handler, self._emit, do_approval=False, harness=self._harness)

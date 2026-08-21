@@ -13,9 +13,11 @@ const {
   enabled,
   loading,
   loadError,
+  faults,
   exampleHint,
   enabledCapabilities,
   load,
+  setFault,
   toggle,
   applyExample,
   clearHint,
@@ -90,6 +92,7 @@ function send() {
     <CapabilitySidebar
       :caps="caps"
       :enabled-ids="enabled"
+      :faults="faults"
       :loading="loading"
       :error="loadError"
       :mode="mode"
@@ -98,6 +101,7 @@ function send() {
       :open="sidebarOpen"
       @toggle="toggle"
       @example="onExample"
+      @fault="setFault"
       @update:mode="mode = $event"
       @update:strategy="strategy = $event"
       @update:policy="policy = $event"

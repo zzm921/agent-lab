@@ -24,6 +24,13 @@ STRATEGY_PROMPTS = {
     "cot": "你是专业的 AI 助手。回答前请逐步思考（chain-of-thought），先列出推理步骤再给出结论。",
 }
 
+# 工具使用规范：追加到首轮 system prompt，让模型在工具失败后优先换参数/换方式重试，
+# 而不是直接告诉用户「工具不可用」（与熔断机制配合：相同参数重复失败才拦截，换参重试放行）。
+TOOL_RETRY_HINT = (
+    "工具使用规范：当工具调用失败或返回错误时，应修正参数或换一种调用方式重试（不要用相同参数反复重试），"
+    "不要直接告诉用户工具不可用；仅在换参数后仍连续多次失败时，才可改用其它工具或如实向用户说明。"
+)
+
 
 class AgentRunner:
     """持有会话配置，支持 stream（含中断暂停）与 resume（批准/拒绝/修改）。
@@ -45,13 +52,13 @@ class AgentRunner:
     def _build_graph(self, mode, tools, emit):
         checkpointer = self.sessions.checkpointer
         if mode == "react":
-            return build_react_agent(self.llm, tools, emit, self.settings, checkpointer)
+            return build_react_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
         if mode == "plan_execute":
-            return build_plan_execute_agent(self.llm, tools, emit, self.settings, checkpointer)
+            return build_plan_execute_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
         if mode == "reflection":
-            return build_reflection_agent(self.llm, tools, emit, self.settings, checkpointer)
+            return build_reflection_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
         if mode == "multi_agent":
-            return build_multi_agent_agent(self.llm, tools, emit, self.settings, checkpointer)
+            return build_multi_agent_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
         raise ValueError(f"未知模式：{mode}")
 
     def _config(self, session_id, approval_policy, strategy):
@@ -70,13 +77,10 @@ class AgentRunner:
         if snap is not None and snap.values:
             msgs = list(snap.values.get("messages", []))
         if not msgs:
-            msgs.append(SystemMessage(content=STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])))
+            base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
+            msgs.append(SystemMessage(content=f"{base}\n\n{TOOL_RETRY_HINT}"))
         msgs.append(HumanMessage(content=message))
         return {"messages": msgs}
-
-    @staticmethod
-    def _new_channel():
-        return asyncio.Queue(), [0]
 
     @staticmethod
     def _make_emit(queue, tool_count):
@@ -89,8 +93,9 @@ class AgentRunner:
 
     async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy):
         """启动新一轮对话并产出 SSE 事件；遇 HITL 中断产出 approval_request 后暂停。"""
-        queue, tool_count = self._new_channel()
-        self.harness.new_tool_counter(session_id)  # 每轮重置；该轮后续 resume 复用累计
+        queue = asyncio.Queue()
+        # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
+        tool_count = self.harness.new_tool_counter(session_id)
         emit = self._make_emit(queue, tool_count)
 
         tools = build_tools(self.registry, enabled, session_id, emit)

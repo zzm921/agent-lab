@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     context_threshold: int = 12
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
 
+    # 护栏：工具调用上限与熔断
+    tool_max_calls: int =10 # 单轮最多工具调用次数，达到后拒绝后续调用
+    circuit_fail_threshold: int = 3  # 同一会话内“同一工具+相同参数”连续失败次数，达到即熔断该参数调用（换参重试放行）
+    circuit_cooldown: int = 30  # 熔断冷却秒数，冷却结束放行一次探测（half-open）
+
     # 命令执行沙箱（run_command 工具）
     sandbox_backend: str = "opensandbox"  # opensandbox（默认，Docker 部署）| local（本机轻量沙箱兜底）
     sandbox_timeout: int = 10  # 单条命令最大执行秒数，超时硬杀进程树

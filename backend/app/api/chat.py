@@ -14,7 +14,7 @@ from app.llm.client import create_chat_model, create_embeddings
 from app.memory.corpus import KNOWLEDGE_CORPUS
 from app.memory.session_store import SessionStore
 from app.memory.vector_store import VectorStore
-from app.schemas import ApproveRequest, StopRequest, StreamRequest
+from app.schemas import ApproveRequest, FaultRequest, StopRequest, StreamRequest
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -116,6 +116,19 @@ async def stop_run(req: StopRequest):
     """停止指定会话的后端执行：立即取消后台图任务，避免继续消耗 token。"""
     get_runner().stop(req.session_id)
     return {"ok": True}
+
+
+@router.get("/faults")
+async def list_faults():
+    """当前故障注入配置（验证熔断机制用）。"""
+    return {"faults": get_runner().harness.faults()}
+
+
+@router.post("/fault")
+async def set_fault(req: FaultRequest):
+    """设置工具故障注入：error=模拟报错，timeout=模拟超时，off=恢复正常。"""
+    get_runner().harness.set_fault(req.tool, req.mode)
+    return {"ok": True, "faults": get_runner().harness.faults()}
 
 
 _SOURCE_FILES: dict[str, str] = {

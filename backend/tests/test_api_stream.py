@@ -1,9 +1,11 @@
-"""API 层测试：能力目录、SSE 流式对话、审批、源码展示、健康检查、沙箱文件（注入 Fake 运行时）。"""
+"""API 层测试：能力目录、SSE 流式对话、审批、故障注入、源码展示、健康检查、沙箱文件（注入 Fake 运行时）。"""
 import json
 
 from fastapi.testclient import TestClient
 
+from app.agents.harness import AgentHarness
 from app.api import chat, sandbox
+from app.config import Settings
 from app.main import app
 
 
@@ -21,6 +23,9 @@ class FakeRegistry:
 class FakeRunner:
     def __init__(self, events):
         self._events = events
+        self.harness = AgentHarness(
+            Settings(llm_api_key="test-key", embedding_api_key="test-key", mcp_servers="{}")
+        )
 
     async def stream(self, *args, **kwargs):
         for ev in self._events:
@@ -81,6 +86,20 @@ def test_approve_sse():
     assert resp.status_code == 200
     parsed = _parse_sse(resp.text)
     assert parsed[-1]["type"] == "done"
+
+
+def test_fault_set_list_and_clear():
+    chat.set_runtime(runner=FakeRunner([]))
+    client = TestClient(app)
+    resp = client.post("/api/fault", json={"tool": "calculator", "mode": "error"})
+    assert resp.status_code == 200
+    assert resp.json()["faults"] == {"calculator": "error"}
+    resp = client.get("/api/faults")
+    assert resp.status_code == 200
+    assert resp.json()["faults"] == {"calculator": "error"}
+    resp = client.post("/api/fault", json={"tool": "calculator", "mode": "off"})
+    assert resp.status_code == 200
+    assert resp.json()["faults"] == {}
 
 
 def test_source_returns_code():

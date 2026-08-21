@@ -25,5 +25,10 @@ class StopRequest(BaseModel):
     session_id: str = Field(description="会话 id")
 
 
+class FaultRequest(BaseModel):
+    tool: str = Field(description="工具名")
+    mode: str = Field(default="off", description="故障注入：error | timeout | off（恢复正常）")
+
+
 class SourceRequest(BaseModel):
     module: str = Field(description="源码模块 key")

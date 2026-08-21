@@ -7,6 +7,7 @@ import type { ApprovalPolicy, Capability, ModeId, PromptStrategy } from '../type
 defineProps<{
   caps: Capability[]
   enabledIds: string[]
+  faults?: Record<string, string>
   loading?: boolean
   error?: string | null
   mode: ModeId
@@ -18,6 +19,7 @@ defineProps<{
 const emit = defineEmits<{
   toggle: [id: string]
   example: [cap: Capability]
+  fault: [id: string, mode: string]
   'update:mode': [v: ModeId]
   'update:strategy': [v: PromptStrategy]
   'update:policy': [v: ApprovalPolicy]
@@ -25,6 +27,10 @@ const emit = defineEmits<{
 }>()
 
 const POLICIES: ApprovalPolicy[] = ['always', 'never']
+
+function onFault(id: string, mode: string) {
+  emit('fault', id, mode)
+}
 </script>
 
 <template>
@@ -49,25 +55,9 @@ const POLICIES: ApprovalPolicy[] = ['always', 'never']
     </div>
 
     <div class="flex-1 space-y-6 overflow-y-auto px-4 py-4">
-      <section>
-        <CapabilityGrid
-          :caps="caps"
-          :enabled-ids="enabledIds"
-          :loading="loading"
-          :error="error"
-          compact
-          @toggle="emit('toggle', $event)"
-          @example="emit('example', $event)"
-        />
-      </section>
-
-      <section class="space-y-3 border-t border-slate-800 pt-4">
+      <section class="space-y-3">
         <h3 class="text-xs font-semibold text-slate-300">推理模式</h3>
         <ModeSelector :model-value="mode" @update:model-value="emit('update:mode', $event)" />
-      </section>
-
-      <section class="space-y-3 border-t border-slate-800 pt-4">
-        <PromptStrategyPicker :model-value="strategy" @update:model-value="emit('update:strategy', $event)" />
       </section>
 
       <section class="space-y-3 border-t border-slate-800 pt-4">
@@ -85,6 +75,28 @@ const POLICIES: ApprovalPolicy[] = ['always', 'never']
             {{ p === 'always' ? '执行前审批' : '自动执行' }}
           </button>
         </div>
+      </section>
+
+      <section class="space-y-3 border-t border-slate-800 pt-4">
+        <PromptStrategyPicker :model-value="strategy" @update:model-value="emit('update:strategy', $event)" />
+      </section>
+
+      <section class="border-t border-slate-800 pt-4">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-xs font-semibold text-slate-300">能力与故障注入</h3>
+          <span class="text-[10px] text-slate-500" title="将工具模拟为报错/超时以验证熔断机制">正常 / 报错 / 超时</span>
+        </div>
+        <CapabilityGrid
+          :caps="caps"
+          :enabled-ids="enabledIds"
+          :faults="faults"
+          :loading="loading"
+          :error="error"
+          compact
+          @toggle="emit('toggle', $event)"
+          @example="emit('example', $event)"
+          @fault="onFault"
+        />
       </section>
     </div>
   </aside>

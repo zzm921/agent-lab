@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import type { Capability } from '../types/agent'
 
-const props = defineProps<{ cap: Capability; enabled: boolean; compact?: boolean }>()
-const emit = defineEmits<{ toggle: [id: string]; example: [cap: Capability] }>()
+const props = defineProps<{ cap: Capability; enabled: boolean; compact?: boolean; fault?: string }>()
+const emit = defineEmits<{ toggle: [id: string]; example: [cap: Capability]; fault: [id: string, mode: string] }>()
 
 const available = props.cap.availability === 'available'
+
+function onFaultChange(e: Event) {
+  emit('fault', props.cap.id, (e.target as HTMLSelectElement).value)
+}
 </script>
 
 <template>
@@ -50,17 +54,37 @@ const available = props.cap.availability === 'available'
       {{ cap.desc }}
     </p>
 
-    <div class="mt-3 flex items-center justify-between">
+    <div class="mt-3 flex items-center justify-between gap-2">
       <span v-if="available" class="text-xs text-emerald-400">● 可用</span>
       <span v-else class="text-xs text-rose-400" title="该能力不适配">● 不适配</span>
-      <button
-        v-if="available && cap.example && !compact"
-        type="button"
-        class="example-btn rounded-lg border border-slate-600 px-2.5 py-1 text-xs text-slate-300 transition hover:border-indigo-400 hover:text-white"
-        @click="emit('example', cap)"
-      >
-        示例
-      </button>
+      <div class="flex items-center gap-2">
+        <!-- 故障注入选择器：验证熔断机制用（正常/报错/超时），不影响工具类本身 -->
+        <select
+          v-if="available"
+          :value="fault"
+          :title="
+            fault === 'error'
+              ? '故障注入：工具当前被模拟为报错'
+              : fault === 'timeout'
+                ? '故障注入：工具当前被模拟为超时'
+                : '故障注入：选择报错/超时以验证熔断机制'
+          "
+          class="rounded-lg border border-slate-700 bg-slate-800 px-1.5 py-1 text-[11px] text-slate-300 outline-none transition hover:border-rose-400/60"
+          @change="onFaultChange"
+        >
+          <option value="off">正常</option>
+          <option value="error">报错</option>
+          <option value="timeout">超时</option>
+        </select>
+        <button
+          v-if="available && cap.example && !compact"
+          type="button"
+          class="example-btn rounded-lg border border-slate-600 px-2.5 py-1 text-xs text-slate-300 transition hover:border-indigo-400 hover:text-white"
+          @click="emit('example', cap)"
+        >
+          示例
+        </button>
+      </div>
     </div>
 
     <p v-if="!available && cap.unavailable_reason" class="mt-2 text-[11px] leading-relaxed text-slate-500">

@@ -8,13 +8,15 @@ from app.agents.harness import should_approve
 from app.core.events import event
 
 
-def make_tools_node(tools, emit):
+def make_tools_node(tools, emit, harness=None):
     """构建 LangGraph tools 节点。审批策略通过 config['configurable']['approval_policy'] 传入；
-    任一步骤工具失败（异常/未注入/用户拒绝）时返回 step_failed=True，供 plan-execute 的 replan 决策使用。"""
+    任一步骤工具失败（异常/未注入/用户拒绝）时返回 step_failed=True，供 plan-execute 的 replan 决策使用。
+    harness（可选）提供熔断与工具次数上限护栏。"""
     by_name = {t.name: t for t in tools}
 
     async def tools_node(state, config):
         policy = config["configurable"]["approval_policy"]
+        session_id = config["configurable"]["thread_id"]
         last = state["messages"][-1]
         calls = list(getattr(last, "tool_calls", None) or [])
         if not calls:
@@ -52,6 +54,29 @@ def make_tools_node(tools, emit):
         results = []
         any_failed = False
         for c in effective:
+            # 护栏：熔断 / 工具调用次数上限。命中直接短路，不执行。
+            # 熔断按「工具+参数」计：相同参数重复失败才拦截，换参数重试始终放行
+            if harness is not None:
+                if not harness.circuit_allows(session_id, c["name"], c.get("args", {})):
+                    msg = f"工具 {c['name']} 在当前参数下已连续失败触发熔断保护，请更换参数重试或改用其它工具。"
+                    emit(event("tool_start", tool=c["name"], args=c.get("args", {})))
+                    emit(event("tool_end", tool=c["name"], args=c.get("args", {}), result=msg, success=False))
+                    results.append(ToolMessage(content=msg, tool_call_id=c["id"]))
+                    continue
+                if harness.tool_calls_exceeded(session_id):
+                    msg = f"本轮工具调用已达上限（{harness.tool_calls_limit()} 次），已停止执行。"
+                    emit(event("tool_start", tool=c["name"], args=c.get("args", {})))
+                    emit(event("tool_end", tool=c["name"], args=c.get("args", {}), result=msg, success=False))
+                    results.append(ToolMessage(content=msg, tool_call_id=c["id"]))
+                    continue
+                # 故障注入钩子（验证熔断机制用）：模拟报错/超时并计入失败，不执行工具
+                injected = harness.fault_message(c["name"])
+                if injected is not None:
+                    emit(event("tool_start", tool=c["name"], args=c.get("args", {})))
+                    emit(event("tool_end", tool=c["name"], args=c.get("args", {}), result=injected, success=False))
+                    harness.record_tool_failure(session_id, c["name"], c.get("args", {}))
+                    results.append(ToolMessage(content=injected, tool_call_id=c["id"]))
+                    continue
             emit(event("tool_start", tool=c["name"], args=c.get("args", {})))
             try:
                 tool = by_name.get(c["name"])
@@ -59,10 +84,14 @@ def make_tools_node(tools, emit):
                     raise LookupError(f"工具 {c['name']} 未注入")
                 output = await tool.ainvoke(c.get("args", {}))
                 success = True
+                if harness is not None:
+                    harness.record_tool_success(session_id, c["name"], c.get("args", {}))
             except Exception as exc:
                 output = f"工具执行失败：{exc}"
                 success = False
                 any_failed = True
+                if harness is not None:
+                    harness.record_tool_failure(session_id, c["name"], c.get("args", {}))
             emit(event("tool_end", tool=c["name"], args=c.get("args", {}), result=str(output), success=success))
             results.append(ToolMessage(content=str(output), tool_call_id=c["id"]))
         return {"messages": results, "step_failed": any_failed}

@@ -132,6 +132,94 @@ async def test_multi_agent(settings, registry, sessions):
     assert "done" in types
 
 
+async def test_tool_call_limit(settings, registry, sessions):
+    # tool_max_calls=2：前 2 次工具调用正常执行，第 3 次被护栏拒绝（短路，不执行工具）
+    script = [
+        ai_with_tool("计算 1", args={"expression": "1+1"}, cid="c1"),
+        ai_with_tool("计算 2", args={"expression": "2+2"}, cid="c2"),
+        ai_with_tool("计算 3", args={"expression": "3+3"}, cid="c3"),
+        AIMessage(content="结束"),
+    ]
+    settings.tool_max_calls = 2
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="react", enabled=["calculator"])
+    assert len([e for e in events if e["type"] == "tool_end" and e["success"]]) == 2
+    assert any(e["type"] == "tool_end" and not e["success"] and "上限" in e["result"] for e in events)
+
+
+async def test_circuit_breaker(settings, registry, sessions):
+    # 同一工具连续失败达到阈值（2）后，后续调用被熔断短路（不再执行工具）
+    script = [
+        ai_with_tool("除零 1", args={"expression": "1/0"}, cid="c1"),
+        ai_with_tool("除零 2", args={"expression": "1/0"}, cid="c2"),
+        ai_with_tool("除零 3", args={"expression": "1/0"}, cid="c3"),
+        AIMessage(content="结束"),
+    ]
+    settings.circuit_fail_threshold = 2
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="react", enabled=["calculator"])
+    assert any(e["type"] == "tool_end" and not e["success"] and "熔断" in e["result"] for e in events)
+
+
+async def test_fault_injection_error(settings, registry, sessions):
+    # 故障注入 error：工具处理节点钩子直接返回模拟报错（不执行工具、不触发审批）
+    script = [
+        ai_with_tool("计算", args={"expression": "1+1"}, cid="c1"),
+        AIMessage(content="结束"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    runner.harness.set_fault("calculator", "error")
+    events = await collect_stream(runner, mode="react", enabled=["calculator"], approval_policy="always")
+    assert any(e["type"] == "tool_end" and not e["success"] and "故障注入" in e["result"] for e in events)
+    assert not any(e["type"] == "approval_request" for e in events)  # 注入短路，不触发审批
+
+
+async def test_fault_injection_triggers_circuit(settings, registry, sessions):
+    # 连续故障注入（超时）达到阈值后触发熔断：后续调用被短路为「已触发熔断」
+    script = [
+        ai_with_tool("超时 1", args={"expression": "1+1"}, cid="c1"),
+        ai_with_tool("超时 2", args={"expression": "1+1"}, cid="c2"),
+        ai_with_tool("超时 3", args={"expression": "1+1"}, cid="c3"),
+        AIMessage(content="结束"),
+    ]
+    settings.circuit_fail_threshold = 2
+    runner = await _runner_with(registry, sessions, settings, script)
+    runner.harness.set_fault("calculator", "timeout")
+    events = await collect_stream(runner, mode="react", enabled=["calculator"])
+    faulted = [e for e in events if e["type"] == "tool_end" and "故障注入" in e["result"]]
+    assert len(faulted) == 2  # 前两次模拟超时
+    assert any(e["type"] == "tool_end" and "熔断" in e["result"] for e in events)  # 第三次被熔断
+
+
+async def test_circuit_allows_retry_with_different_args(settings, registry, sessions):
+    # 熔断按「工具+参数」计：相同参数连续失败达阈值熔断该参数调用，
+    # 但模型换参数重试仍可正常执行（不会直接告诉用户工具不可用）
+    script = [
+        ai_with_tool("除零 1", args={"expression": "1/0"}, cid="c1"),
+        ai_with_tool("除零 2", args={"expression": "1/0"}, cid="c2"),
+        ai_with_tool("除零 3", args={"expression": "1/0"}, cid="c3"),  # 相同参数 → 熔断短路
+        ai_with_tool("正确计算", args={"expression": "1+1"}, cid="c4"),  # 换参数 → 放行执行
+        AIMessage(content="结束"),
+    ]
+    settings.circuit_fail_threshold = 2
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="react", enabled=["calculator"])
+    assert sum(1 for e in events if e["type"] == "tool_end" and "熔断" in e["result"]) == 1  # 仅相同参数被熔断
+    assert sum(1 for e in events if e["type"] == "tool_end" and e["success"]) == 1  # 换参数后成功执行
+
+
+async def test_system_prompt_includes_tool_retry_hint(settings, registry, sessions):
+    # 首轮 system prompt 应包含「工具失败可重试（换参数）」的规范，引导模型失败后重试而非直接说不可用
+    runner = await _runner_with(registry, sessions, settings, [])
+    graph = runner._build_graph("react", [], lambda d: None)
+    config = {"configurable": {"thread_id": "s1", "approval_policy": "never"}}
+    inputs = await runner._make_inputs(graph, config, "你好", "standard")
+    system = next(m for m in inputs["messages"] if m.type == "system")
+    assert "工具使用规范" in system.content
+    assert "重试" in system.content
+    assert "不要直接告诉用户工具不可用" in system.content
+
+
 async def test_unknown_mode(settings, registry, sessions):
     llm = FakeChatModel()
     runner = AgentRunner(settings, llm, registry, sessions)

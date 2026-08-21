@@ -7,8 +7,40 @@ export function useCapabilities() {
   const enabled = ref<string[]>(['calculator', 'time_now'])
   const loading = ref(false)
   const loadError = ref<string | null>(null)
+  /** 故障注入配置：tool_id → 'error' | 'timeout'（验证熔断机制用） */
+  const faults = ref<Record<string, string>>({})
   /** 示例提示：{cap, nonce}，HomeView watch 后填入输入框并展示提示条 */
   const exampleHint = ref<{ cap: Capability; nonce: number } | null>(null)
+
+  async function loadFaults() {
+    try {
+      const res = await fetch('/api/faults')
+      if (!res.ok) return
+      const data = await res.json()
+      faults.value = data.faults ?? {}
+    } catch {
+      /* 后端未启动或未配置模型时忽略 */
+    }
+  }
+
+  async function setFault(id: string, mode: string) {
+    try {
+      const res = await fetch('/api/fault', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: id, mode }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      faults.value = data.faults ?? faults.value
+    } catch (e) {
+      loadError.value = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  function faultMode(id: string): string {
+    return faults.value[id] ?? 'off'
+  }
 
   async function load() {
     loading.value = true
@@ -26,6 +58,7 @@ export function useCapabilities() {
     } finally {
       loading.value = false
     }
+    await loadFaults()
   }
 
   function toggle(id: string) {
@@ -64,10 +97,13 @@ export function useCapabilities() {
     enabled,
     loading,
     loadError,
+    faults,
     exampleHint,
     enabledCapabilities,
     availableCount,
     load,
+    setFault,
+    faultMode,
     toggle,
     isEnabled,
     ensureEnabled,

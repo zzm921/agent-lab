@@ -13,11 +13,14 @@ from langchain_core.tools import convert_runnable_to_tool
 from app.agents.middleware.events_mw import StreamEventsMiddleware, WorkerEventsMiddleware
 from app.agents.middleware.multi_agent_mw import MultiAgentMiddleware
 
-_COMPUTE_PROMPT = "你是计算 Worker，负责数值计算与带计算的子任务。需要时调用计算工具，最后给出结论。"
+_COMPUTE_PROMPT = (
+    "你是计算 Worker，负责数值计算与带计算的子任务。需要时调用计算工具，最后给出结论。"
+    "若工具调用失败或返回错误，先修正参数或换一种方式重试，不要直接说工具不可用。"
+)
 _ANALYZE_PROMPT = "你是分析 Worker，负责逻辑分析、归纳与总结子任务。不调用工具，直接给出分析结论。"
 _ORCHESTRATOR_PROMPT = (
     "你是编排者。根据任务调用 compute（计算）与 analyze（分析）两个 Worker，"
-    "最后整合它们的结果给出完整的最终答案。"
+    "最后整合它们的结果给出完整的最终答案。若某 Worker 返回错误，可调整任务措辞后重新分派。"
 )
 
 
@@ -37,7 +40,7 @@ def _worker_tool(worker, name, description):
     )
 
 
-def build_multi_agent_agent(llm, tools, emit, settings, checkpointer=None):
+def build_multi_agent_agent(llm, tools, emit, settings, checkpointer=None, harness=None):
     """构建 multi-agent 代理：编排者路由调用 compute/analyze 子代理并汇总。"""
     compute_tools = [t for t in tools if t.name == "calculator"]
 
@@ -45,14 +48,14 @@ def build_multi_agent_agent(llm, tools, emit, settings, checkpointer=None):
         model=llm,
         tools=compute_tools,
         system_prompt=_COMPUTE_PROMPT,
-        middleware=[WorkerEventsMiddleware(emit)],
+        middleware=[WorkerEventsMiddleware(emit, harness=harness)],
         checkpointer=None,
     )
     analyze_agent = create_agent(
         model=llm,
         tools=[],
         system_prompt=_ANALYZE_PROMPT,
-        middleware=[WorkerEventsMiddleware(emit)],
+        middleware=[WorkerEventsMiddleware(emit, harness=harness)],
         checkpointer=None,
     )
 
@@ -63,6 +66,6 @@ def build_multi_agent_agent(llm, tools, emit, settings, checkpointer=None):
         model=llm,
         tools=[compute_tool, analyze_tool],
         system_prompt=_ORCHESTRATOR_PROMPT,
-        middleware=[MultiAgentMiddleware(emit), StreamEventsMiddleware(emit)],
+        middleware=[MultiAgentMiddleware(emit), StreamEventsMiddleware(emit, harness=harness)],
         checkpointer=checkpointer,
     )
