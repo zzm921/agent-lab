@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { MODES } from '../data/techModules'
 
 interface Health {
   status: string
@@ -10,7 +9,6 @@ interface Health {
 }
 
 const health = ref<Health | null>(null)
-const showModes = ref(false)
 
 async function fetchHealth() {
   try {
@@ -29,24 +27,10 @@ onMounted(fetchHealth)
       <RouterLink to="/" class="flex items-center gap-3">
         <div class="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-lg font-bold text-white">A</div>
         <div>
-          <h1 class="text-base leading-tight font-semibold text-white">AI Agent 平台</h1>
-          <p class="text-xs text-slate-400">能力热插拔 · MCP · 多模式推理</p>
+          <h1 class="text-base leading-tight font-semibold text-white">Agent Lab</h1>
+          <p class="text-xs text-slate-400">Agent 实验室</p>
         </div>
       </RouterLink>
-
-      <nav class="flex items-center gap-1 text-sm">
-        <RouterLink to="/" class="rounded-lg px-3 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white">首页</RouterLink>
-        <RouterLink to="/compare" class="rounded-lg px-3 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white">模式对比</RouterLink>
-        <div class="relative" @mouseenter="showModes = true" @mouseleave="showModes = false">
-          <button type="button" class="rounded-lg px-3 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white">模式详情 ▾</button>
-          <div v-if="showModes" class="absolute right-0 mt-1 w-44 rounded-xl border border-slate-700 bg-slate-900 p-1 shadow-xl">
-            <RouterLink v-for="m in MODES" :key="m.id" :to="`/module/${m.id}`" class="block rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white">
-              <span class="block text-sm">{{ m.name }}</span>
-              <span class="block text-[11px] text-slate-500">{{ m.tagline }}</span>
-            </RouterLink>
-          </div>
-        </div>
-      </nav>
 
       <div class="hidden items-center gap-2 text-xs md:flex">
         <span :class="health ? 'text-emerald-400' : 'text-rose-400'">
