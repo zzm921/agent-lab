@@ -10,7 +10,7 @@ if str(BACKEND) not in sys.path:
 
 from langchain_core.messages import AIMessage  # noqa: E402
 
-from app.agents.harness import AgentHarness  # noqa: E402
+from app.agents.runner import AgentRunner  # noqa: E402
 from app.capabilities.mcp import McpManager  # noqa: E402
 from app.capabilities.registry import CapabilityRegistry  # noqa: E402
 from app.config import Settings  # noqa: E402
@@ -59,8 +59,8 @@ def registry(settings, sessions, corpus, embeddings):
 
 
 @pytest.fixture
-def harness(settings, registry, sessions):
-    return AgentHarness(settings, FakeChatModel(), registry, sessions)
+def runner(settings, registry, sessions):
+    return AgentRunner(settings, FakeChatModel(), registry, sessions)
 
 
 def ai_with_tool(content: str, name: str = "calculator", args: dict | None = None, cid: str = "call_1"):
@@ -71,8 +71,8 @@ def ai_with_tool(content: str, name: str = "calculator", args: dict | None = Non
     )
 
 
-async def collect_stream(harness, **kwargs):
-    """运行 harness.stream 并收集全部事件。"""
+async def collect_stream(runner, **kwargs):
+    """运行 runner.stream 并收集全部事件。"""
     defaults = {
         "session_id": "s1",
         "message": "测试任务",
@@ -83,6 +83,6 @@ async def collect_stream(harness, **kwargs):
     }
     defaults.update(kwargs)
     events = []
-    async for ev in harness.stream(**defaults):
+    async for ev in runner.stream(**defaults):
         events.append(ev)
     return events

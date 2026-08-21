@@ -16,6 +16,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelResponse
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import Command, interrupt
 
+from app.agents.harness import requires_approval
 from app.core.events import emit_text, event
 
 
@@ -168,7 +169,8 @@ class StreamEventsMiddleware(AgentMiddleware):
         return ModelResponse(result=[msg], structured_response=None)
 
     async def awrap_tool_call(self, request, handler):
-        return await _execute_tool_call(request, handler, self._emit, _approval_policy(request) == "always")
+        # 审批策略判定统一收敛到护栏层（harness.requires_approval）
+        return await _execute_tool_call(request, handler, self._emit, requires_approval(_approval_policy(request)))
 
 
 class WorkerEventsMiddleware(AgentMiddleware):

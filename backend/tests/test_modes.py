@@ -1,20 +1,20 @@
 """四种推理模式测试：使用 FakeChatModel 脚本驱动确定性执行。"""
 from langchain_core.messages import AIMessage
 
-from app.agents.harness import AgentHarness
+from app.agents.runner import AgentRunner
 from app.llm.fake_model import FakeChatModel
 from tests.conftest import ai_with_tool, collect_stream
 
 
-async def _harness_with(registry, sessions, settings, script):
+async def _runner_with(registry, sessions, settings, script):
     llm = FakeChatModel()
     llm.script = script
-    return AgentHarness(settings, llm, registry, sessions)
+    return AgentRunner(settings, llm, registry, sessions)
 
 
 async def test_react_direct_answer(settings, registry, sessions):
-    harness = await _harness_with(registry, sessions, settings, [AIMessage(content="直接回答：42")])
-    events = await collect_stream(harness, mode="react")
+    runner = await _runner_with(registry, sessions, settings, [AIMessage(content="直接回答：42")])
+    events = await collect_stream(runner, mode="react")
     types = [e["type"] for e in events]
     assert types[0] == "meta"
     assert "message" in types
@@ -27,8 +27,8 @@ async def test_react_tool_loop(settings, registry, sessions):
         ai_with_tool("需要计算", args={"expression": "1+1"}),
         AIMessage(content="计算结果是 2"),
     ]
-    harness = await _harness_with(registry, sessions, settings, script)
-    events = await collect_stream(harness, mode="react", enabled=["calculator"])
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="react", enabled=["calculator"])
     types = [e["type"] for e in events]
     assert "tool_start" in types
     assert "tool_end" in types
@@ -44,8 +44,8 @@ async def test_plan_execute(settings, registry, sessions):
         AIMessage(content="已执行步骤一"),
         AIMessage(content="已执行步骤二"),
     ]
-    harness = await _harness_with(registry, sessions, settings, script)
-    events = await collect_stream(harness, mode="plan_execute")
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="plan_execute")
     plan_events = [e for e in events if e["type"] == "plan"]
     assert plan_events and plan_events[0]["status"] == "created"
     assert plan_events[-1]["status"] == "done"
@@ -63,8 +63,8 @@ async def test_plan_execute_replan(settings, registry, sessions):
         AIMessage(content="执行新步骤一"),
         AIMessage(content="执行新步骤二"),
     ]
-    harness = await _harness_with(registry, sessions, settings, script)
-    events = await collect_stream(harness, mode="plan_execute", enabled=["calculator"])
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="plan_execute", enabled=["calculator"])
     plan_events = [e for e in events if e["type"] == "plan"]
     assert len([e for e in plan_events if e["status"] == "created"]) >= 2  # 初次计划 + 重规划
     assert plan_events[-1]["status"] == "done"
@@ -79,14 +79,14 @@ async def test_stop_cancels_running_execution(settings, registry, sessions):
         ai_with_tool("计算 3", args={"expression": "3+3"}, cid="call_3"),
         AIMessage(content="最终结果 6"),
     ]
-    harness = await _harness_with(registry, sessions, settings, script)
+    runner = await _runner_with(registry, sessions, settings, script)
     session_id = "s_stop"
     seen = []
-    async for ev in harness.stream(session_id, "测试任务", "react", ["calculator"], "standard", "never"):
+    async for ev in runner.stream(session_id, "测试任务", "react", ["calculator"], "standard", "never"):
         seen.append(ev)
         if ev.get("type") == "tool_start":
-            harness.stop(session_id)
-    assert harness._tasks.get(session_id) is None or harness._tasks[session_id].done()
+            runner.stop(session_id)
+    assert runner.harness._tasks.get(session_id) is None or runner.harness._tasks[session_id].done()
     done = next((e for e in seen if e.get("type") == "done"), None)
     assert done is not None and "停止" in done["summary"]
     full = "".join(e.get("delta", "") for e in seen if e["type"] == "message")
@@ -100,8 +100,8 @@ async def test_reflection_revise_loop(settings, registry, sessions):
         AIMessage(content="修订后的完整答案"),
         AIMessage(content="无"),
     ]
-    harness = await _harness_with(registry, sessions, settings, script)
-    events = await collect_stream(harness, mode="reflection")
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="reflection")
     types = [e["type"] for e in events]
     assert "reflect" in types
     assert "revise" in types
@@ -120,8 +120,8 @@ async def test_multi_agent(settings, registry, sessions):
         AIMessage(content="分析结论：任务可行"),
         AIMessage(content="最终汇总答案"),
     ]
-    harness = AgentHarness(settings, llm, registry, sessions)
-    events = await collect_stream(harness, mode="multi_agent", enabled=["calculator"])
+    runner = AgentRunner(settings, llm, registry, sessions)
+    events = await collect_stream(runner, mode="multi_agent", enabled=["calculator"])
     types = [e["type"] for e in events]
     assert "agent_event" in types
     agent_events = [e for e in events if e["type"] == "agent_event"]
@@ -134,6 +134,6 @@ async def test_multi_agent(settings, registry, sessions):
 
 async def test_unknown_mode(settings, registry, sessions):
     llm = FakeChatModel()
-    harness = AgentHarness(settings, llm, registry, sessions)
-    events = await collect_stream(harness, mode="nope")
+    runner = AgentRunner(settings, llm, registry, sessions)
+    events = await collect_stream(runner, mode="nope")
     assert any(e["type"] == "error" for e in events)

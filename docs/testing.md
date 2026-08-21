@@ -34,7 +34,7 @@ npm run test
 **test_api_stream.py（6）** — API 层
 - `test_health`：`/api/health` 返回状态、模型、MCP/Embedding 配置标记
 - `test_capabilities_with_fake_registry`：`/api/capabilities` 返回能力目录
-- `test_stream_sse_with_fake_harness`：`/api/stream` 产出 SSE 事件序列（meta/done）
+- `test_stream_sse_with_fake_runner`：`/api/stream` 产出 SSE 事件序列（meta/done）
 - `test_approve_sse`：`/api/approve` 恢复执行并产出事件
 - `test_source_returns_code` / `test_source_unknown_module`：源码接口（存在/未知模块）
 

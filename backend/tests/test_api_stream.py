@@ -18,7 +18,7 @@ class FakeRegistry:
         return self._caps
 
 
-class FakeHarness:
+class FakeRunner:
     def __init__(self, events):
         self._events = events
 
@@ -56,13 +56,13 @@ def test_capabilities_with_fake_registry():
     assert resp.json()["capabilities"][0]["id"] == "calculator"
 
 
-def test_stream_sse_with_fake_harness():
+def test_stream_sse_with_fake_runner():
     events = [
         {"type": "meta", "session_id": "s1", "mode": "react", "capabilities": ["calculator"]},
         {"type": "message", "delta": "你好"},
         {"type": "done", "summary": "完成", "stats": {"tool_calls": 0}},
     ]
-    chat.set_runtime(harness=FakeHarness(events))
+    chat.set_runtime(runner=FakeRunner(events))
     client = TestClient(app)
     resp = client.post("/api/stream", json={"session_id": "s1", "message": "你好", "mode": "react"})
     assert resp.status_code == 200
@@ -73,7 +73,7 @@ def test_stream_sse_with_fake_harness():
 
 def test_approve_sse():
     events = [{"type": "tool_end", "tool": "calculator", "success": True, "result": "2"}, {"type": "done"}]
-    chat.set_runtime(harness=FakeHarness(events))
+    chat.set_runtime(runner=FakeRunner(events))
     client = TestClient(app)
     resp = client.post(
         "/api/approve", json={"approval_id": "a1", "decision": "approve", "modified_args": None}

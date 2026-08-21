@@ -47,12 +47,23 @@ export const LINE_NOTES: Record<string, CodeNotes> = {
       { range: [87, 99], text: 'aggregate：整合各 Worker 子结论，输出最终回答' },
     ],
   },
+  runner: {
+    file: 'agents/runner.py',
+    notes: [
+      { range: [89, 107], text: 'stream：构建模式图并产出 meta + 流式事件' },
+      { range: [109, 125], text: 'resume：审批后按 decision / modified_args 恢复图执行' },
+      { range: [131, 191], text: '核心循环：跑图、排空事件队列、遇中断产出 approval_request 并暂停' },
+    ],
+  },
   harness: {
     file: 'agents/harness.py',
     notes: [
-      { range: [83, 100], text: 'stream：构建模式图并产出 meta + 流式事件' },
-      { range: [102, 117], text: 'resume：审批后按 decision / modified_args 恢复图执行' },
-      { range: [119, 149], text: '核心循环：跑图、排空事件队列、遇中断产出 approval_request 并暂停' },
+      { range: [16, 18], text: '审批策略：approval_policy=always 时工具调用需 HITL 审批' },
+      { range: [34, 36], text: '资源上限：按 max_iterations 推导递归上限（超限兜底报错）' },
+      { range: [45, 49], text: '止损：stop() 取消进行中的运行，避免继续消耗 token' },
+      { range: [52, 58], text: '可观测：工具调用统计（每轮重置、跨 resume 累计）' },
+      { range: [61, 65], text: '审批会话映射：approval_id → thread_id，供 HITL 恢复' },
+      { range: [68, 70], text: '错误兜底：统一失败事件' },
     ],
   },
   registry: {

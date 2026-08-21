@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
-from app.agents.harness import AgentHarness
+from app.agents.runner import AgentRunner
 from app.capabilities.mcp import McpManager
 from app.capabilities.registry import CapabilityRegistry
 from app.config import settings
@@ -28,8 +28,8 @@ def _sse(events):
 
     return EventSourceResponse(gen())
 
-# 运行时单例：registry/harness 分开构建，能力目录不依赖大模型 Key
-_RUNTIME: dict = {"sessions": None, "registry": None, "harness": None}
+# 运行时单例：registry/runner 分开构建，能力目录不依赖大模型 Key
+_RUNTIME: dict = {"sessions": None, "registry": None, "runner": None}
 
 
 def _build_embeddings_and_corpus():
@@ -62,21 +62,21 @@ def get_registry() -> CapabilityRegistry:
     return _RUNTIME["registry"]
 
 
-def get_harness() -> AgentHarness:
-    if _RUNTIME["harness"] is None:
+def get_runner() -> AgentRunner:
+    if _RUNTIME["runner"] is None:
         llm = create_chat_model(fake=False)  # 未配百炼 API Key 时抛 ConfigError
-        _RUNTIME["harness"] = AgentHarness(settings, llm, get_registry(), get_sessions())
-    return _RUNTIME["harness"]
+        _RUNTIME["runner"] = AgentRunner(settings, llm, get_registry(), get_sessions())
+    return _RUNTIME["runner"]
 
 
-def set_runtime(sessions=None, registry=None, harness=None) -> None:
+def set_runtime(sessions=None, registry=None, runner=None) -> None:
     """测试注入 fake 运行时。"""
     if sessions is not None:
         _RUNTIME["sessions"] = sessions
     if registry is not None:
         _RUNTIME["registry"] = registry
-    if harness is not None:
-        _RUNTIME["harness"] = harness
+    if runner is not None:
+        _RUNTIME["runner"] = runner
 
 
 @router.get("/capabilities")
@@ -90,9 +90,9 @@ async def list_capabilities():
 @router.post("/stream")
 async def chat_stream(req: StreamRequest):
     """SSE 流式对话：思考/行动/观察/计划/反思/工具/审批/完成事件。"""
-    harness = get_harness()
+    runner = get_runner()
     session_id = req.session_id or get_sessions().create()
-    events = harness.stream(
+    events = runner.stream(
         session_id,
         req.message,
         req.mode,
@@ -106,15 +106,15 @@ async def chat_stream(req: StreamRequest):
 @router.post("/approve")
 async def approve(req: ApproveRequest):
     """HITL 审批：批准/拒绝/修改工具参数后恢复执行。"""
-    harness = get_harness()
-    events = harness.resume(req.approval_id, req.decision, req.modified_args)
+    runner = get_runner()
+    events = runner.resume(req.approval_id, req.decision, req.modified_args)
     return _sse(events)
 
 
 @router.post("/stop")
 async def stop_run(req: StopRequest):
     """停止指定会话的后端执行：立即取消后台图任务，避免继续消耗 token。"""
-    get_harness().stop(req.session_id)
+    get_runner().stop(req.session_id)
     return {"ok": True}
 
 
@@ -130,6 +130,7 @@ _SOURCE_FILES: dict[str, str] = {
     "plan_execute": "agents/modes/plan_execute.py",
     "reflection": "agents/modes/reflection.py",
     "multi_agent": "agents/modes/multi_agent.py",
+    "runner": "agents/runner.py",
     "harness": "agents/harness.py",
 }
 

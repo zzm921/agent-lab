@@ -22,7 +22,8 @@
 │    └ capabilities/mcp.py：MCP server 管理（stdio/HTTP）、工具发现、  │
 │                           连接失败标记「不适配」                    │
 │  agents/tools_builder.py：按 enabled_capabilities 组装工具集      │
-│  agents/harness.py：SSE 驱动 + HITL 中断/恢复                       │
+│  agents/runner.py：SSE 驱动 + HITL 中断/恢复                        │
+│  agents/harness.py：护栏层（审批策略/资源上限/止损/统计）           │
 │  agents/modes/*.py：create_agent 构建四种模式                       │
 │  agents/middleware/*：事件流/HITL/计划/反思/多代理 中间件           │
 │  tools/（calculator/time_now/web_search/rag_tool/memory_tool）    │
