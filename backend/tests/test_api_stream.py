@@ -1,12 +1,22 @@
 """API 层测试：能力目录、SSE 流式对话、审批、故障注入、源码展示、健康检查、沙箱文件（注入 Fake 运行时）。"""
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.agents.harness import AgentHarness
 from app.api import chat, sandbox
 from app.config import Settings
+from app.core.rate_limit import DailyQuota
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def _isolate_quota():
+    """每个 API 测试使用独立的内存配额，避免测试间相互影响与落盘。"""
+    chat.set_quota(DailyQuota(limit=20, path=None))
+    yield
+    chat.set_quota(None)
 
 
 class FakeRegistry:
@@ -74,6 +84,40 @@ def test_stream_sse_with_fake_runner():
     parsed = _parse_sse(resp.text)
     assert parsed[0]["type"] == "meta"
     assert parsed[-1]["type"] == "done"
+
+
+def test_quota_exceeded_returns_429():
+    chat.set_runtime(runner=FakeRunner([]))
+    chat.set_quota(DailyQuota(limit=2, path=None))
+    client = TestClient(app)
+    body = {"session_id": "q1", "message": "hi", "mode": "react"}
+    assert client.post("/api/stream", json=body).status_code == 200
+    assert client.post("/api/stream", json=body).status_code == 200
+    resp = client.post("/api/stream", json=body)
+    assert resp.status_code == 429
+    assert "上限" in resp.json()["detail"]
+
+
+def test_quota_counted_by_client_id_not_shared():
+    """不同设备指纹（X-Client-Id）各自独立计数，避免 NAT 共享 IP 被合并限制。"""
+    chat.set_runtime(runner=FakeRunner([]))
+    chat.set_quota(DailyQuota(limit=1, path=None))
+    client = TestClient(app)
+    body = {"session_id": "q2", "message": "hi", "mode": "react"}
+    assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-a"}).status_code == 200
+    assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-a"}).status_code == 429
+    assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-b"}).status_code == 200
+
+
+def test_quota_info_endpoint():
+    chat.set_quota(DailyQuota(limit=5, path=None))
+    client = TestClient(app)
+    resp = client.get("/api/quota")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["enabled"] is True
+    assert data["limit"] == 5
+    assert data["remaining"] == 5
 
 
 def test_approve_sse():

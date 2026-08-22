@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
 from app.agents.runner import AgentRunner
@@ -10,6 +10,7 @@ from app.capabilities.mcp import McpManager
 from app.capabilities.registry import CapabilityRegistry
 from app.config import settings
 from app.core.errors import ConfigError
+from app.core.rate_limit import DailyQuota
 from app.llm.client import create_chat_model, create_embeddings
 from app.memory.corpus import KNOWLEDGE_CORPUS
 from app.memory.session_store import SessionStore
@@ -30,6 +31,7 @@ def _sse(events):
 
 # 运行时单例：registry/runner 分开构建，能力目录不依赖大模型 Key
 _RUNTIME: dict = {"sessions": None, "registry": None, "runner": None}
+_QUOTA: DailyQuota | None = None
 
 
 def _build_embeddings_and_corpus():
@@ -79,6 +81,42 @@ def set_runtime(sessions=None, registry=None, runner=None) -> None:
         _RUNTIME["runner"] = runner
 
 
+def set_quota(quota: DailyQuota | None) -> None:
+    """测试注入/重置每日配额实例（None 表示按配置懒加载）。"""
+    global _QUOTA
+    _QUOTA = quota
+
+
+def get_quota() -> DailyQuota:
+    """获取（必要时按配置懒创建）每日配额实例。"""
+    global _QUOTA
+    if _QUOTA is None:
+        _QUOTA = DailyQuota(
+            limit=settings.quota_daily_limit,
+            path=settings.quota_store_path or None,
+        )
+    return _QUOTA
+
+
+def _client_ip(request: Request) -> str:
+    """获取客户端真实 IP：部署在反向代理后时优先信任转发头。"""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real = request.headers.get("x-real-ip", "")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _client_key(request: Request) -> str:
+    """客户端标识：优先设备指纹（X-Client-Id，精确区分「一台电脑」），否则退回 IP。"""
+    client_id = request.headers.get("x-client-id", "").strip()
+    if client_id:
+        return f"cid:{client_id}"
+    return f"ip:{_client_ip(request)}"
+
+
 @router.get("/capabilities")
 async def list_capabilities():
     """能力目录：内置 + MCP 发现，含可用性与不适配原因。"""
@@ -88,8 +126,21 @@ async def list_capabilities():
 
 
 @router.post("/stream")
-async def chat_stream(req: StreamRequest):
-    """SSE 流式对话：思考/行动/观察/计划/反思/工具/审批/完成事件。"""
+async def chat_stream(req: StreamRequest, request: Request):
+    """SSE 流式对话：思考/行动/观察/计划/反思/工具/审批/完成事件。
+
+    每次调用消耗一次「每日对话配额」（按设备指纹或 IP 计数），
+    超过每日上限（默认 20 次）返回 429，防止单台设备/IP 滥用。
+    """
+    if settings.quota_enabled:
+        quota = get_quota()
+        key = _client_key(request)
+        allowed, _ = quota.try_consume(key)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"今日对话次数已达上限（{quota.limit} 次），请明天再试",
+            )
     runner = get_runner()
     session_id = req.session_id or get_sessions().create()
     events = runner.stream(
@@ -101,6 +152,18 @@ async def chat_stream(req: StreamRequest):
         req.approval_policy,
     )
     return _sse(events)
+
+
+@router.get("/quota")
+async def quota_info(request: Request):
+    """当前客户端今日对话配额使用情况（前端可据此提示剩余次数）。"""
+    quota = get_quota()
+    key = _client_key(request)
+    return {
+        "enabled": settings.quota_enabled,
+        "limit": quota.limit,
+        "remaining": quota.remaining(key) if settings.quota_enabled else quota.limit,
+    }
 
 
 @router.post("/approve")

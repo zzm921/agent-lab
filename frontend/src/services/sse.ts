@@ -3,6 +3,36 @@
  */
 import type { AgentEvent } from '../types/agent'
 
+/** 客户端设备指纹：localStorage 持久化，用于后端「每日对话配额」按「一台电脑」精确计数 */
+const CLIENT_ID_KEY = 'agent_lab_client_id'
+
+function getClientId(): string {
+  try {
+    let id = localStorage.getItem(CLIENT_ID_KEY)
+    if (!id) {
+      id =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      localStorage.setItem(CLIENT_ID_KEY, id)
+    }
+    return id
+  } catch {
+    return ''
+  }
+}
+
+/** 获取当前客户端的每日对话配额使用情况（GET /api/quota，带设备指纹头） */
+export async function fetchQuota(): Promise<{ enabled: boolean; limit: number; remaining: number }> {
+  const clientId = getClientId()
+  const resp = await fetch('/api/quota', {
+    method: 'GET',
+    headers: clientId ? { 'X-Client-Id': clientId } : {},
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  return resp.json()
+}
+
 /** 找到第一个事件块结束位置（空行 \n\n 或 \r\n\r\n），无则返回 -1 */
 function findBlockEnd(buf: string): number {
   const a = buf.indexOf('\n\n')
@@ -42,16 +72,23 @@ export async function* streamEvents(
   body: unknown,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
+  const clientId = getClientId()
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(clientId ? { 'X-Client-Id': clientId } : {}),
+    },
     body: JSON.stringify(body),
     signal,
   })
   if (!resp.ok) {
     let detail = ''
     try {
-      detail = (await resp.text()).slice(0, 200)
+      const text = await resp.text()
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed.detail === 'string') detail = parsed.detail
+      else detail = text.slice(0, 200)
     } catch {
       /* 忽略读取失败 */
     }

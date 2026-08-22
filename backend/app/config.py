@@ -17,8 +17,15 @@ class Settings(BaseSettings):
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_model: str = "text-embedding-v3"
 
-    # MCP Servers（JSON 字符串）
+    # MCP Servers（JSON 字符串，声明可用 server；MCP_ENABLED=false 时只注册不连接）
     mcp_servers: str = "{}"
+    # 是否默认连接 MCP Server；false 时由前端页面「MCP 服务」开关点选开启（POST /api/mcp）
+    mcp_enabled: bool = False
+
+    # 每日对话配额：限制「一台电脑 / 一个 IP」每天的对话次数（部署防滥用）
+    quota_enabled: bool = True
+    quota_daily_limit: int = 100  # 每客户端每天最多发起的对话次数
+    quota_store_path: str = "./data/quota.json"  # 计数持久化文件（空字符串表示仅内存）
 
     # 运行参数
     max_iterations: int = 8

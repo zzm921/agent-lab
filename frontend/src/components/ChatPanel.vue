@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import LiveStage from './LiveStage.vue'
 import TaskInput from './TaskInput.vue'
+import { fetchQuota } from '../services/sse'
 import type { ApprovalPolicy, Capability, ChatStream, ModeId, PromptStrategy } from '../types/agent'
 
 const props = defineProps<{
@@ -58,6 +59,25 @@ function onSend() {
   if (!props.task.trim() || props.sending) return
   emit('send')
 }
+
+// 每日对话配额：展示「今日剩余次数」，进入页面与每次对话结束后刷新
+const quota = ref<{ enabled: boolean; limit: number; remaining: number } | null>(null)
+
+async function refreshQuota() {
+  try {
+    quota.value = await fetchQuota()
+  } catch {
+    quota.value = null // 接口不可用时静默隐藏
+  }
+}
+
+onMounted(refreshQuota)
+watch(
+  () => props.stream.status,
+  (s) => {
+    if (s === 'done' || s === 'error') refreshQuota()
+  },
+)
 </script>
 
 <template>
@@ -113,6 +133,18 @@ function onSend() {
     </div>
 
     <div class="border-t border-slate-800 p-4">
+      <div class="mb-2 flex items-center justify-between text-[11px] text-slate-500">
+        <span v-if="quota?.enabled">
+          今日剩余
+          <span :class="quota.remaining > 0 ? 'font-semibold text-indigo-300' : 'font-semibold text-rose-400'">
+            {{ quota.remaining }}
+          </span>
+          / {{ quota.limit }} 次对话
+        </span>
+        <span v-else-if="quota">每日对话次数不限</span>
+        <span v-else>&nbsp;</span>
+        <span class="hidden sm:inline">按电脑/IP 计数，每日 0 点重置</span>
+      </div>
       <TaskInput
         :model-value="task"
         placeholder="输入任务，例如：帮我计算 (137×0.85−20)÷3 等于多少"
