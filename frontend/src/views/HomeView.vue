@@ -11,16 +11,19 @@ import SandboxFilesPanel from '../components/SandboxFilesPanel.vue'
 
 const route = useRoute()
 const {
-  caps,
   enabled,
   loading,
   loadError,
   faults,
   faultTypes,
+  mcpEnabled,
   exampleHint,
   enabledCapabilities,
+  builtinCaps,
+  mcpCaps,
   load,
   setFault,
+  setMcpEnabled,
   toggle,
   ensureEnabled,
   applyExample,
@@ -123,7 +126,7 @@ function send() {
 <template>
   <div class="flex h-full w-full">
     <CapabilitySidebar
-      :caps="caps"
+      :caps="builtinCaps"
       :enabled-ids="enabled"
       :faults="faults"
       :fault-types="faultTypes"
@@ -133,9 +136,12 @@ function send() {
       :strategy="strategy"
       :policy="policy"
       :open="sidebarOpen"
+      :mcp-enabled="mcpEnabled"
+      :mcp-caps="mcpCaps"
       @toggle="toggle"
       @example="onExample"
       @fault="setFault"
+      @toggle-mcp="setMcpEnabled"
       @update:mode="mode = $event"
       @update:strategy="strategy = $event"
       @update:policy="policy = $event"

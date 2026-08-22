@@ -15,7 +15,7 @@ from app.llm.client import create_chat_model, create_embeddings
 from app.memory.corpus import KNOWLEDGE_CORPUS
 from app.memory.session_store import SessionStore
 from app.memory.vector_store import VectorStore
-from app.schemas import ApproveRequest, FaultRequest, StopRequest, StreamRequest
+from app.schemas import ApproveRequest, FaultRequest, McpToggleRequest, StopRequest, StreamRequest
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -48,7 +48,7 @@ def _build_embeddings_and_corpus():
 
 def _build_registry(sessions):
     embeddings, corpus = _build_embeddings_and_corpus()
-    mcp = McpManager(settings.mcp_servers)
+    mcp = McpManager(settings.mcp_servers, enabled=settings.mcp_enabled)
     return CapabilityRegistry(settings, sessions, mcp, corpus, embeddings)
 
 
@@ -123,6 +123,24 @@ async def list_capabilities():
     registry = get_registry()
     await registry.refresh()
     return {"capabilities": registry.list()}
+
+
+@router.get("/mcp")
+async def mcp_status():
+    """MCP 开关状态：enabled + 已注册 server + 已发现能力。"""
+    mcp = get_registry().mcp
+    return {"enabled": mcp.enabled, "servers": list(mcp.servers.keys()), "capabilities": mcp.capabilities}
+
+
+@router.post("/mcp")
+async def mcp_toggle(req: McpToggleRequest):
+    """页面点选开启/关闭 MCP 服务：开启即连接注册的 server 并发现工具，关闭清空能力。"""
+    mcp = get_registry().mcp
+    if req.enabled and not mcp.enabled:
+        await mcp.enable()
+    elif not req.enabled and mcp.enabled:
+        mcp.disable()
+    return {"enabled": mcp.enabled, "capabilities": mcp.capabilities}
 
 
 @router.post("/stream")

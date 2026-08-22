@@ -36,3 +36,7 @@ class FaultRequest(BaseModel):
 
 class SourceRequest(BaseModel):
     module: str = Field(description="源码模块 key")
+
+
+class McpToggleRequest(BaseModel):
+    enabled: bool = Field(description="是否开启 MCP 服务（连接注册的 MCP Server 并发现工具）")

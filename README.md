@@ -50,7 +50,14 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | `EMBEDDING_API_KEY` | 否 | RAG / 长期记忆需要（OpenAI 兼容接口，默认与百炼共用 Key） |
 | `EMBEDDING_BASE_URL` | 否 | 默认 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `EMBEDDING_MODEL` | 否 | 默认 `text-embedding-v3` |
-| `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server |
+| `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server（本项目自带 `mcp-notes` 便签 server） |
+| `MCP_ENABLED` | 否 | 默认 `false`：只注册不连接；开启请在页面侧边栏「MCP 服务」开关点选（`POST /api/mcp`），无需重启 |
+
+MCP 便签 server（可选，先在另一终端启动）：
+
+```bash
+cd backend && uvicorn app.mcp_server.notes_server:app --port 8001
+```
 
 详见 [docs/deployment.md](docs/deployment.md)。
 
@@ -59,6 +66,8 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/capabilities` | 能力目录（内置 + MCP，含可用性/示例） |
+| GET | `/api/mcp` | MCP 服务状态（enabled / servers / capabilities） |
+| POST | `/api/mcp` | 页面点选开启/关闭 MCP 服务（连接并发现/移除 MCP 工具） |
 | POST | `/api/stream` | SSE 流式对话（模式/能力/策略/审批策略） |
 | POST | `/api/approve` | HITL 审批（批准/拒绝/修改） |
 | GET | `/api/source/{module}` | 后端真实源码（代码展示用） |
