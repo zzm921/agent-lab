@@ -194,8 +194,8 @@ async def test_fault_injection_triggers_circuit(settings, registry, sessions):
 
 
 async def test_fault_transient_type_triggers_direct_retry(settings, registry, sessions):
-    # 瞬时故障注入类型（如 http_500）：工具层透明重试，发 tool_retry 事件；
-    # 重试耗尽后返回结构化错误给模型（Agent 层思考后重试），且不触发审批
+    # 瞬时故障注入类型（如 http_500）：工具执行前仍需 HITL 审批（审批永不跳过）；
+    # 批准后进入工具层透明重试（发 tool_retry 事件）；重试耗尽后返回结构化错误给模型（Agent 层思考后重试）
     script = [
         ai_with_tool("触发 500", args={"expression": "1+1"}, cid="c1"),
         AIMessage(content="结束"),
@@ -205,14 +205,20 @@ async def test_fault_transient_type_triggers_direct_retry(settings, registry, se
     runner = await _runner_with(registry, sessions, settings, script)
     runner.harness.set_fault("calculator", "http_500")
     events = await collect_stream(runner, mode="react", enabled=["calculator"], approval_policy="always")
-    retry_events = [e for e in events if e["type"] == "tool_retry"]
-    assert len(retry_events) == 2  # tool_retry_max=3：原始 1 次 + 直接重试 2 次
+    request = next(e for e in events if e["type"] == "approval_request")  # 故障工具也先审批
+    assert request["tool_calls"][0]["name"] == "calculator"
+    assert not any(e["type"] == "tool_retry" for e in events)  # 批准前未执行工具
+
+    resumed = []
+    async for ev in runner.resume(request["approval_id"], "approve", {}):
+        resumed.append(ev)
+    retry_events = [e for e in resumed if e["type"] == "tool_retry"]
+    assert retry_events, "批准后应进入工具层透明重试"
     assert retry_events[0]["tool"] == "calculator"
     assert retry_events[0]["max"] == 3
-    end = next(e for e in events if e["type"] == "tool_end" and not e["success"])
+    end = next(e for e in resumed if e["type"] == "tool_end" and not e["success"])
     assert "故障注入" in end["result"]
     assert "瞬时错误" in end["result"]  # 结构化错误给模型
-    assert not any(e["type"] == "approval_request" for e in events)  # 故障注入短路审批
 
 
 async def test_fault_permanent_type_goes_to_model(settings, registry, sessions):

@@ -84,7 +84,7 @@ const currentAttempt = computed(() => props.entry.retryCount ?? 0)
     <!-- 重试进行中：下一次重试的实时倒计时 -->
     <div v-if="entry.retryCount && entry.status === 'running' && remaining > 0" class="mt-2">
       <div class="flex items-center justify-between font-mono text-[11px] text-amber-300/90">
-        <span>{{ remaining.toFixed(1) }}s 后第 {{ currentAttempt + 1 }}/{{ entry.retryMax }} 次重试</span>
+        <span>{{ remaining.toFixed(1) }}s 后第 {{ currentAttempt }}/{{ entry.retryMax }} 次重试</span>
         <span title="实际等待 = 指数退避值 × (±50% 抖动)">抖动后 {{ entry.retryDelay?.toFixed(2) }}s</span>
       </div>
       <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-black/40">

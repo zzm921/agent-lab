@@ -132,20 +132,18 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=
         emit(event("tool_end", tool=name, args=args, result=msg, success=False))
         return ToolMessage(content=msg, tool_call_id=cid)
 
-    # 故障注入钩子（验证两层重试与熔断机制用）：命中则短路审批，不执行真实工具。
+    # 故障注入钩子（验证两层重试与熔断机制用）：
     # 按注入类型分类：
-    # - 瞬时错误（timeout/conn_reset/dns/429/5xx，retryable=True）→ 抛 RetryableToolError
-    #   进入工具层透明重试（发 tool_retry 事件，指数退避，耗尽返回结构化错误给模型）；
     # - 参数/业务错误（error/business/400/401/403/404，retryable=False）→ 不直接重试，
-    #   错误文本直接返回给模型思考后重试。
+    #   错误文本直接返回给模型思考后重试（不执行工具，故不触发审批）；
+    # - 瞬时错误（timeout/conn_reset/dns/429/5xx，retryable=True）→ 仍走 HITL 审批，
+    #   批准后进入工具层透明重试（发 tool_retry 事件，指数退避，耗尽返回结构化错误给模型）。
     fault = harness.fault_spec(name) if harness is not None else None
     if fault is not None and not fault["retryable"]:
         emit(event("tool_start", tool=name, args=args))
         emit(event("tool_end", tool=name, args=args, result=fault["message"], success=False))
         harness.record_tool_failure(session_id, name, args)
         return ToolMessage(content=fault["message"], tool_call_id=cid)
-    if fault is not None:
-        do_approval = False  # 瞬时故障注入同样短路审批，直接进入工具层透明重试
 
     # Agent 层重试上限：同一工具连续失败（可换参数）达到上限后，直接提示模型改用其它工具，不执行也不审批
     if harness is not None and harness.tool_exhausted(session_id, name):

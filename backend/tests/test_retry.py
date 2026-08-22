@@ -131,8 +131,8 @@ async def test_invoke_with_retry_exhausted():
     assert success is False
     assert result is None
     assert isinstance(error, RetryableToolError)
-    assert retries == 2  # 最大 3 次尝试 = 原始 1 + 重试 2
-    assert len(events) == 2
+    assert retries == 3  # 第一次调用不算重试：原始 1 次 + 失败后自动重试 3 次 = 共 4 次尝试
+    assert len(events) == 3
 
 
 async def test_invoke_with_retry_skips_permanent():
@@ -210,12 +210,12 @@ async def test_tool_layer_retry_exhausted_returns_structured_error():
     """重试耗尽：返回结构化错误（含错误类型/详情/建议）给模型。"""
     tool = _FlakyTool(fail_before_ok=99)
     out, events, _ = await _run_node([tool])
-    assert len([e for e in events if e["type"] == "tool_retry"]) == 2  # 重试 2 次后耗尽
+    assert len([e for e in events if e["type"] == "tool_retry"]) == 3  # 失败后自动重试 3 次（共 4 次尝试）后耗尽
     end = next(e for e in events if e["type"] == "tool_end")
     assert end["success"] is False
     msg = out["messages"][0].content
     assert "错误类型：瞬时错误" in msg
-    assert "已用相同参数自动重试 2 次" in msg
+    assert "已用相同参数自动重试 3 次" in msg
     assert out["step_failed"] is True
 
 

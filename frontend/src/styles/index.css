@@ -36,3 +36,196 @@ body {
 .fade-leave-to {
   opacity: 0;
 }
+
+/* =====================================================================
+ * 浅色主题（html[data-theme="light"]）中央覆盖层
+ * 默认整体深色；切换主题时给 <html> 加 data-theme="light"，
+ * 下面的规则把用到的深色工具类逐类重映射为浅色，无需改动组件。
+ * ===================================================================== */
+
+html[data-theme='light'] {
+  color-scheme: light;
+}
+
+/* —— 页面 / 面板 / 卡片背景 —— */
+html[data-theme='light'] body {
+  background-color: #f8fafc;
+  color: #1e293b;
+}
+html[data-theme='light'] .bg-slate-950 {
+  background-color: #f8fafc;
+}
+html[data-theme='light'] .bg-slate-950\/85 {
+  background-color: rgb(248 250 252 / 0.85);
+}
+html[data-theme='light'] .bg-slate-900 {
+  background-color: #ffffff;
+}
+html[data-theme='light'] .bg-slate-900\/60 {
+  background-color: rgb(255 255 255 / 0.6);
+}
+html[data-theme='light'] .bg-slate-900\/50 {
+  background-color: rgb(255 255 255 / 0.5);
+}
+html[data-theme='light'] .bg-slate-900\/30 {
+  background-color: rgb(255 255 255 / 0.3);
+}
+html[data-theme='light'] .bg-slate-800 {
+  background-color: #e2e8f0;
+}
+html[data-theme='light'] .bg-slate-800\/50 {
+  background-color: rgb(226 232 240 / 0.5);
+}
+html[data-theme='light'] .bg-slate-800\/60 {
+  background-color: rgb(226 232 240 / 0.6);
+}
+html[data-theme='light'] .bg-slate-700 {
+  background-color: #cbd5e1;
+}
+html[data-theme='light'] .bg-white\/\[0\.03\] {
+  background-color: #ffffff;
+}
+html[data-theme='light'] .bg-white\/5 {
+  background-color: rgb(241 245 249 / 1);
+}
+html[data-theme='light'] .bg-white\/10 {
+  background-color: rgb(226 232 240 / 0.8);
+}
+html[data-theme='light'] .hover\:bg-white\/5:hover {
+  background-color: rgb(226 232 240 / 0.8);
+}
+html[data-theme='light'] .hover\:bg-white\/\[0\.05\]:hover {
+  background-color: rgb(241 245 249 / 1);
+}
+html[data-theme='light'] .hover\:bg-slate-800:hover {
+  background-color: #e2e8f0;
+}
+html[data-theme='light'] .hover\:bg-slate-800\/60:hover {
+  background-color: rgb(226 232 240 / 0.6);
+}
+
+/* —— 边框 —— */
+html[data-theme='light'] .border-white\/10 {
+  border-color: #e2e8f0;
+}
+html[data-theme='light'] .border-white\/20 {
+  border-color: #cbd5e1;
+}
+html[data-theme='light'] .hover\:border-white\/20:hover {
+  border-color: #94a3b8;
+}
+html[data-theme='light'] .border-slate-800 {
+  border-color: #e2e8f0;
+}
+html[data-theme='light'] .border-slate-800\/60 {
+  border-color: rgb(226 232 240 / 0.6);
+}
+html[data-theme='light'] .border-slate-800\/80 {
+  border-color: rgb(226 232 240 / 0.8);
+}
+html[data-theme='light'] .border-slate-700 {
+  border-color: #cbd5e1;
+}
+html[data-theme='light'] .border-slate-600 {
+  border-color: #94a3b8;
+}
+
+/* —— 文本 —— */
+html[data-theme='light'] .text-white {
+  color: #0f172a;
+}
+html[data-theme='light'] .text-slate-100 {
+  color: #0f172a;
+}
+html[data-theme='light'] .text-slate-200 {
+  color: #1e293b;
+}
+html[data-theme='light'] .text-slate-300 {
+  color: #334155;
+}
+html[data-theme='light'] .text-slate-400 {
+  color: #475569;
+}
+html[data-theme='light'] .text-slate-500 {
+  color: #64748b;
+}
+html[data-theme='light'] .text-slate-600 {
+  color: #94a3b8;
+}
+html[data-theme='light'] .hover\:text-white:hover {
+  color: #0f172a;
+}
+html[data-theme='light'] .group:hover .group-hover\:text-white {
+  color: #0f172a;
+}
+/* 强调色文本在浅色底上加深保证可读 */
+html[data-theme='light'] .text-amber-300,
+html[data-theme='light'] .text-amber-400 {
+  color: #b45309;
+}
+html[data-theme='light'] .text-emerald-400 {
+  color: #047857;
+}
+html[data-theme='light'] .text-rose-300,
+html[data-theme='light'] .text-rose-400 {
+  color: #be123c;
+}
+html[data-theme='light'] .text-sky-300 {
+  color: #0369a1;
+}
+html[data-theme='light'] .text-indigo-400 {
+  color: #4f46e5;
+}
+
+/* —— 实色强调背景上的白字保持白色（排除浅色覆盖） —— */
+html[data-theme='light'] .bg-indigo-500.text-white,
+html[data-theme='light'] .bg-indigo-400.text-white,
+html[data-theme='light'] .bg-indigo-600\/90.text-white,
+html[data-theme='light'] .bg-gradient-to-r.text-white,
+html[data-theme='light'] .bg-gradient-to-br.text-white,
+html[data-theme='light'] .btn-accent-white {
+  color: #ffffff;
+}
+
+/* —— 滚动条 —— */
+html[data-theme='light'] ::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+}
+
+/* —— 抽屉 Markdown 正文（覆盖 LandingView scoped 深色样式） —— */
+html[data-theme='light'] .markdown-body h2 {
+  color: #0f172a;
+}
+html[data-theme='light'] .markdown-body h3 {
+  color: #1e293b;
+}
+html[data-theme='light'] .markdown-body p,
+html[data-theme='light'] .markdown-body li,
+html[data-theme='light'] .markdown-body th,
+html[data-theme='light'] .markdown-body td {
+  color: #475569;
+}
+html[data-theme='light'] .markdown-body strong {
+  color: #0f172a;
+}
+html[data-theme='light'] .markdown-body code {
+  background: rgb(226 232 240 / 0.6);
+  color: #b45309;
+}
+html[data-theme='light'] .markdown-body blockquote {
+  background: rgb(99 102 241 / 0.08);
+  border-color: #6366f1;
+}
+html[data-theme='light'] .markdown-body th,
+html[data-theme='light'] .markdown-body td {
+  border-color: #e2e8f0;
+}
+html[data-theme='light'] .markdown-body th {
+  background: rgb(241 245 249);
+}
+html[data-theme='light'] .markdown-body a {
+  color: #4f46e5;
+}
+html[data-theme='light'] .markdown-body hr {
+  border-color: #e2e8f0;
+}

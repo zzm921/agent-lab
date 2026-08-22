@@ -27,9 +27,8 @@ def make_tools_node(tools, emit, harness=None):
         # 存在故障注入的工具：短路审批（与 events_mw 一致），由 per-call 循环按注入类型处理
         has_fault = harness is not None and any(harness.fault_spec(c["name"]) for c in calls)
         # 任一本步工具需要审批（approval_policy=always 或强制 HITL 工具）即整批审批
-        if has_fault:
-            effective = calls
-        elif any(should_approve(policy, c["name"]) for c in calls):
+        
+        if any(should_approve(policy, c["name"]) for c in calls):
             payload = [{"name": c["name"], "args": c.get("args", {}), "id": c.get("id")} for c in calls]
             decision = interrupt({"tool_calls": payload})
             action = decision.get("action", "approve")
@@ -54,6 +53,8 @@ def make_tools_node(tools, emit, harness=None):
                     effective.append({**c, "args": modified[c["name"]]})
                 else:
                     effective.append(c)
+        elif has_fault:
+            effective = calls
         else:
             effective = calls
 

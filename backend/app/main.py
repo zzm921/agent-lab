@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.chat import router as chat_router
+from app.api.content import router as content_router
 from app.api.sandbox import router as sandbox_router
 from app.config import settings
 from app.core.errors import ConfigError
@@ -23,6 +24,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(chat_router)
     app.include_router(sandbox_router)
+    app.include_router(content_router)
 
     @app.exception_handler(ConfigError)
     async def config_error_handler(_request: Request, exc: ConfigError):

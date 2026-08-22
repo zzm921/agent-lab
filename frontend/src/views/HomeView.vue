@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useCapabilities } from '../composables/useCapabilities'
 import { useChatStream } from '../composables/useChatStream'
 import type { Capability, ModeId, PromptStrategy, ApprovalPolicy } from '../types/agent'
@@ -8,6 +9,7 @@ import ChatPanel from '../components/ChatPanel.vue'
 import ExampleFillHint from '../components/ExampleFillHint.vue'
 import SandboxFilesPanel from '../components/SandboxFilesPanel.vue'
 
+const route = useRoute()
 const {
   caps,
   enabled,
@@ -20,21 +22,51 @@ const {
   load,
   setFault,
   toggle,
+  ensureEnabled,
   applyExample,
   clearHint,
 } = useCapabilities()
 const stream = useChatStream()
 
 const task = ref('')
-const mode = ref<ModeId>('react')
-const strategy = ref<PromptStrategy>('standard')
-const policy = ref<ApprovalPolicy>('always')
+const validModes: ModeId[] = ['react', 'plan_execute', 'reflection', 'multi_agent']
+const validStrategies: PromptStrategy[] = ['standard', 'few_shot', 'cot']
+const validPolicies: ApprovalPolicy[] = ['always', 'never']
+const mode = ref<ModeId>(validModes.includes(route.query.mode as ModeId) ? (route.query.mode as ModeId) : 'react')
+const strategy = ref<PromptStrategy>(validStrategies.includes(route.query.strategy as PromptStrategy) ? (route.query.strategy as PromptStrategy) : 'standard')
+const policy = ref<ApprovalPolicy>(validPolicies.includes(route.query.policy as ApprovalPolicy) ? (route.query.policy as ApprovalPolicy) : 'always')
 const sidebarOpen = ref(false)
 const filesOpen = ref(false)
 const filesRefreshKey = ref(0)
 
-onMounted(() => {
-  load()
+onMounted(async () => {
+  await load()
+  // 能力开关：?tools=a,b
+  const toolsParam = route.query.tools
+  if (toolsParam) {
+    String(toolsParam)
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .forEach(ensureEnabled)
+  }
+  // 故障注入：?faults=calculator:timeout,web_search:http_500
+  const faultsParam = route.query.faults
+  if (faultsParam) {
+    for (const pair of String(faultsParam).split(',')) {
+      const [tool, type] = pair.split(':')
+      if (tool && type) await setFault(tool.trim(), type.trim())
+    }
+  } else {
+    // 未指定故障参数：清空历史遗留的全局故障，避免污染其他会话的审批与工具行为
+    for (const tool of Object.keys(faults.value)) {
+      await setFault(tool, 'off')
+    }
+  }
+  // 预设任务：?prompt=...
+  if (route.query.prompt) {
+    task.value = String(route.query.prompt)
+  }
 })
 
 watch(exampleHint, (h) => {
@@ -89,7 +121,7 @@ function send() {
 </script>
 
 <template>
-  <div class="flex h-full">
+  <div class="flex h-full w-full">
     <CapabilitySidebar
       :caps="caps"
       :enabled-ids="enabled"
