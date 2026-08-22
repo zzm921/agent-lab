@@ -94,21 +94,151 @@ async def test_stop_cancels_running_execution(settings, registry, sessions):
 
 
 async def test_reflection_revise_loop(settings, registry, sessions):
+    # 评审以流式自由文本输出：不通过（无 PASS 标记）→ 修订 → 通过（【PASS】）→ 结束
     script = [
         AIMessage(content="草稿答案"),
         AIMessage(content="需要补充细节"),
         AIMessage(content="修订后的完整答案"),
-        AIMessage(content="无"),
+        AIMessage(content="【PASS】答案已足够好"),
     ]
     runner = await _runner_with(registry, sessions, settings, script)
     events = await collect_stream(runner, mode="reflection")
     types = [e["type"] for e in events]
     assert "reflect" in types
     assert "revise" in types
+    assert "critique" in types  # 评审文本流式下发
     reflect_events = [e for e in events if e["type"] == "reflect"]
     assert reflect_events[0]["stage"] == "draft"
-    assert reflect_events[-1]["critique"] == "无"
     assert any(e["type"] == "message" for e in events)
+    critique_full = "".join(e.get("delta", "") for e in events if e["type"] == "critique")
+    assert "需要补充细节" in critique_full and "【PASS】" in critique_full
+
+
+async def test_reflection_text_critique_fallback(settings, registry, sessions):
+    # 评审以自由文本流式输出：无 PASS 标记不通过 → 修订 → 【PASS】通过结束
+    script = [
+        AIMessage(content="草稿答案"),
+        AIMessage(content="需要补充细节"),
+        AIMessage(content="修订后的完整答案"),
+        AIMessage(content="【PASS】无需修改"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="reflection")
+    assert any(e["type"] == "revise" for e in events)
+    assert any(e["type"] == "done" for e in events)
+    critique_full = "".join(e.get("delta", "") for e in events if e["type"] == "critique")
+    assert "无需修改" in critique_full
+
+
+async def test_reflection_max_iter_bound(settings, registry, sessions):
+    # 评审始终不通过 → 由 max_iter 兜底强制结束（防止死循环）
+    settings.max_iterations = 2
+    script = [
+        AIMessage(content="草稿"),
+        AIMessage(content="仍需修改"),
+        AIMessage(content="修订一"),
+        AIMessage(content="仍需修改"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="reflection")
+    critique_full = "".join(e.get("delta", "") for e in events if e["type"] == "critique")
+    assert critique_full.count("仍需修改") == 2  # 恰好评审 max_iter 次后强制结束
+    assert any(e["type"] == "done" for e in events)
+
+
+async def test_reflection_tool_in_draft_phase(settings, registry, sessions):
+    # 草稿阶段模型先调用工具（计算器），拿到结果后再产出草稿 → 评审通过结束
+    script = [
+        ai_with_tool("需要计算", args={"expression": "1+1"}),
+        AIMessage(content="草稿答案：计算结果是 2"),
+        AIMessage(content="无"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="reflection", enabled=["calculator"])
+    types = [e["type"] for e in events]
+    assert "tool_start" in types and "tool_end" in types
+    tool_end = next(e for e in events if e["type"] == "tool_end")
+    assert tool_end["success"] is True and "2" in tool_end["result"]
+    reflect_events = [e for e in events if e["type"] == "reflect"]
+    assert reflect_events[0]["stage"] == "draft"
+    full = "".join(e.get("delta", "") for e in events if e["type"] == "message")
+    assert "计算结果是 2" in full
+    assert any(e["type"] == "done" for e in events)
+
+
+async def test_reflection_tool_in_revise_phase(settings, registry, sessions):
+    # 评审未通过 → 修订阶段模型调用工具补充信息后产出修订稿 → 再评审通过结束
+    script = [
+        AIMessage(content="草稿答案"),
+        AIMessage(content="需要补充计算"),
+        ai_with_tool("需要计算", args={"expression": "2+2"}),
+        AIMessage(content="修订稿答案：结果是 4"),
+        AIMessage(content="无"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="reflection", enabled=["calculator"])
+    types = [e["type"] for e in events]
+    assert "tool_start" in types and "tool_end" in types
+    reflect_events = [e for e in events if e["type"] == "reflect"]
+    assert reflect_events[0]["stage"] == "draft"
+    assert len([e for e in events if e["type"] == "revise"]) >= 1
+    revise_full = "".join(e.get("delta", "") for e in events if e["type"] == "revise")
+    assert "结果是 4" in revise_full
+    assert any(e["type"] == "done" for e in events)
+
+
+async def test_reflection_step_limit(settings, registry, sessions):
+    # 草稿阶段模型反复请求工具（从不产出草稿）→ 达到轮数上限（max_steps）强制结束
+    settings.max_steps = 3
+    script = [
+        ai_with_tool("计算 1", args={"expression": "1+1"}, cid="c1"),
+        ai_with_tool("计算 2", args={"expression": "2+2"}, cid="c2"),
+        ai_with_tool("计算 3", args={"expression": "3+3"}, cid="c3"),
+        ai_with_tool("计算 4", args={"expression": "4+4"}, cid="c4"),
+        AIMessage(content="草稿"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="reflection", enabled=["calculator"])
+    done = next(e for e in events if e["type"] == "done")
+    assert "轮数上限" in done["summary"]
+    assert len([e for e in events if e["type"] == "tool_end" and e["success"]]) == 3  # 前 3 轮执行，第 4 轮被拦截
+
+
+async def test_plan_execute_step_limit(settings, registry, sessions):
+    # 单步内模型反复请求工具（从不完成该步）→ 达到轮数上限（max_steps）强制结束
+    settings.max_steps = 3
+    script = [
+        AIMessage(content="步骤一"),
+        ai_with_tool("计算 1", args={"expression": "1+1"}, cid="c1"),
+        ai_with_tool("计算 2", args={"expression": "2+2"}, cid="c2"),
+        ai_with_tool("计算 3", args={"expression": "3+3"}, cid="c3"),
+        ai_with_tool("计算 4", args={"expression": "4+4"}, cid="c4"),
+        AIMessage(content="已执行步骤一"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="plan_execute", enabled=["calculator"])
+    done = next(e for e in events if e["type"] == "done")
+    assert "轮数上限" in done["summary"]
+    assert len([e for e in events if e["type"] == "tool_end" and e["success"]]) == 3
+
+
+async def test_react_step_limit(settings, registry, sessions):
+    # ReAct 模式模型反复请求工具（从不给出最终答案）→ 达到轮数上限（max_steps）强制结束
+    settings.max_steps = 3
+    script = [
+        ai_with_tool("计算 1", args={"expression": "1+1"}, cid="c1"),
+        ai_with_tool("计算 2", args={"expression": "2+2"}, cid="c2"),
+        ai_with_tool("计算 3", args={"expression": "3+3"}, cid="c3"),
+        ai_with_tool("计算 4", args={"expression": "4+4"}, cid="c4"),
+        AIMessage(content="最终答案"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="react", enabled=["calculator"])
+    done = next(e for e in events if e["type"] == "done")
+    assert "轮数上限" in done["summary"]
+    assert len([e for e in events if e["type"] == "tool_end" and e["success"]]) == 3
+    full = "".join(e.get("delta", "") for e in events if e["type"] == "message")
+    assert "最终答案" not in full  # 未走到最终答案已被拦截
 
 
 async def test_multi_agent(settings, registry, sessions):

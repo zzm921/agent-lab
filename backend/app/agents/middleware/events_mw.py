@@ -54,12 +54,13 @@ def _reasoning_text(chunk) -> str:
     return ""
 
 
-async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None, model_settings=None, system_prompt=""):
+async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None, model_settings=None, system_prompt="", output_event="message"):
     """用 astream 逐 token 生成并实时下发 thinking/message 事件，返回合并后的 AIMessage。
 
-    供 create_agent 中间件与手写 StateGraph 节点（plan-execute）共用：
+    供 create_agent 中间件与手写 StateGraph 节点（plan-execute / reflection）共用：
     - 有工具时 bind_tools，否则 bind；system_prompt 非空时前置为系统消息；
-    - reasoning_content(reason) → thinking 事件（思考过程），content(output) → message 事件；
+    - reasoning_content(reason) → thinking 事件（思考过程），content(output) → output_event 事件
+      （默认 message；reflection 修订稿用 revise，前端按修订稿样式展示）；
     - tool_calls 经 chunk 合并回 AIMessage，交由调用方路由到工具循环。
     """
     bound = (
@@ -84,7 +85,7 @@ async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None
         if text:
             print(f"[model-stream] output: {text!r}", flush=True)
             output_texts.append(text)
-            emit_text(emit, "message", text)
+            emit_text(emit, output_event, text)
 
     if not chunks:
         raise RuntimeError("模型流式调用未返回任何内容")

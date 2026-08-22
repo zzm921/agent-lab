@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # 运行参数
     max_iterations: int = 8
+    max_steps: int = 5  # 各 Agent 循环的轮数上限（模型思考/工具回合数），超限强制结束防死循环
     rag_top_k: int = 3
     context_threshold: int = 12
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]

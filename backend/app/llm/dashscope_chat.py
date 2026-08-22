@@ -28,7 +28,7 @@ from langchain_core.messages import (
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
-from pydantic import PrivateAttr
+from pydantic import BaseModel, PrivateAttr
 
 
 @dataclass
@@ -86,10 +86,24 @@ def _to_dashscope_messages(messages: list[BaseMessage]) -> list[dict]:
     return result
 
 
-def _tool_to_ds(tool: BaseTool | dict) -> dict:
-    """BaseTool 或 dict → DashScope tools 条目（OpenAI 风格 function schema）。"""
+def _tool_to_ds(tool: BaseTool | dict | type) -> dict:
+    """BaseTool / dict / Pydantic 模型类 → DashScope tools 条目（OpenAI 风格 function schema）。
+
+    with_structured_output 会以 [Pydantic 模型类] 形式调用 bind_tools，需将模型类
+    转为 JSON Schema；dict 直接透传（已是最外层 function schema）。
+    """
     if isinstance(tool, dict):
         return tool
+    if isinstance(tool, type) and issubclass(tool, BaseModel):
+        schema = tool.model_json_schema()
+        return {
+            "type": "function",
+            "function": {
+                "name": schema.get("title") or tool.__name__,
+                "description": schema.get("description") or "",
+                "parameters": schema,
+            },
+        }
     return {
         "type": "function",
         "function": {
@@ -170,17 +184,29 @@ class DashScopeChatModel(BaseChatModel):
     def _llm_type(self) -> str:
         return "dashscope-chat"
 
-    def bind_tools(self, tools: list[BaseTool | dict], **kwargs: Any):
-        """保存工具与 tool_choice（与 factory._get_bound_model 的调用契约一致）。"""
-        self._tools = [_tool_to_ds(t) for t in tools]
-        self._tool_choice = kwargs.get("tool_choice")
-        self._model_settings.update({k: v for k, v in kwargs.items() if k != "tool_choice"})
-        return self
+    def bind_tools(self, tools: list[BaseTool | dict | type], **kwargs: Any):
+        """返回绑定后的新副本（不修改原实例），符合 LangChain bind_tools 语义。
+
+        with_structured_output 会以 [Pydantic 模型类] 形式调用 bind_tools；若原地修改，
+        会把结构化输出工具污染到共享的 llm 实例（如 reflection 评审器把 CritiqueResult
+        绑到生成器上，导致生成器误以为存在该工具）。
+        """
+        bound = self.model_copy(deep=True)
+        bound._tools = [_tool_to_ds(t) for t in tools]
+        tc = kwargs.get("tool_choice")
+        if tc == "any":  # OpenAI 语义；DashScope 仅支持 none/auto/指定函数
+            tc = "auto"
+        bound._tool_choice = tc
+        bound._model_settings.update(
+            {k: v for k, v in kwargs.items() if k != "tool_choice" and not k.startswith("ls_")}
+        )
+        return bound
 
     def bind(self, **kwargs: Any):
-        """无工具时的绑定：保存额外模型参数。"""
-        self._model_settings.update(kwargs)
-        return self
+        """无工具时的绑定：在副本上保存额外模型参数，不污染原实例。"""
+        bound = self.model_copy(deep=True)
+        bound._model_settings.update(kwargs)
+        return bound
 
     def _payload(self, messages: list[BaseMessage], stream: bool) -> dict:
         """构造 Generation.call 请求参数。"""

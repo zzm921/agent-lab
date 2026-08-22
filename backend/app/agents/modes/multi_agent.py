@@ -3,9 +3,12 @@
 - compute/analyze 均为独立 create_agent 子代理，经 convert_runnable_to_tool 包装为编排者工具；
 - 编排者 create_agent 自带工具路由与循环，MultiAgentMiddleware 发射分派/完成事件，
   StreamEventsMiddleware 负责 thinking/message 与工具 HITL；
+- 编排者与子代理都挂 ModelCallLimitMiddleware（轮数上限）：单轮模型调用超过 max_steps
+  即抛 ModelCallLimitExceededError，运行器转为 done，防死循环；
 - 子代理不持有 checkpointer（WorkerEventsMiddleware 不做 HITL 中断），审批收敛到编排者层。
 """
 from langchain.agents import create_agent
+from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import convert_runnable_to_tool
@@ -43,19 +46,26 @@ def _worker_tool(worker, name, description):
 def build_multi_agent_agent(llm, tools, emit, settings, checkpointer=None, harness=None):
     """构建 multi-agent 代理：编排者路由调用 compute/analyze 子代理并汇总。"""
     compute_tools = [t for t in tools if t.name == "calculator"]
+    step_limit = max(1, settings.max_steps)
 
     compute_agent = create_agent(
         model=llm,
         tools=compute_tools,
         system_prompt=_COMPUTE_PROMPT,
-        middleware=[WorkerEventsMiddleware(emit, harness=harness)],
+        middleware=[
+            WorkerEventsMiddleware(emit, harness=harness),
+            ModelCallLimitMiddleware(run_limit=step_limit, exit_behavior="error"),
+        ],
         checkpointer=None,
     )
     analyze_agent = create_agent(
         model=llm,
         tools=[],
         system_prompt=_ANALYZE_PROMPT,
-        middleware=[WorkerEventsMiddleware(emit, harness=harness)],
+        middleware=[
+            WorkerEventsMiddleware(emit, harness=harness),
+            ModelCallLimitMiddleware(run_limit=step_limit, exit_behavior="error"),
+        ],
         checkpointer=None,
     )
 
@@ -66,6 +76,10 @@ def build_multi_agent_agent(llm, tools, emit, settings, checkpointer=None, harne
         model=llm,
         tools=[compute_tool, analyze_tool],
         system_prompt=_ORCHESTRATOR_PROMPT,
-        middleware=[MultiAgentMiddleware(emit), StreamEventsMiddleware(emit, harness=harness)],
+        middleware=[
+            MultiAgentMiddleware(emit),
+            StreamEventsMiddleware(emit, harness=harness),
+            ModelCallLimitMiddleware(run_limit=step_limit, exit_behavior="error"),
+        ],
         checkpointer=checkpointer,
     )

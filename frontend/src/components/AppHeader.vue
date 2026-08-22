@@ -31,7 +31,7 @@ onMounted(fetchHealth)
           <div class="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-lg font-bold text-white">A</div>
           <div>
             <h1 class="text-base leading-tight font-semibold text-white">Agent Lab</h1>
-            <p class="text-xs text-slate-400">个人技术展示与体验</p>
+            <p class="text-xs text-slate-400">Agent实验室</p>
           </div>
         </RouterLink>
 

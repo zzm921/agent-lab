@@ -175,8 +175,25 @@ export function useChatStream(): ChatStream {
     }
   }
 
+  /** 追加流式评审文本：写入当前反思（reflect）步骤的 critique 字段（评审过程流式展示） */
+  function appendCritique(text: string) {
+    const last = stream.steps[stream.steps.length - 1]
+    if (last && last.kind === 'reflect' && last.streaming) {
+      last.critique = (last.critique ?? '') + text
+    } else {
+      closeStreamingStep()
+      stream.steps.push({ id: ++seq, kind: 'reflect', critique: text, streaming: true })
+    }
+  }
+
   /** 新增非流式步骤（工具/计划/检索/反思/代理等），并关闭上一个流式步骤 */
   function pushStep(step: Omit<StepEntry, 'id' | 'streaming'>) {
+    // 先把积压的流式文本按事件顺序落定：rAF 节流延迟时若直接压入新步骤，
+    // 会使 message/revise 等文本步骤排到后续步骤之后（如两条评审中间缺修订稿）。
+    accThinking.flush()
+    accMessage.flush()
+    accCritique.flush()
+    accRevise.flush()
     closeStreamingStep()
     stream.steps.push({ ...step, id: ++seq, streaming: false })
   }
@@ -184,10 +201,12 @@ export function useChatStream(): ChatStream {
   const accThinking = makeStepAccumulator((text) => appendText('thinking', text))
   const accMessage = makeStepAccumulator((text) => appendText('message', text))
   const accRevise = makeStepAccumulator((text) => appendText('revise', text))
+  const accCritique = makeStepAccumulator((text) => appendCritique(text))
 
   function flushAll() {
     accThinking.flush()
     accMessage.flush()
+    accCritique.flush()
     accRevise.flush()
   }
 
@@ -228,6 +247,9 @@ export function useChatStream(): ChatStream {
         break
       case 'revise':
         accRevise.add(ev.delta)
+        break
+      case 'critique':
+        accCritique.add(ev.delta)
         break
       case 'plan': {
         const last = stream.steps[stream.steps.length - 1]

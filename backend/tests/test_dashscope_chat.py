@@ -144,10 +144,26 @@ def test_to_message_with_tool_calls():
 def test_payload_sets_thinking_and_tools():
     """请求参数：enable_thinking 生效，tools 透传，temperature 缺省用实例值。"""
     model = DashScopeChatModel(api_key="k", temperature=0.5)
-    model.bind_tools([{"type": "function", "function": {"name": "calculator"}}])
+    model = model.bind_tools([{"type": "function", "function": {"name": "calculator"}}])
     payload = model._payload([HumanMessage(content="hi")], stream=False)
     assert payload["enable_thinking"] is True
     assert payload["result_format"] == "message"
     assert payload["tools"][0]["function"]["name"] == "calculator"
     assert payload["temperature"] == 0.5
     assert payload["messages"][0] == {"role": "user", "content": "hi"}
+
+
+def test_bind_tools_does_not_mutate_original():
+    """bind_tools / bind 返回副本，不污染原实例。
+
+    回归：reflection 评审器用 with_structured_output 绑定 CritiqueResult 时，
+    若原地修改会把该工具泄漏到共享的生成器 llm 上。
+    """
+    model = DashScopeChatModel(api_key="k")
+    bound = model.bind_tools([{"type": "function", "function": {"name": "calculator"}}])
+    assert bound._payload([HumanMessage(content="hi")], stream=False)["tools"][0]["function"]["name"] == "calculator"
+    assert model._payload([HumanMessage(content="hi")], stream=False).get("tools") is None
+
+    bound2 = model.bind(temperature=0.9)
+    assert bound2._payload([HumanMessage(content="hi")], stream=False)["temperature"] == 0.9
+    assert model._payload([HumanMessage(content="hi")], stream=False)["temperature"] == 0.3

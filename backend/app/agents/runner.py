@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import Command
 
@@ -155,6 +156,9 @@ class AgentRunner:
                 outcome["ok"] = True
             except asyncio.CancelledError:
                 outcome["cancelled"] = True
+            except ModelCallLimitExceededError:
+                # create_agent 模式（react/multi_agent）达到轮数上限：转为 done 而非 error
+                outcome["limit"] = True
             except Exception as exc:  # noqa: BLE001
                 outcome["ok"] = False
                 outcome["exc"] = exc
@@ -182,6 +186,14 @@ class AgentRunner:
         if outcome.get("cancelled"):
             yield {"type": "done", "summary": "已停止执行", "stats": {"tool_calls": tool_count[0]}}
             return
+        if outcome.get("limit"):
+            # create_agent 模式达到轮数上限：转为 done（前端可见提示），而非 error
+            yield {
+                "type": "done",
+                "summary": f"已达到最大轮数上限（{self.settings.max_steps} 轮），已停止执行",
+                "stats": {"tool_calls": tool_count[0]},
+            }
+            return
         if not outcome.get("ok"):
             yield self.harness.error_event("Agent 运行失败", str(outcome.get("exc")))
             return
@@ -205,6 +217,15 @@ class AgentRunner:
                 "type": "approval_request",
                 "approval_id": approval_id,
                 "tool_calls": tool_calls,
+            }
+            return
+        # 手写 StateGraph 模式（reflection / plan_execute）达到轮数上限：节点已置 stopped，转为 done
+        values = snap.values or {}
+        if values.get("stopped") == "max_steps":
+            yield {
+                "type": "done",
+                "summary": f"已达到最大轮数上限（{self.settings.max_steps} 轮），已停止执行",
+                "stats": {"tool_calls": tool_count[0]},
             }
             return
         yield {"type": "done", "summary": "本次任务处理完成", "stats": {"tool_calls": tool_count[0]}}

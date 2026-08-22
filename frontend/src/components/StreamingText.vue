@@ -4,12 +4,12 @@ import { ref, watch } from 'vue'
 const props = defineProps<{ text: string; streaming?: boolean; placeholder?: string }>()
 
 const displayed = ref('')
-const timer = ref<ReturnType<typeof setInterval> | null>(null)
+let raf = 0
 
 function startTyping(target: string) {
-  if (timer.value) {
-    clearInterval(timer.value)
-    timer.value = null
+  if (raf) {
+    cancelAnimationFrame(raf)
+    raf = 0
   }
   if (!props.streaming) {
     displayed.value = target
@@ -18,16 +18,19 @@ function startTyping(target: string) {
   if (displayed.value.length > target.length) {
     displayed.value = ''
   }
-  timer.value = setInterval(() => {
+  // 自适应打字：按剩余缺口比例逐帧追赶，保证打印速度跟得上输出速度，
+  // 避免长文本输出时动画长期落后、后续步骤已出现而当前内容还在“打字”。
+  const tick = () => {
     if (displayed.value.length < target.length) {
-      displayed.value = target.slice(0, displayed.value.length + 1)
+      const gap = target.length - displayed.value.length
+      const step = Math.max(1, Math.ceil(gap / 12))
+      displayed.value = target.slice(0, displayed.value.length + step)
+      raf = requestAnimationFrame(tick)
     } else {
-      if (timer.value) {
-        clearInterval(timer.value)
-        timer.value = null
-      }
+      raf = 0
     }
-  }, 18)
+  }
+  raf = requestAnimationFrame(tick)
 }
 
 watch(
@@ -42,9 +45,9 @@ watch(
   () => props.streaming,
   (streaming) => {
     if (!streaming) {
-      if (timer.value) {
-        clearInterval(timer.value)
-        timer.value = null
+      if (raf) {
+        cancelAnimationFrame(raf)
+        raf = 0
       }
       displayed.value = props.text
     }

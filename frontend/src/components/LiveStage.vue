@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { reactive } from 'vue'
 import type { ChatStream } from '../composables/useChatStream'
 import StepTimeline from './StepTimeline.vue'
 import ToolCallBadge from './ToolCallBadge.vue'
@@ -7,6 +8,13 @@ import ApprovalDialog from './ApprovalDialog.vue'
 import ErrorBanner from './ErrorBanner.vue'
 
 defineProps<{ stream: ChatStream }>()
+
+// 思考过程默认折叠，点击标题展开/收起（按步骤 id 独立记录）
+const expandedThinking = reactive(new Set<number>())
+function toggleThinking(id: number) {
+  if (expandedThinking.has(id)) expandedThinking.delete(id)
+  else expandedThinking.add(id)
+}
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   idle: { label: '待命', cls: 'bg-slate-800 text-slate-400' },
@@ -54,11 +62,40 @@ const RETRIEVE_KIND: Record<string, string> = {
           </div>
         </div>
 
-        <!-- 思考过程（灰色斜体，弱化） -->
+        <!-- 思考过程（默认折叠，流式中显示转圈动效，点击标题展开内容） -->
         <section v-else-if="s.kind === 'thinking'" class="border-l-2 border-slate-700 pl-3">
-          <h4 class="mb-1 text-[11px] font-medium text-slate-500">思考过程</h4>
-          <p class="text-xs italic text-slate-500">
-            <StreamingText :text="s.text ?? ''" :streaming="s.streaming ?? false" />
+          <button
+            type="button"
+            class="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 transition hover:text-slate-300"
+            @click="toggleThinking(s.id)"
+          >
+            <svg
+              v-if="s.streaming"
+              class="h-3.5 w-3.5 shrink-0 animate-spin text-indigo-400"
+              viewBox="0 0 24 24"
+              fill="none"
+            >
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+            </svg>
+            <svg
+              v-else
+              class="h-3 w-3 shrink-0 transition-transform"
+              :class="expandedThinking.has(s.id) ? 'rotate-90' : ''"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            思考过程
+          </button>
+          <!-- 直接显示已累积的文本：不重放打字动画（思考过程可能已输出大量内容，展开时不应从头打字） -->
+          <p v-if="expandedThinking.has(s.id)" class="mt-1 whitespace-pre-wrap break-words text-xs italic text-slate-500">
+            {{ s.text }}
           </p>
         </section>
 
@@ -95,9 +132,20 @@ const RETRIEVE_KIND: Record<string, string> = {
           <p v-else-if="s.content" class="mt-1.5 text-slate-300">{{ s.content }}</p>
         </section>
 
-        <!-- 反思意见 -->
+        <!-- 反思意见（评审过程流式展示，流式中显示转圈动效） -->
         <section v-else-if="s.kind === 'reflect'" class="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 text-xs">
-          <p class="text-rose-300">{{ s.stage ? `阶段：${s.stage}` : '评审意见' }}</p>
+          <p class="flex items-center gap-1.5 text-rose-300">
+            <svg
+              v-if="s.streaming && !s.stage"
+              class="h-3 w-3 shrink-0 animate-spin text-rose-400"
+              viewBox="0 0 24 24"
+              fill="none"
+            >
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+            </svg>
+            {{ s.stage ? `阶段：${s.stage}` : '评审意见' }}
+          </p>
           <p v-if="s.critique" class="mt-1 whitespace-pre-wrap text-slate-300">{{ s.critique }}</p>
         </section>
 

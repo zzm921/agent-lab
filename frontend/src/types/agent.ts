@@ -49,6 +49,7 @@ export type AgentEvent =
   | { type: 'approval_request'; approval_id: string; tool_calls: ToolCallInfo[] }
   | { type: 'reflect'; stage?: string; critique?: string }
   | { type: 'revise'; delta: string }
+  | { type: 'critique'; delta: string }
   | { type: 'agent_event'; worker: string; status: string; task?: string; result?: string }
   | { type: 'done'; summary: string; stats: Record<string, unknown> }
   | { type: 'error'; message: string; detail?: string }

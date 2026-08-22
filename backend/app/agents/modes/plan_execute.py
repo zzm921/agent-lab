@@ -6,7 +6,9 @@
 - tools：复用 make_tools_node（工具事件 + HITL 审批 + 异常兜底，任一步失败写 step_failed）；
 - replanner：按已完成步骤与失败重新生成计划（plan created），覆盖旧计划；
 - should_replan：executor 出口条件边——有工具调用去 tools；步骤失败且重规划未超限去 replanner；
-  全部步骤完成则 end，否则 continue 到下一步。
+  全部步骤完成则 end，否则 continue 到下一步；
+- 轮数上限（max_steps）：executor 累计模型调用/工具回合数（steps），超过即置 stopped=max_steps
+  不再调用模型并结束，防「单步内反复请求工具」的死循环。
 """
 from __future__ import annotations
 
@@ -31,6 +33,8 @@ class PlanState(TypedDict, total=False):
     past_steps: list[str]
     replans: int
     step_failed: bool
+    steps: int       # 累计模型调用/工具回合数（轮数上限判定）
+    stopped: str     # 结束原因："max_steps" 表示达到轮数上限
 
 
 def _parse_steps(text: str) -> list[str]:
@@ -74,6 +78,7 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
     tool_list = list(tools)
     tools_node = make_tools_node(tool_list, emit, harness=harness)
     max_replans = max(1, settings.max_iterations // 2)
+    max_steps = max(1, settings.max_steps)
 
     async def planner(state):
         task = _latest_task(state)
@@ -84,6 +89,11 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
 
     async def executor(state):
         msgs = list(state.get("messages") or [])
+        # 新回合（最近一条为 user）重置轮数计数，避免多轮会话累计导致过早停止
+        fresh = bool(msgs) and getattr(msgs[-1], "type", None) == "human"
+        steps = (0 if fresh else (state.get("steps") or 0)) + 1
+        if steps > max_steps:
+            return {"steps": steps, "stopped": "max_steps"}
         base = ""
         if msgs and getattr(msgs[0], "type", None) == "system":
             base = str(msgs[0].content)
@@ -92,7 +102,7 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
         msg = await stream_model_call(llm, msgs, emit, tools=tool_list, system_prompt=system_prompt)
         failed = _step_failure(state)
         if getattr(msg, "tool_calls", None):
-            return {"messages": [msg], "step_failed": failed}
+            return {"messages": [msg], "step_failed": failed, "steps": steps}
         plan = state.get("plan") or []
         old_idx = state.get("current_step") or 0
         idx = old_idx + 1
@@ -101,7 +111,7 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
         if old_idx < len(plan):
             past.append(f"已完成第 {old_idx + 1} 步：{plan[old_idx]}")
         emit({"type": "plan", "steps": plan, "current_step": idx, "status": "done" if done else "running"})
-        return {"messages": [msg], "current_step": idx, "past_steps": past, "step_failed": failed}
+        return {"messages": [msg], "current_step": idx, "past_steps": past, "step_failed": failed, "steps": steps}
 
     async def replanner(state):
         task = _latest_task(state)
@@ -113,6 +123,9 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
         return {"plan": steps, "current_step": 0, "replans": (state.get("replans") or 0) + 1}
 
     def should_replan(state) -> str:
+        # 达到轮数上限 → 直接结束（不再执行工具/继续规划）
+        if state.get("stopped") == "max_steps":
+            return "end"
         msgs = state.get("messages") or []
         if msgs and getattr(msgs[-1], "tool_calls", None):
             return "tools"
