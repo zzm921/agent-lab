@@ -10,29 +10,37 @@ techFilters: [LangGraph]
 accent: '#ef4444'
 mode: reflection
 ---
-## 为什么需要它
+## 概述
 
-反思修订（Reflection / Self-Critique）让 Agent 先产出初稿，再以批评者视角审视不足，最后基于批评意见进行修订。经过多轮迭代，输出质量显著高于单次生成，是 Reflexion 等机制的工程化落地。
+反思修订（Reflection / Self-Critique）让 Agent 先产出初稿，再以批评者视角审视不足，最后基于批评意见进行修订。经过多轮迭代，输出质量显著高于单次生成，是 Reflexion、Self-Refine 等机制的工程化落地。
 
-难点在于让"批评"真正有建设性而非泛泛而谈，以及如何防止修订循环发散。
+核心原则：**先出结果、再回头审视**——让模型先专注产出，再切换成「批评者」视角挑毛病，而不是边写边自我怀疑。
 
-## 怎么解决
+## 为什么需要
 
-把「反思修订」拆成几个可独立设计的环节，核心是让模型**先出结果、再回头审视**，而不是边写边自我怀疑：
+- 单次生成的答案往往「一眼看不到盲区」，模型不知道自己的输出哪里不够好；
+- 直接让模型「再想想」通常只是重复原话，缺乏真正的批判性审视；
+- 多轮「草稿 → 批评 → 修订」能显著提升完整性、准确性，是自我改进最轻量的手段。
+
+难点在于让「批评」真正有建设性而非泛泛而谈，以及防止修订循环发散。
+
+## 通用设计思路
+
+反思修订可拆成几个可独立设计的环节：
 
 ### 1. 生成环节
 
-让模型产出一版完整答案（草稿）。生成与自我批判尽量分两次调用完成——先专注产出，再切换成"批评者"视角审视，效果远好于混在一次调用里。
+让模型产出一版完整答案（草稿）。生成与自我批判尽量分两次调用完成——先专注产出，再切换成「批评者」视角审视。
 
 ### 2. 评审环节（核心设计点）
 
-评审要有建设性，不能只说"不够好"。主流做法：
+评审要有建设性，不能只说「不够好」。主流做法：
 
 - **结构化评分**：按维度打分（准确性 / 完整性 / 清晰度 / 逻辑性），可量化、可设达标阈值；
-- **自由文本意见**：直接输出具体改进点，更贴近模型自然表达，但需用关键词/启发式判定是否通过；
-- **进阶变体**：用**独立评审模型**（LLM-as-a-judge）避免"既当运动员又当裁判"的自我偏好；或把失败反思写成语言化记忆（Reflexion）供后续复用。
+- **自由文本意见**：直接输出具体改进点，更贴近模型自然表达，但需用关键词 / 启发式判定是否通过；
+- **进阶变体**：用**独立评审模型**（LLM-as-a-judge）避免「既当运动员又当裁判」的自我偏好；或把失败反思写成语言化记忆（Reflexion）供后续复用。
 
-无论哪种，评审 prompt 都要要求"指出具体缺陷 + 给出可落地修改建议"，而不是泛泛评价。
+无论哪种，评审 prompt 都要要求「指出具体缺陷 + 给出可落地修改建议」，而不是泛泛评价。
 
 ### 3. 修订环节
 
@@ -43,14 +51,20 @@ mode: reflection
 - **质量达标即停**：评分 ≥ 阈值，或评审输出 PASS 标记；
 - **最大迭代上限**：无论是否达标都强制停止（兜底）；
 - **一致性收敛**：相邻两轮输出几乎无变化时停止，避免无意义空转；
-- 每轮成本是"生成 + 评审"两次模型调用，迭代上限要按成本承受力设定。
+- 每轮成本是「生成 + 评审」两次模型调用，迭代上限要按成本承受力设定。
 
 ### 5. 可选增强
 
-- 修订阶段允许调用工具 / 检索补充信息，让修订"有的放矢"；
+- 修订阶段允许调用工具 / 检索补充信息，让修订「有的放矢」；
 - 保留每轮草稿与评审意见，形成可追溯的迭代记录。
 
-## 核心实现（伪代码）
+## 本项目的做法
+
+本项目用 LangGraph `StateGraph` 原生编排三节点循环，评审采用**流式自由文本**（`critique` 增量事件实时下发，生成到一半即可展示）：
+
+```
+START → generator ⇄ tools → critic →（评审通过 / 达最大迭代 / 达轮数上限）→ END
+```
 
 ### 图与状态
 
@@ -85,7 +99,7 @@ async def generator(state):
     if msg 含工具调用:
         return { messages: [msg], steps }  # 路由到 tools 执行后回到本节点
     if not revising:
-        emit({ type: "reflect", stage: "draft" })   # 通知前端开启反思步骤
+        emit({ type: "reflect", stage: "draft" })
     return { messages: [msg], draft: msg, iteration+1, passed: False, steps }
 ```
 
@@ -93,7 +107,7 @@ async def generator(state):
 
 ```python
 async def critic(state):
-    # 思考 → thinking 事件；评审文本 → critique 增量事件（前端流式展示评审过程）
+    # 思考 → thinking 事件；评审文本 → critique 增量事件（实时下发评审过程）
     msg = stream_model_call(llm, [HumanMessage(f"原始问题：{query}\n草稿：{draft}\n\n输出评审结论")],
                             emit, system_prompt=CRITIC_SYSTEM, output_event="critique")
     return { critique: msg, passed: judge_text(msg) }
@@ -105,8 +119,6 @@ def judge_text(text):
     return 首行以 "【PASS】" 或 "PASS" 开头
 ```
 
-> 评审不再依赖结构化 JSON 输出，而是自由文本流式下发：模型生成到一半即可展示，体验更顺滑；通过与否由 `_judge_text` 按关键词解析，容错更高（见 `test_reflection_text_critique_fallback`）。
-
 ### 条件路由与终止
 
 ```python
@@ -115,7 +127,6 @@ after_generator(state):
     return "tools" if 末条消息含工具调用 else "critic"
 
 should_continue(state):
-    # 两个终止条件共同防止死循环
     return END if (passed 或 iteration >= max_iter) else "generator"
 ```
 
@@ -128,7 +139,7 @@ message（首稿）→ reflect(stage=draft) → critique 增量（评审过程�
 工具调用穿插：tool_start / tool_end（含 HITL 审批）
 ```
 
-## 防死循环三道闸
+### 防死循环三道闸
 
 | 机制 | 作用 |
 |------|------|
@@ -136,6 +147,16 @@ message（首稿）→ reflect(stage=draft) → critique 增量（评审过程�
 | **max_steps** | 累计模型调用/工具回合数上限，防「反复请求工具从不产出草稿」 |
 | **recursion_limit** | LangGraph 递归深度兜底（Runner config 注入） |
 
+### 与通用设计的对应关系
+
+| 通用设计 | 本项目做法 |
+|---------|-----------|
+| 生成环节 | generator 节点，草稿 / 修订二阶段 |
+| 评审环节 | critic 节点，流式自由文本 + `judge_text` 关键词判定 |
+| 修订环节 | 未通过时回到 generator 以 `_REVISE_PROMPT` 重写 |
+| 质量达标即停 | 评审以【PASS】/ 无开头判定通过 |
+| 最大迭代上限 | `max_iter` 兜底 |
+| 修订可调工具 | generator ⇄ tools 循环，工具结果回填后继续生成 |
 
 ## 收益与边界
 
@@ -143,3 +164,4 @@ message（首稿）→ reflect(stage=draft) → critique 增量（评审过程�
 - 自由文本评审替代结构化评分：更贴近模型自然输出，通过判定容错高
 - 三道终止机制兜底，循环永不发散
 - 边界：评审质量依赖 critic prompt；`【PASS】` 关键词判定属于启发式，极端输出需依赖 max_iter 兜底
+
