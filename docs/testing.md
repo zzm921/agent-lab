@@ -80,6 +80,28 @@ npm run test
 - `test_multi_agent`：编排者分派 Worker 汇总
 - `test_unknown_mode`：未知模式报错
 
+**test_retry.py（14）** — 两层重试机制
+- 单元：`test_is_retryable_exception_marks_transient` / `test_is_retryable_exception_marks_permanent`：瞬时（超时/连接/5xx/429）与确定性（参数/4xx/FileNotFound）错误分类
+- 单元：`test_is_retryable_status`：状态码判定（429/5xx 可重试，400/404 不可）
+- 单元：`test_backoff_delay_within_bounds`：指数退避+抖动在 `[base*0.5, cap]` 内
+- 单元：`test_format_tool_error_retryable_exhausted` / `test_format_tool_error_permanent`：结构化错误文案（错误类型/详情/建议）
+- 单元：`test_invoke_with_retry_succeeds_after_transient_failures`：瞬时错误直接重试后成功（发 2 次 tool_retry 事件）
+- 单元：`test_invoke_with_retry_exhausted`：重试耗尽返回错误；`test_invoke_with_retry_skips_permanent`：确定性错误不重试
+- 集成：`test_tool_layer_retry_transparent`：瞬时错误透明重试成功，模型只看到成功结果
+- 集成：`test_tool_layer_retry_exhausted_returns_structured_error`：重试耗尽返回结构化错误给模型
+- 集成：`test_permanent_error_no_direct_retry`：确定性错误不直接重试
+- 集成：`test_agent_layer_retry_cap_gives_up`：同工具连续失败达上限 →「请改用其它工具」短路
+- 集成：`test_harness_agent_retry_cap_and_reset`：harness 连续失败计数与成功后清零
+- 故障注入目录：`test_fault_catalog_classification`（13 种类型按 retryable/permanent 分类）、`test_fault_spec_classification`（规格含重试分类、off 清除）、`test_fault_unknown_type_rejected`（未知类型 ValueError）
+
+**test_modes.py 故障注入类型**（新增）
+- `test_fault_transient_type_triggers_direct_retry`：注入 `http_500` → 发 `tool_retry` 事件（工具层直接重试），耗尽返回结构化错误，且短路审批
+- `test_fault_permanent_type_goes_to_model`：注入 `http_400` → 无 `tool_retry`，错误直接返回给模型
+
+**test_api_stream.py 故障注入 API**（新增）
+- `test_fault_types_endpoint`：`GET /api/faults/types` 返回类型目录及重试分类
+- `test_fault_unknown_mode_returns_400`：未知注入类型返回 400
+
 **test_approval_flow.py（14）** — HITL 审批
 - `test_approve_flow` / `test_reject_flow` / `test_modify_flow` / `test_modify_flow_by_name_fallback`：批准 / 拒绝 / 修改（按 id / 按名称兜底）后恢复
 - `test_tool_count_accumulates_across_approvals`：同轮多次审批工具数累计
@@ -106,7 +128,7 @@ npm run test
 
 | 项目 | 用例数 | 结果 |
 |---|---|---|
-| 后端 pytest | 43 | ✅ 全部通过（43 passed） |
+| 后端 pytest | 97（含 21 个重试/故障注入相关用例） | ✅ 94 通过；3 个 opensandbox 用例需安装 `opensandbox` SDK（环境缺失） |
 | 前端 vitest | 20 | ✅ 全部通过（20 passed） |
 | 前端构建 | — | ✅ `vite build` 成功 |
 

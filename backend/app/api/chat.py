@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from app.agents.runner import AgentRunner
@@ -120,14 +120,27 @@ async def stop_run(req: StopRequest):
 
 @router.get("/faults")
 async def list_faults():
-    """当前故障注入配置（验证熔断机制用）。"""
+    """当前故障注入配置（验证两层重试/熔断机制用）。"""
     return {"faults": get_runner().harness.faults()}
+
+
+@router.get("/faults/types")
+async def list_fault_types():
+    """可用故障注入类型及重试分类：retryable=瞬时错误（工具层直接重试），
+    permanent=参数/业务错误（返回给模型思考后重试）。"""
+    return {"types": get_runner().harness.available_fault_modes()}
 
 
 @router.post("/fault")
 async def set_fault(req: FaultRequest):
-    """设置工具故障注入：error=模拟报错，timeout=模拟超时，off=恢复正常。"""
-    get_runner().harness.set_fault(req.tool, req.mode)
+    """设置工具故障注入。类型分类决定重试走向：
+    - 瞬时错误（timeout/conn_reset/dns/http_429/http_5xx）→ 工具层直接重试（透明重试）
+    - 参数/业务错误（error/business/http_400/http_401/http_403/http_404）→ 返回给模型思考后重试
+    off/none 恢复正常；未知类型返回 400。"""
+    try:
+        get_runner().harness.set_fault(req.tool, req.mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "faults": get_runner().harness.faults()}
 
 

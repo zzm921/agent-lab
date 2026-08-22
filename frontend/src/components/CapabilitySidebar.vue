@@ -8,6 +8,7 @@ defineProps<{
   caps: Capability[]
   enabledIds: string[]
   faults?: Record<string, string>
+  faultTypes?: Record<string, string>
   loading?: boolean
   error?: string | null
   mode: ModeId
@@ -84,12 +85,13 @@ function onFault(id: string, mode: string) {
       <section class="border-t border-slate-800 pt-4">
         <div class="mb-2 flex items-center justify-between">
           <h3 class="text-xs font-semibold text-slate-300">能力与故障注入</h3>
-          <span class="text-[10px] text-slate-500" title="将工具模拟为报错/超时以验证熔断机制">正常 / 报错 / 超时</span>
+          <span class="text-[10px] text-slate-500" title="瞬时错误→工具层直接重试；参数/业务错误→交给模型思考后重试">瞬时重试 / 交模型</span>
         </div>
         <CapabilityGrid
           :caps="caps"
           :enabled-ids="enabledIds"
           :faults="faults"
+          :fault-types="faultTypes"
           :loading="loading"
           :error="error"
           compact

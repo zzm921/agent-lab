@@ -27,7 +27,11 @@ class StopRequest(BaseModel):
 
 class FaultRequest(BaseModel):
     tool: str = Field(description="工具名")
-    mode: str = Field(default="off", description="故障注入：error | timeout | off（恢复正常）")
+    mode: str = Field(
+        default="off",
+        description="故障注入类型：瞬时错误（timeout/conn_reset/dns/http_429/http_5xx → 工具层直接重试）"
+        "或参数/业务错误（error/business/http_400/http_401/http_403/http_404 → 返回给模型重试）；off 恢复正常",
+    )
 
 
 class SourceRequest(BaseModel):

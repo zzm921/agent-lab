@@ -102,6 +102,37 @@ def test_fault_set_list_and_clear():
     assert resp.json()["faults"] == {}
 
 
+def test_fault_types_endpoint():
+    chat.set_runtime(runner=FakeRunner([]))
+    client = TestClient(app)
+    resp = client.get("/api/faults/types")
+    assert resp.status_code == 200
+    types = resp.json()["types"]
+    # 瞬时错误 → 工具层直接重试
+    assert types["timeout"] == "retryable"
+    assert types["conn_reset"] == "retryable"
+    assert types["dns"] == "retryable"
+    assert types["http_429"] == "retryable"
+    assert types["http_500"] == "retryable"
+    assert types["http_502"] == "retryable"
+    assert types["http_503"] == "retryable"
+    # 参数/业务错误 → 返回给模型思考后重试
+    assert types["error"] == "permanent"
+    assert types["business"] == "permanent"
+    assert types["http_400"] == "permanent"
+    assert types["http_401"] == "permanent"
+    assert types["http_403"] == "permanent"
+    assert types["http_404"] == "permanent"
+
+
+def test_fault_unknown_mode_returns_400():
+    chat.set_runtime(runner=FakeRunner([]))
+    client = TestClient(app)
+    resp = client.post("/api/fault", json={"tool": "calculator", "mode": "bogus"})
+    assert resp.status_code == 400
+    assert "未知故障注入类型" in resp.json()["detail"]
+
+
 def test_source_returns_code():
     client = TestClient(app)
     resp = client.get("/api/source/react")

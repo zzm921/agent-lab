@@ -101,6 +101,7 @@
 | `thinking` | 推理过程（增量） | `delta` |
 | `message` | 回答（增量） | `delta` |
 | `tool_start` / `tool_end` | 工具调用开始/结束 | `tool`, `args`, `result`, `success` |
+| `tool_retry` | 工具层透明重试进度 | `tool`, `attempt`, `max`, `delay`(实际睡眠), `base_delay`(纯指数值), `reason` |
 | `plan` | 计划更新 | `steps`, `current_step`, `status` |
 | `retrieve` | RAG 检索 | `query`, `hits[]`(score) |
 | `memory_write` / `memory_read` | 记忆写入/召回 | `content`, `source` |
@@ -115,7 +116,27 @@
 
 `StreamEventsMiddleware.awrap_tool_call` → `_execute_tool_call`：按 `approval_policy` 决定是否 interrupt 审批 → 推送 `tool_start`/`tool_end`（含结果与成功标记）→ 执行工具 → 返回 `ToolMessage`；工具异常兜底为失败事件与失败 ToolMessage。所有顶层模式复用；multi-agent 子代理用 `WorkerEventsMiddleware`（跳过审批）。
 
-### 2.7 记忆与检索
+### 2.7 两层重试机制（tools/retry.py + harness）
+
+工具失败按原因分层处理（`tools/retry.py`）：
+
+- **工具层透明重试（Transparent Retry）**：对与参数无关的瞬时错误（网络超时/连接重置/服务端 5xx/限流 429，含 `RetryableToolError` 显式标记与 httpx 网络异常识别）用相同参数直接重试，最多 `tool_retry_max` 次、指数退避 + 抖动（`tool_retry_base_delay` / `tool_retry_max_delay`）；每次重试发射 `tool_retry` 事件，模型完全无感知。
+- **Agent 层思考后重试（Model-mediated Retry）**：参数/业务错误（400/404/401/403/业务逻辑等）不直接重试，`format_tool_error` 生成含「错误类型/详情/建议」的结构化文本返回给模型，由模型重新思考、调整参数或换工具后再调用（ReAct 循环天然具备）；`harness.record_tool_failure` 累计同工具连续失败次数，成功即清零，达到 `agent_retry_max` 后 `tool_exhausted` 短路为「请改用其它工具」提示，避免无限烧迭代。
+
+真实工具配合：`web_search` 网络/5xx/429、`run_command` OpenSandbox 连接层失败改为抛 `RetryableToolError`（参数/危险命令/超时/退出码等确定性结果仍走原有字符串返回）。
+
+**可选报错注入（调试/验证两层重试）**：`harness.FAULT_TYPES` 提供 13 种注入类型，按重试分类两组，工具处理节点命中即短路执行：
+- `retryable`（瞬时错误 → 工具层直接重试）：`timeout` / `conn_reset` / `dns` / `http_429` / `http_500` / `http_502` / `http_503`
+- `permanent`（参数/业务错误 → 交给模型思考后重试）：`error` / `business` / `http_400` / `http_401` / `http_403` / `http_404`
+
+注入通过 `POST /api/fault`（未知类型 400）、`GET /api/faults/types` 查看类型目录与分类；前端能力卡片故障注入下拉按两组展示。
+
+**重试可视化（指数退避直观体现）**：`tool_retry` 事件同时下发 `delay`（实际睡眠，含 ±50% 抖动）与 `base_delay`（纯指数值 `min(cap, base*2^(attempt-1))`）。前端工具卡片在重试期间显示：
+- 重试徽标 `重试 n/m · 退避 X.Xs`；
+- 实时倒计时进度条（`X.Xs 后第 n+1 次重试` + 抖动后实际等待）；
+- 指数退避阶梯条（`1.5s → 3s → 6s → …` 逐次翻倍、封顶，当前尝试高亮），直观展示指数退避曲线。
+
+### 2.8 记忆与检索
 
 - `memory/vector_store.py`：`OpenAIEmbeddings` + 内存余弦相似度 top-k 检索。
 - `memory/corpus.py`：内置知识库（LangGraph/LangChain 等条目）。
@@ -140,4 +161,8 @@
 | 最大迭代 | `MAX_ITERATIONS` | 8 |
 | RAG top-k | `RAG_TOP_K` | 3 |
 | 上下文阈值 | `CONTEXT_THRESHOLD` | 12 |
+| 工具层重试次数 | `TOOL_RETRY_MAX` | 3 |
+| 重试退避基础秒数 | `TOOL_RETRY_BASE_DELAY` | 1.5 |
+| 重试最长退避秒数 | `TOOL_RETRY_MAX_DELAY` | 8.0 |
+| Agent 层重试上限 | `AGENT_RETRY_MAX` | 3 |
 | CORS 来源 | `CORS_ORIGINS` | `["http://localhost:5173","http://localhost:8000"]` |

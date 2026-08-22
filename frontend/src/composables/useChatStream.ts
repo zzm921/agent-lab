@@ -19,6 +19,14 @@ export interface ToolCallEntry {
   args: Record<string, unknown>
   status: 'running' | 'success' | 'failed' | 'rejected'
   result?: string
+  /** 工具层透明重试进度（tool_retry 事件更新） */
+  retryCount?: number
+  retryMax?: number
+  /** 本次重试实际等待秒数（含抖动） */
+  retryDelay?: number
+  /** 本次重试纯指数退避秒数（不含抖动，用于展示退避曲线） */
+  retryBaseDelay?: number
+  retryReason?: string
 }
 
 /** 流水线步骤类型：按发生顺序记录，用户输入与思考/工具/输出交替呈现 */
@@ -46,6 +54,14 @@ export interface StepEntry {
   args?: Record<string, unknown>
   status?: 'running' | 'success' | 'failed' | 'rejected'
   result?: string
+  /** 工具层透明重试进度（tool_retry 事件更新） */
+  retryCount?: number
+  retryMax?: number
+  /** 本次重试实际等待秒数（含抖动） */
+  retryDelay?: number
+  /** 本次重试纯指数退避秒数（不含抖动，用于展示退避曲线） */
+  retryBaseDelay?: number
+  retryReason?: string
   /** plan */
   steps?: string[]
   currentStep?: number
@@ -239,6 +255,21 @@ export function useChatStream(): ChatStream {
           if (s.kind === 'tool' && s.tool === ev.tool && s.status === 'running') {
             s.status = ev.success ? 'success' : 'failed'
             s.result = ev.result
+            break
+          }
+        }
+        break
+      }
+      case 'tool_retry': {
+        // 工具层透明重试进度：更新正在执行中的工具卡片（同一步骤就地更新）
+        for (let i = stream.steps.length - 1; i >= 0; i--) {
+          const s = stream.steps[i]
+          if (s.kind === 'tool' && s.tool === ev.tool && s.status === 'running') {
+            s.retryCount = ev.attempt
+            s.retryMax = ev.max
+            s.retryDelay = ev.delay
+            s.retryBaseDelay = ev.base_delay ?? ev.delay
+            s.retryReason = ev.reason
             break
           }
         }

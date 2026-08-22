@@ -7,7 +7,8 @@
   content(output) → message 事件（最终输出）；
   每个片段实时打印到后端控制台，工具调用经 tool_call_chunks 合并回 AIMessage。
 - awrap_tool_call：按审批策略（harness.should_approve，含强制 HITL 工具）决定是否 interrupt 审批，
-  随后发射 tool_start / tool_end，并执行工具（异常兜底为失败结果）。
+  随后发射 tool_start / tool_end，并执行工具（两层重试：工具层透明重试 + Agent 层上限；
+  异常经结构化错误文本返回给模型思考后重试）。
 """
 
 from __future__ import annotations
@@ -17,7 +18,9 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import Command, interrupt
 
 from app.agents.harness import should_approve
+from app.core.errors import RetryableToolError
 from app.core.events import emit_text, event
+from app.tools.retry import format_tool_error, invoke_with_retry
 
 
 def _content_text(chunk) -> str:
@@ -129,14 +132,27 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=
         emit(event("tool_end", tool=name, args=args, result=msg, success=False))
         return ToolMessage(content=msg, tool_call_id=cid)
 
-    # 故障注入钩子（验证熔断机制用）：命中则模拟报错/超时并计入失败，不执行工具也不触发审批
-    if harness is not None:
-        injected = harness.fault_message(name)
-        if injected is not None:
-            emit(event("tool_start", tool=name, args=args))
-            emit(event("tool_end", tool=name, args=args, result=injected, success=False))
-            harness.record_tool_failure(session_id, name, args)
-            return ToolMessage(content=injected, tool_call_id=cid)
+    # 故障注入钩子（验证两层重试与熔断机制用）：命中则短路审批，不执行真实工具。
+    # 按注入类型分类：
+    # - 瞬时错误（timeout/conn_reset/dns/429/5xx，retryable=True）→ 抛 RetryableToolError
+    #   进入工具层透明重试（发 tool_retry 事件，指数退避，耗尽返回结构化错误给模型）；
+    # - 参数/业务错误（error/business/400/401/403/404，retryable=False）→ 不直接重试，
+    #   错误文本直接返回给模型思考后重试。
+    fault = harness.fault_spec(name) if harness is not None else None
+    if fault is not None and not fault["retryable"]:
+        emit(event("tool_start", tool=name, args=args))
+        emit(event("tool_end", tool=name, args=args, result=fault["message"], success=False))
+        harness.record_tool_failure(session_id, name, args)
+        return ToolMessage(content=fault["message"], tool_call_id=cid)
+    if fault is not None:
+        do_approval = False  # 瞬时故障注入同样短路审批，直接进入工具层透明重试
+
+    # Agent 层重试上限：同一工具连续失败（可换参数）达到上限后，直接提示模型改用其它工具，不执行也不审批
+    if harness is not None and harness.tool_exhausted(session_id, name):
+        msg = f"工具 {name} 已连续失败 {harness.agent_retry_limit()} 次，请停止使用该工具，改用其它工具或向用户说明。"
+        emit(event("tool_start", tool=name, args=args))
+        emit(event("tool_end", tool=name, args=args, result=msg, success=False))
+        return ToolMessage(content=msg, tool_call_id=cid)
 
     if do_approval:
         decision = interrupt({"tool_calls": [{"name": name, "args": args, "id": cid}]})
@@ -155,21 +171,32 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=
             request = request.override(tool_call={**call, "args": modified[name]})
 
     effective = request.tool_call
-    emit(event("tool_start", tool=effective["name"], args=effective.get("args", {})))
-    try:
-        result = await handler(request)
+    name = effective["name"]
+    args = effective.get("args", {})
+    settings = getattr(harness, "settings", None) if harness is not None else None
+    emit(event("tool_start", tool=name, args=args))
+
+    async def _run():
+        if fault is not None:  # 瞬时故障注入：每次尝试均模拟瞬时失败，直至工具层直接重试耗尽
+            raise RetryableToolError(fault["message"])
+        return await handler(request)
+
+    # 工具层透明重试（仅瞬时错误直接重试，指数退避+抖动；参数/业务错误不重试直接返回）
+    result, success, error, retries = await invoke_with_retry(_run, name, settings, emit)
+    if success:
         if isinstance(result, Command):
             return result
         content = getattr(result, "content", None)
-        emit(event("tool_end", tool=effective["name"], args=effective.get("args", {}), result=str(content), success=True))
+        emit(event("tool_end", tool=name, args=args, result=str(content), success=True))
         if harness is not None:
-            harness.record_tool_success(session_id, effective["name"], effective.get("args", {}))
+            harness.record_tool_success(session_id, name, args)
         return result
-    except Exception as exc:  # noqa: BLE001
-        emit(event("tool_end", tool=effective["name"], args=effective.get("args", {}), result=f"工具执行失败：{exc}", success=False))
-        if harness is not None:
-            harness.record_tool_failure(session_id, effective["name"], effective.get("args", {}))
-        return ToolMessage(content=f"工具执行失败：{exc}", tool_call_id=cid)
+    # 失败：结构化错误文本返回给模型（Agent 层思考后重试：模型修正参数/换工具后再调）
+    msg = format_tool_error(name, error, retried=retries)
+    emit(event("tool_end", tool=name, args=args, result=msg, success=False))
+    if harness is not None:
+        harness.record_tool_failure(session_id, name, args)
+    return ToolMessage(content=msg, tool_call_id=cid)
 
 
 def _approval_policy(request) -> str:

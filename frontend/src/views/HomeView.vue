@@ -14,6 +14,7 @@ const {
   loading,
   loadError,
   faults,
+  faultTypes,
   exampleHint,
   enabledCapabilities,
   load,
@@ -93,6 +94,7 @@ function send() {
       :caps="caps"
       :enabled-ids="enabled"
       :faults="faults"
+      :fault-types="faultTypes"
       :loading="loading"
       :error="loadError"
       :mode="mode"

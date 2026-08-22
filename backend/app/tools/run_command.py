@@ -28,6 +28,8 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from app.core.errors import RetryableToolError
+
 # 危险命令特征（小写子串匹配）；命中即拒绝，防止破坏宿主环境
 _DANGEROUS_PATTERNS = (
     "rm -rf /",
@@ -220,7 +222,8 @@ def _get_or_create_sandbox(settings, work_dir: Path, request_timeout: timedelta)
     except ImportError:
         return None, "OpenSandbox SDK 未安装（pip install opensandbox），无法使用沙箱执行。"
     except Exception as exc:  # noqa: BLE001
-        return None, f"创建 OpenSandbox 沙箱失败：{exc}"
+        # 沙箱创建失败多为瞬时（服务启动中/拉镜像慢/网络抖动），抛出由工具层直接重试
+        raise RetryableToolError(f"创建 OpenSandbox 沙箱失败：{exc}") from exc
     _sandbox_pool[fp] = sandbox
     _sandbox_last_used[fp] = time.time()
     return sandbox, None
@@ -284,7 +287,9 @@ def _run_opensandbox(command: str, timeout: int, settings, work_dir: Path) -> st
                 parts.append(out)
             return "\n".join(parts)
         except Exception as exc:  # noqa: BLE001
-            return f"沙箱命令执行失败：{exc}"
+            # 命令执行连接层失败多为瞬时（与沙箱服务的网络抖动/超时），抛出由工具层直接重试；
+            # 命令本身执行失败（退出码非 0）由上方正常返回，不在此路径
+            raise RetryableToolError(f"沙箱命令执行失败：{exc}") from exc
 
 
 def _work_dir(settings) -> Path:

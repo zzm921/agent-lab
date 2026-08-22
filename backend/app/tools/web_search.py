@@ -5,6 +5,9 @@ import re
 import httpx
 from langchain_core.tools import tool
 
+from app.core.errors import RetryableToolError
+from app.tools.retry import is_retryable_exception
+
 
 def _strip_tags(raw: str) -> str:
     return html_mod.unescape(re.sub(r"<[^>]+>", "", raw))
@@ -33,5 +36,11 @@ def web_search(query: str) -> str:
         if not lines:
             return "未搜索到相关结果。"
         return "\n".join(lines)
-    except Exception:
+    except RetryableToolError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # 瞬时错误（网络超时/连接重置/5xx/429）抛出，交给工具层直接重试（透明重试）；
+        # 其余确定性错误（参数/4xx 等）降级为提示文案返回给模型。
+        if is_retryable_exception(exc):
+            raise RetryableToolError(f"网页搜索瞬时失败（网络或服务端问题）：{exc}") from exc
         return "网页搜索暂时不可用（网络异常），请稍后重试或改用其它方式。"

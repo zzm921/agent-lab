@@ -41,6 +41,7 @@ export type AgentEvent =
   | { type: 'message'; delta: string }
   | { type: 'tool_start'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_end'; tool: string; args?: Record<string, unknown>; result: string; success: boolean }
+  | { type: 'tool_retry'; tool: string; attempt: number; max: number; delay: number; base_delay?: number; reason: string }
   | { type: 'plan'; steps: string[]; current_step: number; status: string }
   | { type: 'retrieve'; query: string; hits: HitItem[] }
   | { type: 'memory_write'; content: string }

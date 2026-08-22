@@ -183,12 +183,51 @@ async def test_fault_injection_triggers_circuit(settings, registry, sessions):
         AIMessage(content="结束"),
     ]
     settings.circuit_fail_threshold = 2
+    settings.tool_retry_base_delay = 0.001
+    settings.tool_retry_max_delay = 0.002
     runner = await _runner_with(registry, sessions, settings, script)
     runner.harness.set_fault("calculator", "timeout")
     events = await collect_stream(runner, mode="react", enabled=["calculator"])
     faulted = [e for e in events if e["type"] == "tool_end" and "故障注入" in e["result"]]
-    assert len(faulted) == 2  # 前两次模拟超时
+    assert len(faulted) == 2  # 前两次模拟超时（每次内部透明重试后仍失败）
     assert any(e["type"] == "tool_end" and "熔断" in e["result"] for e in events)  # 第三次被熔断
+
+
+async def test_fault_transient_type_triggers_direct_retry(settings, registry, sessions):
+    # 瞬时故障注入类型（如 http_500）：工具层透明重试，发 tool_retry 事件；
+    # 重试耗尽后返回结构化错误给模型（Agent 层思考后重试），且不触发审批
+    script = [
+        ai_with_tool("触发 500", args={"expression": "1+1"}, cid="c1"),
+        AIMessage(content="结束"),
+    ]
+    settings.tool_retry_base_delay = 0.001
+    settings.tool_retry_max_delay = 0.002
+    runner = await _runner_with(registry, sessions, settings, script)
+    runner.harness.set_fault("calculator", "http_500")
+    events = await collect_stream(runner, mode="react", enabled=["calculator"], approval_policy="always")
+    retry_events = [e for e in events if e["type"] == "tool_retry"]
+    assert len(retry_events) == 2  # tool_retry_max=3：原始 1 次 + 直接重试 2 次
+    assert retry_events[0]["tool"] == "calculator"
+    assert retry_events[0]["max"] == 3
+    end = next(e for e in events if e["type"] == "tool_end" and not e["success"])
+    assert "故障注入" in end["result"]
+    assert "瞬时错误" in end["result"]  # 结构化错误给模型
+    assert not any(e["type"] == "approval_request" for e in events)  # 故障注入短路审批
+
+
+async def test_fault_permanent_type_goes_to_model(settings, registry, sessions):
+    # 永久故障注入类型（如 http_400）：不直接重试（无 tool_retry 事件），错误直接返回给模型思考后重试
+    script = [
+        ai_with_tool("触发 400", args={"expression": "1+1"}, cid="c1"),
+        AIMessage(content="结束"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    runner.harness.set_fault("calculator", "http_400")
+    events = await collect_stream(runner, mode="react", enabled=["calculator"])
+    assert not any(e["type"] == "tool_retry" for e in events)
+    end = next(e for e in events if e["type"] == "tool_end" and not e["success"])
+    assert "故障注入" in end["result"]
+    assert "参数校验失败" in end["result"]
 
 
 async def test_circuit_allows_retry_with_different_args(settings, registry, sessions):

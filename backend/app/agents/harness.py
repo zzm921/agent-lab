@@ -20,6 +20,32 @@ import time
 # 强制 HITL 的工具：无论 approval_policy 如何，调用前都必须经人工审批（高危操作，如命令执行）
 ALWAYS_APPROVE_TOOLS = {"run_command"}
 
+# 故障注入类型目录：mode → (分类, 描述)。分类决定重试走向：
+# - retryable（瞬时错误）：与参数无关，换时间点用相同参数大概率成功 → 工具层直接重试（透明重试）
+# - permanent（参数/业务错误）：同参数重试必然失败 → 不直接重试，错误返回给模型思考后重试
+FAULT_TYPES: dict[str, tuple[str, str]] = {
+    # —— 瞬时错误 → 工具层直接重试 ——
+    "timeout": ("retryable", "网络请求超时"),
+    "conn_reset": ("retryable", "连接被重置"),
+    "dns": ("retryable", "DNS 解析失败"),
+    "http_429": ("retryable", "触发限流 429 Too Many Requests"),
+    "http_500": ("retryable", "服务端错误 500 Internal Server Error"),
+    "http_502": ("retryable", "网关错误 502 Bad Gateway"),
+    "http_503": ("retryable", "服务不可用 503 Service Unavailable"),
+    # —— 参数/业务错误 → 返回给模型思考后重试 ——
+    "error": ("permanent", "通用业务报错"),
+    "business": ("permanent", "业务逻辑错误：余额不足"),
+    "http_400": ("permanent", "参数校验失败 400 Bad Request"),
+    "http_401": ("permanent", "未授权 401 Unauthorized"),
+    "http_403": ("permanent", "权限不足 403 Forbidden"),
+    "http_404": ("permanent", "资源不存在 404 Not Found"),
+}
+
+
+def fault_classification(mode: str) -> str:
+    """故障注入类型的重试分类：retryable（直接重试）| permanent（交给模型重试）。"""
+    return FAULT_TYPES.get(mode, ("permanent", ""))[0]
+
 
 def should_approve(approval_policy: str, tool_name: str) -> bool:
     """审批策略判定：approval_policy=always，或工具本身被标记为强制 HITL 时需审批。"""
@@ -41,17 +67,23 @@ class AgentHarness:
         # 熔断：session_id → tool_name → {state, failures, open_until}
         # state ∈ closed（正常）| open（熔断，拒绝调用）| half_open（冷却结束，放行一次探测）
         self._circuits: dict[str, dict[str, dict]] = {}
-        # 故障注入：tool_name → mode（error | timeout）。仅供验证熔断机制用，
-        # 由工具处理节点（而非工具类本身）作为钩子读取并模拟失败
+        # Agent 层重试上限：session_id → tool_name → 连续失败次数（成功即清零）
+        # 同一工具（即使换了参数）连续失败达到 agent_retry_max 后，提示模型改用其它工具
+        self._tool_fails: dict[str, dict[str, int]] = {}
+        # 故障注入：tool_name → mode（FAULT_TYPES 中的类型，如 timeout/http_500/business/http_400）。
+        # 仅供验证两层重试与熔断机制用，由工具处理节点（而非工具类本身）作为钩子读取并模拟失败
         self._faults: dict[str, str] = {}
 
-    # --- 故障注入：验证熔断机制的钩子（不侵入工具类） ---
+    # --- 故障注入：验证两层重试与熔断机制的钩子（不侵入工具类） ---
     def set_fault(self, tool_name: str, mode: str) -> None:
-        """设置工具故障注入：error=模拟报错，timeout=模拟超时，off/空=恢复正常。"""
+        """设置工具故障注入：mode 取自 FAULT_TYPES（如 timeout/http_500/business/http_400），
+        off/空/none 恢复正常；未知类型抛 ValueError。"""
         if mode in ("off", "", "none"):
             self._faults.pop(tool_name, None)
-        elif mode in ("error", "timeout"):
+        elif mode in FAULT_TYPES:
             self._faults[tool_name] = mode
+        else:
+            raise ValueError(f"未知故障注入类型：{mode}，可选：{', '.join(FAULT_TYPES)}")
 
     def fault_mode(self, tool_name: str) -> str | None:
         return self._faults.get(tool_name)
@@ -59,18 +91,28 @@ class AgentHarness:
     def faults(self) -> dict[str, str]:
         return dict(self._faults)
 
-    def fault_message(self, tool_name: str) -> str | None:
-        """故障注入钩子：命中注入模式时返回模拟失败信息，否则返回 None。
+    @staticmethod
+    def available_fault_modes() -> dict[str, str]:
+        """可用故障注入类型及其重试分类（调试/API 展示用）。"""
+        return {mode: fault_classification(mode) for mode in FAULT_TYPES}
+
+    def fault_spec(self, tool_name: str) -> dict | None:
+        """故障注入规格：命中返回 {mode, message, retryable}，未注入返回 None。
 
         工具处理节点（events_mw._execute_tool_call / tools.runner.make_tools_node）
-        在真正执行前调用；返回非空即短路为失败，并计入熔断失败次数。
+        在真正执行前读取并短路为失败，并计入失败次数。retryable 为 True 表示
+        瞬时错误 → 抛 RetryableToolError 进入工具层透明重试；False 表示参数/业务错误
+        → 错误文本直接返回给模型思考后重试。
         """
         mode = self._faults.get(tool_name)
-        if mode == "error":
-            return f"[故障注入] 工具 {tool_name} 模拟报错"
-        if mode == "timeout":
-            return f"[故障注入] 工具 {tool_name} 模拟超时"
-        return None
+        if mode is None:
+            return None
+        kind, desc = FAULT_TYPES.get(mode, ("permanent", "通用业务报错"))
+        return {
+            "mode": mode,
+            "message": f"[故障注入] 工具 {tool_name}：{desc}",
+            "retryable": kind == "retryable",
+        }
 
     # --- 资源上限 ---
     def recursion_limit(self) -> int:
@@ -116,13 +158,17 @@ class AgentHarness:
         return False
 
     def record_tool_success(self, session_id: str, tool_name: str, args) -> None:
-        """工具执行成功：关闭对应调用键的熔断并清零失败计数。"""
+        """工具执行成功：关闭对应调用键的熔断并清零失败计数，同时清零该工具的连续失败（Agent 层上限重置）。"""
         entry = self._circuit(session_id, self._fault_key(tool_name, args))
         entry["state"] = "closed"
         entry["failures"] = 0
+        fails = self._tool_fails.get(session_id)
+        if fails is not None:
+            fails[tool_name] = 0
 
     def record_tool_failure(self, session_id: str, tool_name: str, args) -> None:
-        """工具执行失败：累计失败次数，达到阈值（或探测失败）即熔断并进入冷却。"""
+        """工具执行失败：累计失败次数，达到阈值（或探测失败）即熔断并进入冷却；
+        同时累计该工具连续失败次数（Agent 层重试上限判定用）。"""
         entry = self._circuit(session_id, self._fault_key(tool_name, args))
         entry["failures"] += 1
         threshold = int(getattr(self.settings, "circuit_fail_threshold", 3))
@@ -130,6 +176,19 @@ class AgentHarness:
             entry["state"] = "open"
             entry["failures"] = 0
             entry["open_until"] = time.time() + int(getattr(self.settings, "circuit_cooldown", 30))
+        by_tool = self._tool_fails.setdefault(session_id, {})
+        by_tool[tool_name] = by_tool.get(tool_name, 0) + 1
+
+    # --- Agent 层重试上限：同一工具连续失败（可换参数）达到上限后提示模型改用其它工具 ---
+    def agent_retry_limit(self) -> int:
+        """Agent 层重试上限：同一工具连续失败允许的最大次数。"""
+        return max(1, int(getattr(self.settings, "agent_retry_max", 3)))
+
+    def tool_exhausted(self, session_id: str, tool_name: str) -> bool:
+        """该工具是否已达 Agent 层重试上限（连续失败 >= agent_retry_max）。
+        命中后由工具处理节点返回「改用其它工具」的提示，避免模型无限烧迭代。"""
+        fails = self._tool_fails.get(session_id, {})
+        return fails.get(tool_name, 0) >= self.agent_retry_limit()
 
     # --- 止损：取消运行中的后台任务 ---
     def register_run(self, session_id: str, task: asyncio.Task) -> None:

@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     circuit_fail_threshold: int = 3  # 同一会话内“同一工具+相同参数”连续失败次数，达到即熔断该参数调用（换参重试放行）
     circuit_cooldown: int = 30  # 熔断冷却秒数，冷却结束放行一次探测（half-open）
 
+    # 重试：工具层直接重试（透明重试）+ Agent 层思考后重试上限
+    tool_retry_max: int = 3  # 工具层：瞬时错误（超时/连接重置/5xx/429）用相同参数直接重试的最大次数
+    tool_retry_base_delay: float = 1.5  # 重试指数退避基础秒数（每次 ×2，上限封顶）；默认放大便于前端观察退避过程
+    tool_retry_max_delay: float = 8.0  # 单次重试最长退避秒数
+    agent_retry_max: int = 3  # Agent 层：同一工具（可换参数）连续失败达到该次数后，提示模型改用其它工具
+
     # 命令执行沙箱（run_command 工具）
     sandbox_backend: str = "opensandbox"  # opensandbox（默认，Docker 部署）| local（本机轻量沙箱兜底）
     sandbox_timeout: int = 10  # 单条命令最大执行秒数，超时硬杀进程树

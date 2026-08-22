@@ -6,6 +6,7 @@ defineProps<{
   caps: Capability[]
   enabledIds: string[]
   faults?: Record<string, string>
+  faultTypes?: Record<string, string>
   loading?: boolean
   error?: string | null
   compact?: boolean
@@ -34,6 +35,7 @@ function onFault(id: string, mode: string) {
         :cap="cap"
         :enabled="enabledIds.includes(cap.id)"
         :fault="faults?.[cap.id]"
+        :fault-types="faultTypes"
         :compact="compact"
         @toggle="emit('toggle', $event)"
         @example="emit('example', $event)"

@@ -1,10 +1,50 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Capability } from '../types/agent'
 
-const props = defineProps<{ cap: Capability; enabled: boolean; compact?: boolean; fault?: string }>()
+const props = defineProps<{
+  cap: Capability
+  enabled: boolean
+  compact?: boolean
+  fault?: string
+  faultTypes?: Record<string, string>
+}>()
 const emit = defineEmits<{ toggle: [id: string]; example: [cap: Capability]; fault: [id: string, mode: string] }>()
 
 const available = props.cap.availability === 'available'
+
+/** 故障注入类型说明（与后端 FAULT_TYPES 描述对齐） */
+const FAULT_DESC: Record<string, string> = {
+  timeout: '网络请求超时',
+  conn_reset: '连接被重置',
+  dns: 'DNS 解析失败',
+  http_429: '触发限流 429',
+  http_500: '服务端错误 500',
+  http_502: '网关错误 502',
+  http_503: '服务不可用 503',
+  error: '通用业务报错',
+  business: '业务错误：余额不足',
+  http_400: '参数校验失败 400',
+  http_401: '未授权 401',
+  http_403: '权限不足 403',
+  http_404: '资源不存在 404',
+}
+
+/** 瞬时错误（retryable）→ 工具层直接重试（透明重试） */
+const retryableTypes = computed(() =>
+  Object.entries(props.faultTypes ?? {}).filter(([, cls]) => cls === 'retryable'),
+)
+/** 参数/业务错误（permanent）→ 不直接重试，交给模型思考后重试 */
+const permanentTypes = computed(() =>
+  Object.entries(props.faultTypes ?? {}).filter(([, cls]) => cls === 'permanent'),
+)
+
+function faultTitle(fault: string): string {
+  if (!fault || fault === 'off') return '故障注入：选择类型以验证两层重试机制'
+  const cls = props.faultTypes?.[fault]
+  const tag = cls === 'retryable' ? '瞬时错误 → 工具层直接重试' : '参数/业务错误 → 交给模型思考后重试'
+  return `故障注入：${FAULT_DESC[fault] ?? fault}（${tag}）`
+}
 
 function onFaultChange(e: Event) {
   emit('fault', props.cap.id, (e.target as HTMLSelectElement).value)
@@ -58,23 +98,21 @@ function onFaultChange(e: Event) {
       <span v-if="available" class="text-xs text-emerald-400">● 可用</span>
       <span v-else class="text-xs text-rose-400" title="该能力不适配">● 不适配</span>
       <div class="flex items-center gap-2">
-        <!-- 故障注入选择器：验证熔断机制用（正常/报错/超时），不影响工具类本身 -->
+        <!-- 故障注入选择器：验证两层重试机制用（瞬时错误→直接重试 / 参数业务错误→交给模型），不影响工具类本身 -->
         <select
           v-if="available"
           :value="fault"
-          :title="
-            fault === 'error'
-              ? '故障注入：工具当前被模拟为报错'
-              : fault === 'timeout'
-                ? '故障注入：工具当前被模拟为超时'
-                : '故障注入：选择报错/超时以验证熔断机制'
-          "
+          :title="faultTitle(fault ?? 'off')"
           class="rounded-lg border border-slate-700 bg-slate-800 px-1.5 py-1 text-[11px] text-slate-300 outline-none transition hover:border-rose-400/60"
           @change="onFaultChange"
         >
           <option value="off">正常</option>
-          <option value="error">报错</option>
-          <option value="timeout">超时</option>
+          <optgroup v-if="retryableTypes.length" label="瞬时错误 · 直接重试">
+            <option v-for="[id] in retryableTypes" :key="id" :value="id">{{ FAULT_DESC[id] ?? id }}</option>
+          </optgroup>
+          <optgroup v-if="permanentTypes.length" label="参数/业务错误 · 交给模型">
+            <option v-for="[id] in permanentTypes" :key="id" :value="id">{{ FAULT_DESC[id] ?? id }}</option>
+          </optgroup>
         </select>
         <button
           v-if="available && cap.example && !compact"

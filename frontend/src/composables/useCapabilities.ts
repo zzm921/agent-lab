@@ -7,10 +7,23 @@ export function useCapabilities() {
   const enabled = ref<string[]>(['calculator', 'time_now'])
   const loading = ref(false)
   const loadError = ref<string | null>(null)
-  /** 故障注入配置：tool_id → 'error' | 'timeout'（验证熔断机制用） */
+  /** 故障注入配置：tool_id → 注入类型（如 timeout/http_500/business/http_400） */
   const faults = ref<Record<string, string>>({})
+  /** 故障注入类型目录：类型 → 重试分类（retryable=工具层直接重试，permanent=交给模型思考后重试） */
+  const faultTypes = ref<Record<string, string>>({})
   /** 示例提示：{cap, nonce}，HomeView watch 后填入输入框并展示提示条 */
   const exampleHint = ref<{ cap: Capability; nonce: number } | null>(null)
+
+  async function loadFaultTypes() {
+    try {
+      const res = await fetch('/api/faults/types')
+      if (!res.ok) return
+      const data = await res.json()
+      faultTypes.value = data.types ?? {}
+    } catch {
+      /* 后端未启动或未配置模型时忽略 */
+    }
+  }
 
   async function loadFaults() {
     try {
@@ -58,6 +71,7 @@ export function useCapabilities() {
     } finally {
       loading.value = false
     }
+    await loadFaultTypes()
     await loadFaults()
   }
 
@@ -98,6 +112,7 @@ export function useCapabilities() {
     loading,
     loadError,
     faults,
+    faultTypes,
     exampleHint,
     enabledCapabilities,
     availableCount,
