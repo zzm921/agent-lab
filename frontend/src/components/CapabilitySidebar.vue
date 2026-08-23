@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import CapabilityGrid from './CapabilityGrid.vue'
 import ModeSelector from './ModeSelector.vue'
 import PromptStrategyPicker from './PromptStrategyPicker.vue'
-import type { ApprovalPolicy, Capability, ModeId, PromptStrategy } from '../types/agent'
+import RagSchemeSelector from './RagSchemeSelector.vue'
+import type { ApprovalPolicy, Capability, ModeId, PromptStrategy, RagScheme, RagSchemeId } from '../types/agent'
 
-defineProps<{
+const props = defineProps<{
   caps: Capability[]
   enabledIds: string[]
   faults?: Record<string, string>
@@ -14,6 +16,8 @@ defineProps<{
   mode: ModeId
   strategy: PromptStrategy
   policy: ApprovalPolicy
+  ragScheme: RagSchemeId
+  ragSchemes: RagScheme[]
   open?: boolean
   mcpEnabled?: boolean
   mcpCaps?: Capability[]
@@ -27,10 +31,14 @@ const emit = defineEmits<{
   'update:mode': [v: ModeId]
   'update:strategy': [v: PromptStrategy]
   'update:policy': [v: ApprovalPolicy]
+  'update:rag-scheme': [v: RagSchemeId]
   close: []
 }>()
 
 const POLICIES: ApprovalPolicy[] = ['always', 'never']
+
+/** 仅当 rag 能力可用时展示方案选择器（体验「换方案看提升」） */
+const ragAvailable = computed(() => props.caps.some((c) => c.id === 'rag' && c.availability === 'available'))
 
 function onFault(id: string, mode: string) {
   emit('fault', id, mode)
@@ -83,6 +91,19 @@ function onFault(id: string, mode: string) {
 
       <section class="space-y-3 border-t border-slate-800 pt-4">
         <PromptStrategyPicker :model-value="strategy" @update:model-value="emit('update:strategy', $event)" />
+      </section>
+
+      <!-- RAG 方案：仅 rag 能力可用时展示，直观对比各方案检索与回答差异 -->
+      <section v-if="ragAvailable" class="space-y-3 border-t border-slate-800 pt-4">
+        <div class="mb-1 flex items-center justify-between">
+          <h3 class="text-xs font-semibold text-slate-300">RAG 方案</h3>
+          <span class="text-[10px] text-slate-500" title="同一语料、不同检索策略；切换后检索卡片与回答随方案变化">对比检索差异</span>
+        </div>
+        <RagSchemeSelector
+          :model-value="ragScheme"
+          :schemes="ragSchemes"
+          @update:model-value="emit('update:rag-scheme', $event)"
+        />
       </section>
 
       <!-- MCP 服务：默认关闭，页面点选开启；直观对比有无 MCP -->

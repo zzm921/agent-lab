@@ -17,6 +17,7 @@ from app.config import Settings  # noqa: E402
 from app.llm.fake_model import FakeChatModel, FakeEmbeddings  # noqa: E402
 from app.memory.session_store import SessionStore  # noqa: E402
 from app.memory.vector_store import VectorStore  # noqa: E402
+from app.rag.manager import RagManager  # noqa: E402
 
 
 def make_settings(**kw) -> Settings:
@@ -24,6 +25,15 @@ def make_settings(**kw) -> Settings:
         "llm_api_key": "test-key",
         "embedding_api_key": "test-key",
         "mcp_servers": "{}",
+        # 测试强制离线：显式清空 Qdrant / ES 配置，避免读到开发机 .env 的真实实例
+        "qdrant_url": "",
+        "qdrant_api_key": "",
+        "es_url": "",
+        "es_api_key": "",
+        "es_username": "",
+        "es_password": "",
+        # 与 .env 解耦：测试固定启用 naive + advanced 两方案
+        "rag_schemes": ["naive", "advanced"],
     }
     defaults.update(kw)
     return Settings(**defaults)
@@ -53,9 +63,15 @@ def corpus(embeddings):
 
 
 @pytest.fixture
-def registry(settings, sessions, corpus, embeddings):
+def rag_manager(settings, embeddings):
+    """多 RAG 方案管理器（未配 Qdrant → 内存存储回退）。"""
+    return RagManager(settings, embeddings, top_k=settings.rag_top_k)
+
+
+@pytest.fixture
+def registry(settings, sessions, rag_manager, embeddings):
     mcp = McpManager("{}")
-    return CapabilityRegistry(settings, sessions, mcp, corpus, embeddings)
+    return CapabilityRegistry(settings, sessions, mcp, rag_manager, embeddings)
 
 
 @pytest.fixture

@@ -118,8 +118,34 @@ const RETRIEVE_KIND: Record<string, string> = {
           class="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs"
         >
           <div class="flex items-center justify-between gap-2">
-            <span class="font-medium text-cyan-300">{{ RETRIEVE_KIND[s.kind] }}</span>
+            <span class="flex items-center gap-1.5 font-medium text-cyan-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.kind === 'retrieve' && s.scheme"
+                class="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-normal text-cyan-200"
+                :title="`当前 RAG 方案：${s.scheme}`"
+              >
+                {{ s.scheme }}
+              </span>
+              <span
+                v-if="s.kind === 'retrieve' && s.reranked"
+                class="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-normal text-violet-200"
+                title="多路召回后经交叉编码器重排精排"
+              >
+                重排
+              </span>
+            </span>
             <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div v-if="s.rewrites?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
+            <span class="text-[10px] text-cyan-400/80">Query 重写:</span>
+            <span
+              v-for="(r, ri) in s.rewrites"
+              :key="ri"
+              class="rounded bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-200"
+            >
+              {{ r }}
+            </span>
           </div>
           <ul v-if="s.hits?.length" class="mt-2 space-y-1.5">
             <li v-for="(h, i) in s.hits" :key="i" class="rounded-lg bg-black/20 p-2">

@@ -5,10 +5,9 @@ from app.capabilities.builtin import BUILTIN_CAPABILITIES
 from app.capabilities.mcp import McpManager
 from app.config import Settings
 from app.memory.session_store import SessionStore
-from app.memory.vector_store import VectorStore
+from app.rag.manager import RagManager
 from app.tools.calculator import calculator
 from app.tools.memory_tool import make_memory_tools
-from app.tools.rag_tool import make_rag_tool
 from app.tools.run_command import make_run_command_tool
 from app.tools.time_now import time_now
 from app.tools.web_search import web_search
@@ -20,13 +19,13 @@ class CapabilityRegistry:
         settings: Settings,
         session_store: SessionStore,
         mcp_manager: McpManager,
-        corpus_store: VectorStore | None,
+        rag_manager: RagManager | None,
         embeddings,
     ):
         self.settings = settings
         self.sessions = session_store
         self.mcp = mcp_manager
-        self.corpus_store = corpus_store
+        self.rag_manager = rag_manager
         self.embeddings = embeddings
         self._index: dict[str, dict] = {}
 
@@ -62,7 +61,10 @@ class CapabilityRegistry:
         return self._index.get(cap_id)
 
     def tool_for(self, cap_id: str, session_id: str, emit=None):
-        """把能力 id 解析为 LangChain 工具；不可用返回 None。"""
+        """把能力 id 解析为 LangChain 工具；不可用返回 None。
+
+        rag 是独立检索阶段（runner 前置检索 + 上下文注入），不映射为工具，故返回 None。
+        """
         cap = self.get(cap_id)
         if cap is None or cap.get("availability") != "available":
             return None
@@ -75,12 +77,17 @@ class CapabilityRegistry:
         if cap_id == "run_command":
             return make_run_command_tool(self.settings)
         if cap_id == "rag":
-            if self.corpus_store is None:
-                return None
-            return make_rag_tool(self.corpus_store, self.settings.rag_top_k, emit)
+            # RAG 作为独立能力在前置检索阶段处理（见 runner.stream），不进入工具集
+            return None
         if cap_id == "memory":
             if self.embeddings is None:
                 return None
             store = self.sessions.long_memory(session_id, self.embeddings)
             return make_memory_tools(store, self.settings.rag_top_k, emit)
         return self.mcp.tool(cap_id)
+
+    def rag_schemes(self) -> list[dict]:
+        """可选的 RAG 方案目录（供前端渲染方案选择器）。"""
+        if self.rag_manager is None:
+            return []
+        return self.rag_manager.list()

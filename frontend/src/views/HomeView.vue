@@ -3,7 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCapabilities } from '../composables/useCapabilities'
 import { useChatStream } from '../composables/useChatStream'
-import type { Capability, ModeId, PromptStrategy, ApprovalPolicy } from '../types/agent'
+import type { Capability, ModeId, PromptStrategy, ApprovalPolicy, RagSchemeId } from '../types/agent'
 import CapabilitySidebar from '../components/CapabilitySidebar.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import ExampleFillHint from '../components/ExampleFillHint.vue'
@@ -17,6 +17,7 @@ const {
   faults,
   faultTypes,
   mcpEnabled,
+  ragSchemes,
   exampleHint,
   enabledCapabilities,
   builtinCaps,
@@ -35,9 +36,11 @@ const task = ref('')
 const validModes: ModeId[] = ['react', 'plan_execute', 'reflection', 'multi_agent']
 const validStrategies: PromptStrategy[] = ['standard', 'few_shot', 'cot']
 const validPolicies: ApprovalPolicy[] = ['always', 'never']
+const validRagSchemes: RagSchemeId[] = ['naive', 'advanced']
 const mode = ref<ModeId>(validModes.includes(route.query.mode as ModeId) ? (route.query.mode as ModeId) : 'react')
 const strategy = ref<PromptStrategy>(validStrategies.includes(route.query.strategy as PromptStrategy) ? (route.query.strategy as PromptStrategy) : 'standard')
 const policy = ref<ApprovalPolicy>(validPolicies.includes(route.query.policy as ApprovalPolicy) ? (route.query.policy as ApprovalPolicy) : 'always')
+const ragScheme = ref<RagSchemeId>(validRagSchemes.includes(route.query.rag_scheme as RagSchemeId) ? (route.query.rag_scheme as RagSchemeId) : 'naive')
 const sidebarOpen = ref(false)
 const filesOpen = ref(false)
 const filesRefreshKey = ref(0)
@@ -118,6 +121,7 @@ function send() {
     enabled: [...enabled.value],
     strategy: strategy.value,
     policy: policy.value,
+    ragScheme: ragScheme.value,
   })
   task.value = '' // 发送后清空输入框
 }
@@ -135,6 +139,8 @@ function send() {
       :mode="mode"
       :strategy="strategy"
       :policy="policy"
+      :rag-scheme="ragScheme"
+      :rag-schemes="ragSchemes"
       :open="sidebarOpen"
       :mcp-enabled="mcpEnabled"
       :mcp-caps="mcpCaps"
@@ -145,6 +151,7 @@ function send() {
       @update:mode="mode = $event"
       @update:strategy="strategy = $event"
       @update:policy="policy = $event"
+      @update:rag-scheme="ragScheme = $event"
       @close="sidebarOpen = false"
     />
 

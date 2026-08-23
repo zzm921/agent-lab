@@ -400,3 +400,39 @@ async def test_unknown_mode(settings, registry, sessions):
     runner = AgentRunner(settings, llm, registry, sessions)
     events = await collect_stream(runner, mode="nope")
     assert any(e["type"] == "error" for e in events)
+
+
+async def test_rag_enabled_auto_retrieves(settings, registry, sessions):
+    """RAG 作为独立检索阶段：启用 rag 后自动召回并产 retrieve 事件，不产生工具调用。"""
+    registry.rag_manager.ingest_all(["LangGraph 基于 StateGraph 构建有状态、多步骤的 AI Agent。"])
+    script = [AIMessage(content="（基于知识库回答）")]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive")
+    retrieve = next((e for e in events if e["type"] == "retrieve"), None)
+    assert retrieve is not None
+    assert retrieve["scheme"] == "naive"
+    assert retrieve["query"] == "测试任务"
+    assert retrieve["hits"] and "LangGraph" in retrieve["hits"][0]["text"]
+    # RAG 不再进入工具集：无工具调用事件
+    assert not any(e["type"] == "tool_start" for e in events)
+    assert any(e["type"] == "message" for e in events)
+
+
+async def test_rag_enabled_default_scheme_fallback(settings, registry, sessions):
+    """未指定 rag_scheme 时回退默认方案（naive），仍自动检索。"""
+    registry.rag_manager.ingest_all(["ReAct 模式由 思考-行动-观察 循环组成。"])
+    runner = await _runner_with(registry, sessions, settings, [AIMessage(content="ok")])
+    events = await collect_stream(runner, mode="react", enabled=["rag"])
+    retrieve = next((e for e in events if e["type"] == "retrieve"), None)
+    assert retrieve is not None and retrieve["scheme"] == "naive"
+
+
+def test_augment_query_injects_context():
+    """检索命中注入用户消息；无命中时原样返回。"""
+    ctx = {"name": "朴素 RAG", "hits": [{"score": 0.9, "text": "LangGraph 基于 StateGraph 构建。"}]}
+    out = AgentRunner._augment_query("LangGraph 是什么", ctx)
+    assert "【知识库检索结果（朴素 RAG）】" in out
+    assert "LangGraph 基于 StateGraph" in out
+    assert "请优先基于以上检索内容回答" in out
+    assert AgentRunner._augment_query("x", {"name": "naive", "hits": []}) == "x"
+    assert AgentRunner._augment_query("x", None) == "x"

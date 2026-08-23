@@ -2,6 +2,7 @@
 from app.config import settings
 from app.core.errors import ConfigError
 from app.llm.dashscope_chat import DashScopeChatModel
+from app.llm.dashscope_embeddings import DashScopeEmbeddings
 from app.llm.fake_model import FakeChatModel, FakeEmbeddings
 
 
@@ -26,9 +27,8 @@ def create_embeddings(fake: bool = False):
         return FakeEmbeddings()
     if not settings.embedding_api_key:
         raise ConfigError("未配置 EMBEDDING_API_KEY，RAG 与长期记忆能力不可用")
-    # return OpenAIEmbeddings(
-    #     model=settings.embedding_model,
-    #     api_key=settings.embedding_api_key,
-    #     base_url=settings.embedding_base_url,
-    # )
-    return FakeEmbeddings()
+    return DashScopeEmbeddings(
+        api_key=settings.embedding_api_key,
+        model=settings.embedding_model,
+        sparse_model=settings.sparse_embedding_model,
+    )

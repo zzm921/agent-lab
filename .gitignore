@@ -5,6 +5,8 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+# 沙箱无法写入 conda site-packages 时安装到本地的第三方包（如 qdrant-client）
+backend/_vendor/
 
 # 环境配置（含密钥，勿提交）
 .env

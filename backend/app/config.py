@@ -16,6 +16,29 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_model: str = "text-embedding-v3"
+    # 稀疏向量模型（为后续 advanced 混合检索预留；账号未开通时回退本地 n-gram）
+    sparse_embedding_model: str = "text-sparse-embedding-v1"
+
+    # 检索后端选型：qdrant（默认）| elasticsearch | memory（强制内存，离线/测试）
+    rag_store_backend: str = "qdrant"
+    # Qdrant Cloud（多 RAG 方案向量库，可选；不配置则回退内存检索）
+    qdrant_url: str = ""
+    qdrant_api_key: str = ""
+    qdrant_collection_prefix: str = "knowledge"  # 集合名 = {prefix}_{scheme_id}，如 knowledge_naive
+    qdrant_embedding_dim: int = 1024  # text-embedding-v3 默认维度
+    # Elasticsearch（rag_store_backend=elasticsearch 时生效；ES dense_vector kNN 相似度检索）
+    es_url: str = ""
+    es_api_key: str = ""
+    es_username: str = ""
+    es_password: str = ""
+    es_index_prefix: str = "knowledge"  # 索引名 = {prefix}_{scheme_id}，如 knowledge_advanced
+    es_embedding_dim: int = 1024  # dense_vector 维度，与 embedding 模型一致
+    # 已注册的 RAG 方案（每个方案一个独立 Qdrant 集合；modular/graph/agentic 后续扩展）
+    rag_schemes: list[str] = ["naive", "advanced"]
+    rag_default_scheme: str = "naive"
+    # Advanced 方案：Query 重写生成的查询变体数（LLM Multi-Query）与重排模型
+    rag_rewrite_variants: int = 3
+    rag_rerank_model: str = "gte-rerank"
 
     # MCP Servers（JSON 字符串，声明可用 server；MCP_ENABLED=false 时只注册不连接）
     mcp_servers: str = "{}"

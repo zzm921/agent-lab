@@ -14,7 +14,7 @@ from app.core.rate_limit import DailyQuota
 from app.llm.client import create_chat_model, create_embeddings
 from app.memory.corpus import KNOWLEDGE_CORPUS
 from app.memory.session_store import SessionStore
-from app.memory.vector_store import VectorStore
+from app.rag.manager import RagManager
 from app.schemas import ApproveRequest, FaultRequest, McpToggleRequest, StopRequest, StreamRequest
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -34,22 +34,31 @@ _RUNTIME: dict = {"sessions": None, "registry": None, "runner": None}
 _QUOTA: DailyQuota | None = None
 
 
-def _build_embeddings_and_corpus():
-    """构建 Embedding 与知识库向量库；未配 Embedding Key 时二者均为 None。"""
+def _build_embeddings_and_rag():
+    """构建 Embedding 与多 RAG 方案管理器；未配 Embedding Key 时二者均为 None。
+
+    配了 Qdrant 时每个方案一个独立集合并灌入同一份语料；未配/连接失败回退内存存储。
+    advanced 方案的 Query 重写需要聊天模型：未配聊天 Key 时 llm 为 None，
+    方案自动回退规则化重写（保证仅 Embedding 也能跑通）。
+    """
     try:
         embeddings = create_embeddings(fake=False)
     except ConfigError:
         return None, None
-    corpus = VectorStore(embeddings, name="knowledge")
-    for text in KNOWLEDGE_CORPUS:
-        corpus.add(text, {"source": "builtin"})
-    return embeddings, corpus
+    llm = None
+    try:
+        llm = create_chat_model(fake=False)
+    except ConfigError:
+        llm = None  # 未配聊天 Key：advanced 用规则重写
+    rag = RagManager(settings, embeddings, top_k=settings.rag_top_k, llm=llm)
+    rag.ingest_all(KNOWLEDGE_CORPUS)
+    return embeddings, rag
 
 
 def _build_registry(sessions):
-    embeddings, corpus = _build_embeddings_and_corpus()
+    embeddings, rag = _build_embeddings_and_rag()
     mcp = McpManager(settings.mcp_servers, enabled=settings.mcp_enabled)
-    return CapabilityRegistry(settings, sessions, mcp, corpus, embeddings)
+    return CapabilityRegistry(settings, sessions, mcp, rag, embeddings)
 
 
 def get_sessions() -> SessionStore:
@@ -168,8 +177,15 @@ async def chat_stream(req: StreamRequest, request: Request):
         req.enabled_capabilities,
         req.prompt_strategy,
         req.approval_policy,
+        rag_scheme=req.rag_scheme,
     )
     return _sse(events)
+
+
+@router.get("/rag/schemes")
+async def rag_schemes():
+    """可选的 RAG 方案目录：id/名称/描述/集合名/语料条数，供前端渲染方案选择器。"""
+    return {"schemes": get_registry().rag_schemes()}
 
 
 @router.get("/quota")
@@ -230,7 +246,7 @@ _SOURCE_FILES: dict[str, str] = {
     "time_now": "tools/time_now.py",
     "web_search": "tools/web_search.py",
     "run_command": "tools/run_command.py",
-    "rag": "tools/rag_tool.py",
+    "rag": "rag/manager.py",
     "memory": "tools/memory_tool.py",
     "mcp": "capabilities/mcp.py",
     "registry": "capabilities/registry.py",

@@ -72,7 +72,7 @@ class AgentRunner:
             "recursion_limit": self.harness.recursion_limit(),
         }
 
-    async def _make_inputs(self, graph, config, message, strategy):
+    async def _make_inputs(self, graph, config, message, strategy, rag_context=None):
         snap = await graph.aget_state(config)
         msgs = []
         if snap is not None and snap.values:
@@ -80,8 +80,24 @@ class AgentRunner:
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
             msgs.append(SystemMessage(content=f"{base}\n\n{TOOL_RETRY_HINT}"))
-        msgs.append(HumanMessage(content=message))
+        msgs.append(HumanMessage(content=self._augment_query(message, rag_context)))
         return {"messages": msgs}
+
+    @staticmethod
+    def _augment_query(message: str, rag_context: dict | None) -> str:
+        """把检索命中注入用户消息：RAG 是独立检索阶段，不依赖模型主动调用工具。
+
+        注入到用户消息而非 system prompt，因为各推理模式内部各自构造 system prompt，
+        只有用户消息能保证被所有模式的首次模型调用看到。
+        """
+        if not rag_context or not rag_context.get("hits"):
+            return message
+        blocks = "\n".join(f"[相关度 {h['score']}] {h['text']}" for h in rag_context["hits"])
+        return (
+            f"{message}\n\n"
+            f"【知识库检索结果（{rag_context['name']}）】\n{blocks}\n"
+            "请优先基于以上检索内容回答；若内容不足以回答，再结合自身知识补充。"
+        )
 
     @staticmethod
     def _make_emit(queue, tool_count):
@@ -92,8 +108,12 @@ class AgentRunner:
 
         return emit
 
-    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy):
-        """启动新一轮对话并产出 SSE 事件；遇 HITL 中断产出 approval_request 后暂停。"""
+    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None):
+        """启动新一轮对话并产出 SSE 事件；遇 HITL 中断产出 approval_request 后暂停。
+
+        rag_scheme：本轮选定的 RAG 方案 id（当前仅 naive，后续扩展），在 meta 中回显，
+        并用于前置检索——RAG 是独立检索阶段，不进入工具集。
+        """
         queue = asyncio.Queue()
         # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
         tool_count = self.harness.new_tool_counter(session_id)
@@ -108,8 +128,24 @@ class AgentRunner:
         config = self._config(session_id, approval_policy, prompt_strategy)
         self._configs[session_id] = config
         self._specs[session_id] = (mode, tools)
-        yield {"type": "meta", "session_id": session_id, "mode": mode, "capabilities": enabled}
-        inputs = await self._make_inputs(graph, config, message, prompt_strategy)
+        yield {"type": "meta", "session_id": session_id, "mode": mode, "capabilities": enabled, "rag_scheme": rag_scheme}
+        # RAG 前置检索：启用 rag 能力时按选定方案自动召回并注入上下文（不依赖模型调用工具）
+        rag_context = None
+        if self.registry.rag_manager is not None:
+            scheme = self.registry.rag_manager.resolve(rag_scheme)
+            result = scheme.retrieve_full(message, self.settings.rag_top_k)
+            emit(
+                {
+                    "type": "retrieve",
+                    "query": message,
+                    "scheme": scheme.id,
+                    "hits": result.hits,
+                    "rewrites": result.rewrites,  # Query 重写变体（advanced 有值）
+                    "reranked": result.reranked,  # 是否经过重排
+                }
+            )
+            rag_context = {"name": scheme.name, "hits": result.hits}
+        inputs = await self._make_inputs(graph, config, message, prompt_strategy, rag_context=rag_context)
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
             yield ev
 

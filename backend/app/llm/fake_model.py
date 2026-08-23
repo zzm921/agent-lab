@@ -42,8 +42,22 @@ class FakeEmbeddings(Embeddings):
             vec += [0.0] * (32 - len(vec))
         return vec[:32]
 
+    def _sparse(self, text: str) -> dict:
+        """确定性稀疏向量：字符序号作为索引、频次作为权重。"""
+        counts: dict[int, int] = {}
+        for ch in text:
+            idx = ord(ch)
+            counts[idx] = counts.get(idx, 0) + 1
+        return {"indices": sorted(counts), "values": [float(counts[i]) for i in sorted(counts)]}
+
     def embed_query(self, text: str) -> list[float]:
         return self._vec(text)
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [self._vec(t) for t in texts]
+
+    def embed_sparse_query(self, text: str) -> dict:
+        return self._sparse(text)
+
+    def embed_sparse_documents(self, texts: list[str]) -> list[dict]:
+        return [self._sparse(t) for t in texts]

@@ -1,22 +1,49 @@
-"""RAG 内嵌知识语料：关于 LangChain / LangGraph / Agent 的小型知识库。"""
-KNOWLEDGE_CORPUS: list[str] = [
-    "LangGraph 是 LangChain 推出的用于构建有状态、多步骤 AI Agent 的编排框架，核心是 StateGraph，"
-    "通过节点和边定义状态转换，节点读写共享的 AgentState。",
-    "StateGraph 中的状态用 TypedDict 定义，消息列表使用 add_messages 归约器实现消息累积；"
-    "每个节点接收当前状态并返回部分状态更新。",
-    "ReAct 模式由'思考(Thought)-行动(Action)-观察(Observation)'循环组成：模型先思考下一步，"
-    "再选择并调用工具，把工具结果作为观察继续思考，直到产出最终答案。",
-    "plan-and-execute 模式先把任务分解为多个子步骤计划，再逐条执行，执行后重新规划（replan）"
-    "以决定继续或收尾，适合复杂、多步骤任务。",
-    "reflection 模式先生成一份草稿答案，再由反思节点评估其不足并给出批评，据此修订生成更优答案，"
-    "迭代直到批评为空或达到最大轮次。",
-    "Human-in-the-loop 通过 LangGraph 的 interrupt() 在关键节点暂停图执行，等待人工审批或澄清，"
-    "再用 Command(resume=...) 从暂停点继续，常用于工具执行前的人工确认。",
-    "MCP（Model Context Protocol）是开放协议，把外部工具/数据源封装为 MCP Server，"
-    "Agent 可通过 MCP Client 动态发现并调用这些工具，实现能力热插拔。",
-    "Embedding 把文本映射为稠密向量，RAG 先对查询向量化，再从向量库检索最相关的文档片段，"
-    "将其注入上下文后由大模型生成有依据的回答。",
-    "长期记忆把关键事实向量化存入记忆库，后续对话按语义召回相关记忆，从而跨轮次记住用户信息。",
-    "多智能体协作由 Orchestrator（监督者）负责任务分派，把子任务交给专门的 Worker 执行，"
-    "再汇总各 Worker 结果形成最终输出。",
-]
+"""RAG 内嵌知识语料：从 Markdown 语料文件加载（不硬编码在代码里）。
+
+语料以 Markdown 保存于 app/rag/ 下（五代RAG梯度测试统一语料*.md），
+建库（ingest）时读取该文档并解析为「分章节的原始长文本」，供各 RAG 方案自行分块入库。
+语料为虚构「科创公司员工行政、考勤、福利与差旅全管理制度」——长文本、高冗余、
+规则嵌套、信息碎片化，天然制造「固定切块切断语义」「跨块信息无法关联」「多条件叠加」
+等检索难题，为 Naive 之后 Advanced / Modular / Graph / Agentic 逐代升级提供同源语料。
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+# 语料 Markdown 文件（与五代 RAG 迭代演示文档同目录）
+_CORPUS_MD = Path(__file__).resolve().parents[1] / "rag" / "五代RAG梯度测试统一语料（适配分块策略+全版本RAG迭代演示）.md"
+
+
+def _parse_corpus() -> dict[str, list[str]]:
+    """解析语料 Markdown：按「### 章节」分组的段落文本。
+
+    - 以 `###` 行作为章节边界，章节名去「### 」前缀；
+    - 跳过 `#`/`##` 标题行、`>` 引用行（注记）与空行；
+    - 其余每个非空行视为一个段落（单行长文本），作为原始语料；
+    - 对文本做 Markdown 反转义（`\\.`/`\\-`），使检索与展示更自然。
+    """
+
+    def _unescape(text: str) -> str:
+        return text.replace("\\.", ".").replace("\\-", "-")
+
+    docs: dict[str, list[str]] = {}
+    section = "总则"
+    for line in _CORPUS_MD.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("###"):
+            section = stripped.lstrip("#").strip()
+            docs.setdefault(section, [])
+            continue
+        if stripped.startswith("#") or stripped.startswith(">"):
+            continue  # 说明性标题/注记，不入库
+        docs.setdefault(section, []).append(_unescape(stripped))
+    return docs
+
+
+# 分文档分组（供后续 Graph RAG 按文档维度建图；当前入库使用平坦语料）
+KNOWLEDGE_DOCS: dict[str, list[str]] = _parse_corpus()
+
+# 平坦语料：当前 ingest_all 的输入（每条为一段长文本，由各方案自行分块）
+KNOWLEDGE_CORPUS: list[str] = [paragraph for paragraphs in KNOWLEDGE_DOCS.values() for paragraph in paragraphs]

@@ -1,12 +1,14 @@
 /** 能力池：加载能力列表、开关热插拔、示例一键填入。 */
 import { computed, ref } from 'vue'
-import type { Capability } from '../types/agent'
+import type { Capability, RagScheme } from '../types/agent'
 
 export function useCapabilities() {
   const caps = ref<Capability[]>([])
   const enabled = ref<string[]>(['calculator', 'time_now'])
   const loading = ref(false)
   const loadError = ref<string | null>(null)
+  /** RAG 方案目录：当前仅 naive，后续扩展（GET /api/rag/schemes） */
+  const ragSchemes = ref<RagScheme[]>([])
   /** 故障注入配置：tool_id → 注入类型（如 timeout/http_500/business/http_400） */
   const faults = ref<Record<string, string>>({})
   /** 故障注入类型目录：类型 → 重试分类（retryable=工具层直接重试，permanent=交给模型思考后重试） */
@@ -85,6 +87,18 @@ export function useCapabilities() {
     }
   }
 
+  /** 读取 RAG 方案目录（未配 Embedding 时为空数组） */
+  async function loadRagSchemes() {
+    try {
+      const res = await fetch('/api/rag/schemes')
+      if (!res.ok) return
+      const data = await res.json()
+      ragSchemes.value = Array.isArray(data.schemes) ? data.schemes : []
+    } catch {
+      /* 后端未启动或未配置模型时忽略 */
+    }
+  }
+
   async function load() {
     loading.value = true
     loadError.value = null
@@ -104,6 +118,7 @@ export function useCapabilities() {
     await loadFaultTypes()
     await loadFaults()
     await loadMcp()
+    await loadRagSchemes()
   }
 
   function toggle(id: string) {
@@ -148,6 +163,7 @@ export function useCapabilities() {
     faults,
     faultTypes,
     mcpEnabled,
+    ragSchemes,
     exampleHint,
     enabledCapabilities,
     availableCount,

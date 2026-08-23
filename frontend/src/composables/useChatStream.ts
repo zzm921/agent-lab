@@ -8,6 +8,7 @@ import type {
   HitItem,
   ModeId,
   PromptStrategy,
+  RagSchemeId,
 } from '../types/agent'
 
 export type StreamStatus = 'idle' | 'streaming' | 'waiting_approval' | 'done' | 'error'
@@ -69,6 +70,12 @@ export interface StepEntry {
   /** retrieve / memory_read */
   query?: string
   hits?: HitItem[]
+  /** retrieve：本轮使用的 RAG 方案 id */
+  scheme?: string
+  /** retrieve：Query 重写变体（advanced 有值） */
+  rewrites?: string[]
+  /** retrieve：是否经过重排 */
+  reranked?: boolean
   /** memory_write */
   content?: string
   /** reflect */
@@ -92,6 +99,7 @@ export interface SendParams {
   enabled: string[]
   strategy: PromptStrategy
   policy: ApprovalPolicy
+  ragScheme: RagSchemeId
   /** 覆盖会话 id（对比视图每个 runner 独立会话） */
   sessionId?: string
 }
@@ -100,6 +108,7 @@ export interface ChatStream {
   status: StreamStatus
   sessionId: string
   mode: ModeId
+  ragScheme: RagSchemeId
   /** 流水线时间线：按事件发生顺序排列的步骤 */
   steps: StepEntry[]
   done: { summary: string; stats: Record<string, unknown> } | null
@@ -238,6 +247,7 @@ export function useChatStream(): ChatStream {
         stream.sessionId = ev.session_id
         stream.mode = ev.mode as ModeId
         stream.enabled = ev.capabilities
+        if (ev.rag_scheme) stream.ragScheme = ev.rag_scheme as RagSchemeId
         break
       case 'thinking':
         accThinking.add(ev.delta)
@@ -298,7 +308,7 @@ export function useChatStream(): ChatStream {
         break
       }
       case 'retrieve':
-        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits })
+        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits, scheme: ev.scheme, rewrites: ev.rewrites, reranked: ev.reranked })
         break
       case 'memory_write':
         pushStep({ kind: 'memory_write', content: ev.content })
@@ -385,6 +395,7 @@ export function useChatStream(): ChatStream {
         enabled_capabilities: params.enabled,
         prompt_strategy: params.strategy,
         approval_policy: params.policy,
+        rag_scheme: params.ragScheme,
       },
       controller.signal,
     )
@@ -437,6 +448,7 @@ export function useChatStream(): ChatStream {
     status: 'idle',
     sessionId: '',
     mode: 'react',
+    ragScheme: 'naive',
     steps: [],
     done: null,
     error: null,

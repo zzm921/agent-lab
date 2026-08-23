@@ -10,8 +10,8 @@ tags:
     cards: [context-mgmt, context-caching]
   - id: rag
     title: RAG · 检索增强生成
-    description: 把外部知识接进生成，让回答有据可查；展示 naive → 图谱 → 智能体的范式演进。
-    cards: [rag, graph-rag, agentic-rag]
+    description: 把外部知识接进生成，让回答有据可查；总表导航 + 五代范式演进（naive → advanced → modular → 图谱 → 智能体）+ 离线/在线工程策略 + 专项增强技术。
+    cards: [rag, naive-rag, advanced-rag, modular-rag, graph-rag, agentic-rag, rag-variants, offline-processing, online-hybrid-retrieval]
   - id: agent
     title: Agent · 智能体
     description: 让模型会想、会做、会协作、会操作——从单 Agent 推理到多 Agent 编排与计算机操作。

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 MODE_IDS = ["react", "plan_execute", "reflection", "multi_agent"]
 STRATEGY_IDS = ["standard", "few_shot", "cot"]
 POLICY_IDS = ["always", "never"]
+RAG_SCHEME_IDS = ["naive", "advanced"]
 
 
 class StreamRequest(BaseModel):
@@ -13,6 +14,7 @@ class StreamRequest(BaseModel):
     enabled_capabilities: list[str] = Field(default_factory=list, description="启用的能力 id 列表")
     prompt_strategy: str = Field(default="standard", description="提示词策略")
     approval_policy: str = Field(default="always", description="HITL 审批策略")
+    rag_scheme: str = Field(default="naive", description="RAG 方案 id（当前仅 naive）")
 
 
 class ApproveRequest(BaseModel):
