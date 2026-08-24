@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.memory.stores.base import StoreBackend
@@ -36,12 +37,20 @@ class MultiBackendStore(StoreBackend):
 
     def _query_all(self, method: str, query: str, top_k: int) -> list[list[dict[str, Any]]]:
         """并行查询所有后端；单个后端异常只告警跳过，保证一路失败不拖垮整体。"""
-        results: list[list[dict[str, Any]]] = []
-        for backend in self.backends:
+
+        def _query_one(backend: StoreBackend) -> list[dict[str, Any]]:
             try:
-                results.append(getattr(backend, method)(query, max(top_k * 2, 8)))
+                return getattr(backend, method)(query, max(top_k * 2, 8))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("后端 %s 检索失败（%s），跳过该路", backend.name, exc)
+                return []
+
+        results: list[list[dict[str, Any]]]
+        if len(self.backends) == 1:
+            results = [_query_one(self.backends[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=len(self.backends)) as executor:
+                results = list(executor.map(_query_one, self.backends))
         return results
 
     @staticmethod

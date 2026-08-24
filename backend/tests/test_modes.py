@@ -418,6 +418,18 @@ async def test_rag_enabled_auto_retrieves(settings, registry, sessions):
     assert any(e["type"] == "message" for e in events)
 
 
+async def test_rag_advanced_rewrite_before_retrieve(settings, registry, sessions):
+    """advanced：页面上先输出 Query 重写结果（rewrite 事件），再输出知识库检索命中（retrieve 事件）。"""
+    registry.rag_manager.ingest_all(["公司报销制度要求出差结束后尽快提交发票。"])
+    runner = await _runner_with(registry, sessions, settings, [AIMessage(content="ok")])
+    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="advanced", rag_enabled=True)
+    rewrite = next((e for e in events if e["type"] == "rewrite"), None)
+    retrieve = next((e for e in events if e["type"] == "retrieve"), None)
+    assert rewrite is not None and rewrite["rewrites"], "advanced 应输出 Query 重写结果"
+    assert retrieve is not None
+    assert events.index(rewrite) < events.index(retrieve), "重写结果应输出在知识库检索之前"
+
+
 async def test_rag_enabled_default_scheme_fallback(settings, registry, sessions):
     """未指定 rag_scheme 时回退默认方案（naive），仍自动检索。"""
     registry.rag_manager.ingest_all(["ReAct 模式由 思考-行动-观察 循环组成。"])

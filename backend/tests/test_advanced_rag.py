@@ -3,6 +3,7 @@
 使用 FakeEmbeddings（无 api_key → 词法重排回退）与 FakeChatModel（脚本化改写输出），
 不联网、不依赖 Key；稀疏集合用内嵌 QdrantClient(":memory:") 验证。
 """
+import asyncio
 import uuid
 
 from langchain_core.messages import AIMessage
@@ -141,6 +142,40 @@ def test_retrieve_full_pipeline_with_llm_rewrite(settings):
     assert "出差结束报销凭证提交时限" in result.rewrites  # LLM 改写变体参与召回
     assert result.reranked is True
     assert result.hits
+
+
+async def test_astream_yields_between_rewrite_and_retrieve(settings):
+    """rewrite 与 retrieve 事件之间让出事件循环：重写事件才能经 SSE 先行下发，
+    而不是与检索事件攒在同一次刷出、被前端「同时」展示。"""
+    scheme = make_advanced(settings)
+    scheme.ingest(["公司要求出差结束后15天内提交报销材料。"])
+
+    ticks = 0
+
+    async def probe():
+        # 只有在事件循环被让出时才有机会被调度，用于探测 astream 是否阻塞循环
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0)
+            ticks += 1
+
+    task = asyncio.create_task(probe())
+    await asyncio.sleep(0)
+
+    ticks_at_rewrite = ticks_at_retrieve = -1
+    try:
+        async for ev in scheme.astream("出差结束多久提交报销", 2):
+            if ev["type"] == "rewrite":
+                ticks_at_rewrite = ticks
+            elif ev["type"] == "retrieve":
+                ticks_at_retrieve = ticks
+    finally:
+        task.cancel()
+
+    assert ticks_at_rewrite >= 0 and ticks_at_retrieve >= 0, "应先后产出 rewrite 与 retrieve 事件"
+    assert ticks_at_retrieve > ticks_at_rewrite, (
+        "rewrite 与 retrieve 之间未让出事件循环：召回/重排阻塞会导致两事件一起刷出"
+    )
 
 
 def test_lexical_reranker():

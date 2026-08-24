@@ -141,23 +141,15 @@ class AgentRunner:
         yield {"type": "meta", "session_id": session_id, "mode": mode, "capabilities": enabled, "rag_scheme": rag_scheme, "rag_enabled": rag_enabled}
         # RAG 前置检索：启用 rag 能力时按选定方案自动召回并注入上下文（不依赖模型调用工具）。
         # 需总开关开启（rag_manager 非 None）且本轮请求开启（rag_enabled=True）才执行。
+        # 方案经 astream 流式产出事件（rewrite→retrieve），runner 逐条直发前端保持解耦；
+        # 最后一条 retrieve 事件里的 hits 用于上下文注入。
         rag_context = None
         if self.registry.rag_manager is not None and rag_enabled:
             scheme = self.registry.rag_manager.resolve(rag_scheme)
-            result = scheme.retrieve_full(message, self.settings.rag_top_k)
-            hits = result.hits
-            emit(
-                {
-                    "type": "retrieve",
-                    "query": message,
-                    "scheme": scheme.id,
-                    "hits": hits,
-                    "rewrites": result.rewrites,  # Query 重写变体（advanced 有值）
-                    "reranked": result.reranked,  # 是否经过重排
-                }
-            )
-            if hits:
-                rag_context = {"name": scheme.name, "hits": hits}
+            async for ev in scheme.astream(message, self.settings.rag_top_k):
+                yield ev
+                if ev["type"] == "retrieve" and ev.get("hits"):
+                    rag_context = {"name": scheme.name, "hits": ev["hits"]}
         inputs = await self._make_inputs(graph, config, message, prompt_strategy, rag_context=rag_context)
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
             yield ev

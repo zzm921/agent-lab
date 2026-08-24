@@ -39,6 +39,7 @@ export type StepKind =
   | 'tool' // 工具调用（running → success/failed/rejected）
   | 'plan' // 执行计划
   | 'retrieve' // RAG 检索
+  | 'rewrite' // Query 重写结果
   | 'memory_read' // 记忆召回
   | 'memory_write' // 记忆写入
   | 'reflect' // 反思意见
@@ -312,7 +313,10 @@ export function useChatStream(): ChatStream {
         break
       }
       case 'retrieve':
-        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits, scheme: ev.scheme, rewrites: ev.rewrites, reranked: ev.reranked })
+        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits, scheme: ev.scheme, reranked: ev.reranked })
+        break
+      case 'rewrite':
+        pushStep({ kind: 'rewrite', query: ev.query, scheme: ev.scheme, rewrites: ev.rewrites })
         break
       case 'memory_write':
         pushStep({ kind: 'memory_write', content: ev.content })

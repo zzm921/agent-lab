@@ -51,8 +51,22 @@ class RagScheme(ABC):
         """按本方案策略检索，返回 [{text, score, metadata}]。"""
 
     def retrieve_full(self, query: str, top_k: int | None = None) -> RetrieveResult:
-        """完整检索结果（含过程信息）；默认实现不含重写/重排，供 runner 统一调用。"""
+        """同步完整检索结果（供非流式场景/测试）；页面事件走 astream 流式下发。"""
         return RetrieveResult(query=query, hits=self.retrieve(query, top_k))
+
+    async def astream(self, query: str, top_k: int | None = None):
+        """异步流式检索：按阶段即时产出事件，供 runner 经 async for 直达前端。
+
+        默认实现（naive）无重写阶段，仅产出检索命中事件；子类可先 yield 重写事件再检索。
+        """
+        hits = self.retrieve(query, top_k)
+        yield {
+            "type": "retrieve",
+            "query": query,
+            "scheme": self.id,
+            "hits": hits,
+            "reranked": False,
+        }
 
     def _rebuild_if_changed(self, expected: list[str]) -> None:
         """按预期分块列表重建集合：指纹未变则幂等跳过，语料变更则清空重建。"""

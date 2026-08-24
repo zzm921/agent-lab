@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -132,9 +133,8 @@ class AdvancedRagScheme(RagScheme):
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         return self.retrieve_full(query, top_k).hits
 
-    def retrieve_full(self, query: str, top_k: int | None = None) -> RetrieveResult:
-        k = top_k or self.top_k
-        variants = self.rewriter.rewrite(query)
+    def _multi_recall_rerank(self, query: str, variants: list[str], k: int) -> list[dict[str, Any]]:
+        """多查询×多路宽召回 + 精排，返回 Top-K 命中（rewrite 由调用方先行完成）。"""
         # 多路宽召回：每个查询变体分别走「稠密语义路」与「混合路」两条互补路径——
         # - 稠密路 search：纯向量语义召回，同义不同词也能命中；
         # - 混合路 hybrid_search：稠密+稀疏 RRF（Qdrant）或 kNN + BM25（ES），
@@ -149,5 +149,36 @@ class AdvancedRagScheme(RagScheme):
                 candidates.setdefault(hit.get("text", ""), hit)
         hits = list(candidates.values())
         # 检索后精排：交叉编码器重排（失败回退词法），取 Top-K
-        hits = self.reranker.rerank(query, hits)[:k]
+        return self.reranker.rerank(query, hits)[:k]
+
+    def retrieve_full(self, query: str, top_k: int | None = None) -> RetrieveResult:
+        """同步完整检索结果（供非流式场景/测试）；页面事件走 astream 流式下发。"""
+        k = top_k or self.top_k
+        variants = self.rewriter.rewrite(query)
+        hits = self._multi_recall_rerank(query, variants, k)
         return RetrieveResult(query=query, hits=hits, rewrites=variants, reranked=True)
+
+    async def astream(self, query: str, top_k: int | None = None):
+        """异步流式检索：重写一结束立即 yield 重写事件，再召回/重排后 yield 检索事件。
+
+        召回/重排为同步阻塞调用（向量库/重排模型的同步 HTTP），放线程池执行，
+        避免阻塞事件循环导致上面的重写事件与检索事件被攒到同一次 SSE 刷出、
+        在前端「同时」展示——放线程池后事件循环保持畅通，重写事件先行下发。
+        """
+        k = top_k or self.top_k
+        variants = self.rewriter.rewrite(query)
+        if variants:
+            yield {
+                "type": "rewrite",
+                "query": query,
+                "scheme": self.id,
+                "rewrites": variants,
+            }
+        hits = await asyncio.to_thread(self._multi_recall_rerank, query, variants, k)
+        yield {
+            "type": "retrieve",
+            "query": query,
+            "scheme": self.id,
+            "hits": hits,
+            "reranked": True,
+        }

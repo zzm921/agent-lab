@@ -25,6 +25,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 }
 
 const RETRIEVE_KIND: Record<string, string> = {
+  rewrite: 'Query 重写',
   retrieve: '知识库检索',
   memory_read: '记忆召回',
   memory_write: '记忆写入',
@@ -112,10 +113,35 @@ const RETRIEVE_KIND: Record<string, string> = {
           />
         </section>
 
-        <!-- 检索 / 记忆 -->
+        <!-- Query 重写结果（advanced：独立步骤，先于知识库检索展示） -->
+        <section v-else-if="s.kind === 'rewrite'" class="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-cyan-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-normal text-cyan-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div class="mt-2 flex flex-wrap items-center gap-1.5">
+            <span
+              v-for="(r, ri) in s.rewrites"
+              :key="ri"
+              class="rounded bg-cyan-500/10 px-1.5 py-0.5 text-cyan-200"
+            >
+              {{ r }}
+            </span>
+          </div>
+        </section>
+
+        <!-- 知识库检索（RAG） -->
         <section
           v-else-if="s.kind === 'retrieve' || s.kind === 'memory_read' || s.kind === 'memory_write'"
-          class="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs"
+          class="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs"
         >
           <div class="flex items-center justify-between gap-2">
             <span class="flex items-center gap-1.5 font-medium text-cyan-300">
@@ -136,16 +162,6 @@ const RETRIEVE_KIND: Record<string, string> = {
               </span>
             </span>
             <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
-          </div>
-          <div v-if="s.rewrites?.length" class="mt-2 flex flex-wrap items-center gap-1.5">
-            <span class="text-[10px] text-cyan-400/80">Query 重写:</span>
-            <span
-              v-for="(r, ri) in s.rewrites"
-              :key="ri"
-              class="rounded bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-200"
-            >
-              {{ r }}
-            </span>
           </div>
           <ul v-if="s.hits?.length" class="mt-2 space-y-1.5">
             <li v-for="(h, i) in s.hits" :key="i" class="rounded-lg bg-black/20 p-2">

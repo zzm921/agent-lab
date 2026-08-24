@@ -1,6 +1,7 @@
 """MCP 集成：管理配置的 MCP Server，发现工具并暴露为能力；连接失败标记不适配。"""
 from __future__ import annotations
 
+import asyncio
 import json
 
 
@@ -68,7 +69,10 @@ class McpManager:
                         }
                     )
                     self.tools_by_id[cap_id] = t
-            except Exception as exc:
+            except (Exception, asyncio.CancelledError) as exc:
+                # MCP SDK 连接失败时（如 HTTP 502）会通过内部 cancel scope 抛出
+                # CancelledError（继承自 BaseException，不会被 except Exception 捕获），
+                # 需一并捕获并归一为「不适配」，否则会让 /api/capabilities 返回 500。
                 self.capabilities.append(
                     {
                         "id": f"{name}:*",
@@ -102,11 +106,30 @@ class McpManager:
             command=conf["command"], args=conf.get("args", []), env=conf.get("env")
         )
         ctx = stdio_client(params)
-        entered = await ctx.__aenter__()
-        read, write = entered[0], entered[1]
-        session = await ClientSession(read, write).__aenter__()
-        await session.initialize()
-        tools = await load_mcp_tools(session)
+        entered = False
+        session = None
+        try:
+            tup = await ctx.__aenter__()
+            entered = True
+            read, write = tup[0], tup[1]
+            session = await ClientSession(read, write).__aenter__()
+            await session.initialize()
+            tools = await load_mcp_tools(session)
+        except BaseException:
+            # 连接失败：必须在同一 task 内按进入顺序逆序关闭 session / 传输上下文；
+            # 若把未关闭的上下文留给 GC，SDK 会在错误的 task 里退出 cancel scope，
+            # 抛 "Attempted to exit cancel scope in a different task"。
+            if session is not None:
+                try:
+                    await session.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            if entered:
+                try:
+                    await ctx.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            raise
         # 持有传输上下文，避免被 GC 关闭导致流中断（连接需在 Manager 存活期间保持）
         self._contexts[name] = ctx
         self._sessions[name] = session
@@ -126,11 +149,33 @@ class McpManager:
         headers = conf.get("headers") or {}
         http_client = httpx.AsyncClient(headers=headers) if headers else None
         ctx = streamable_http_client(conf["url"], http_client=http_client)
-        entered = await ctx.__aenter__()
-        read, write = entered[0], entered[1]
-        session = await ClientSession(read, write).__aenter__()
-        await session.initialize()
-        tools = await load_mcp_tools(session)
+        entered = False
+        session = None
+        try:
+            tup = await ctx.__aenter__()
+            entered = True
+            read, write = tup[0], tup[1]
+            session = await ClientSession(read, write).__aenter__()
+            await session.initialize()
+            tools = await load_mcp_tools(session)
+        except BaseException:
+            # 连接失败（如服务器 502）：必须在同一 task 内按进入顺序逆序关闭
+            # session / 传输上下文并释放 http client；若把未关闭的上下文留给 GC，
+            # SDK 会在错误的 task 里退出 cancel scope，抛 "Attempted to exit cancel
+            # scope in a different task"。
+            if session is not None:
+                try:
+                    await session.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            if entered:
+                try:
+                    await ctx.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            if http_client is not None:
+                await http_client.aclose()
+            raise
         # 持有传输上下文（及自定义 http client），避免被 GC 关闭导致流中断（连接需在 Manager 存活期间保持）
         self._contexts[name] = ctx
         self._sessions[name] = session
