@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import LiveStage from './LiveStage.vue'
 import TaskInput from './TaskInput.vue'
+import PromptPresets from './PromptPresets.vue'
 import { fetchQuota } from '../services/sse'
 import type { ApprovalPolicy, Capability, ChatStream, ModeId, PromptStrategy } from '../types/agent'
 
@@ -151,6 +152,7 @@ watch(
         @update:model-value="emit('update:task', $event)"
         @submit="onSend"
       />
+      <PromptPresets @insert="emit('update:task', $event)" />
       <div class="mt-3 flex gap-2">
         <button
           type="button"
