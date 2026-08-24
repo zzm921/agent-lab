@@ -9,6 +9,10 @@ tags: [Self-Critique, Iteration, Quality, Agent]
 techFilters: [LangGraph]
 accent: '#ef4444'
 mode: reflection
+prompts:
+  - 写一段 200 字的产品宣传文案：先给初稿，再自我批评，最后给出修订版。
+  - 为「AI 智能体平台」写 5 条价值主张：先列初稿，指出每条不足并修订。
+  - 用通俗语言解释 RAG：先写初稿，再从「读者是否听得懂」角度批评并修订。
 ---
 ## 概述
 

@@ -41,6 +41,7 @@ interface CardPayload {
   faults?: Record<string, string>
   strategy?: string
   policy?: string
+  prompts?: string[]
   prompt?: string
   experience?: boolean
   body: string
@@ -77,7 +78,11 @@ function normalizeCard(card: CardPayload): LandingCapability | null {
         : {},
     strategy: VALID_STRATEGIES.includes(card.strategy as PromptStrategy) ? (card.strategy as PromptStrategy) : null,
     policy: VALID_POLICIES.includes(card.policy as ApprovalPolicy) ? (card.policy as ApprovalPolicy) : null,
-    prompt: typeof card.prompt === 'string' ? card.prompt : '',
+    prompts: Array.isArray(card.prompts)
+      ? card.prompts.filter((p): p is string => typeof p === 'string').map((p) => p.trim()).filter(Boolean)
+      : typeof card.prompt === 'string'
+        ? [card.prompt]
+        : [],
     experience: card.experience !== false,
     content: typeof card.body === 'string' ? card.body : '',
   }

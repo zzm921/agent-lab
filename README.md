@@ -50,6 +50,8 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | `EMBEDDING_API_KEY` | 否 | RAG / 长期记忆需要（OpenAI 兼容接口，默认与百炼共用 Key） |
 | `EMBEDDING_BASE_URL` | 否 | 默认 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `EMBEDDING_MODEL` | 否 | 默认 `text-embedding-v3` |
+| `RAG_ENABLED` | 否 | 知识库检索总开关，默认 `true`（能力后端默认就绪）；`false` 整体关闭。每轮是否检索由前端「知识库检索」开关控制 |
+| `RAG_MIN_SCORE` | 否 | 最小相关度阈值，默认 `0.6`；命中相似度低于该值直接丢弃（不注入上下文），全部被丢弃则本轮不注入。naive 为 cosine、advanced 为 rerank 归一分数 |
 | `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server（本项目自带 `mcp-notes` 便签 server） |
 | `MCP_ENABLED` | 否 | 默认 `true`：服务启动时自动连接并发现已配置的 MCP Server（stdio 以子进程拉起 `mcp-notes`），无需手动启动 |
 

@@ -11,7 +11,9 @@ accent: '#ef4444'
 enabledTools: [calculator]
 faults:
   calculator: timeout
-prompt: 帮我计算 128 × 37，并验证结果的正确性。
+prompts:
+  - 帮我计算 128 × 37，并验证结果的正确性。
+  - 连续计算 99 × 99、123 × 456、7 × 8，观察容错重试与熔断如何工作。
 ---
 ## 概述
 

@@ -9,6 +9,9 @@ tags: [Memory, Vector-Store, Persistence, Qdrant]
 techFilters: [Qdrant]
 accent: '#a855f7'
 enabledTools: [memory]
+prompts:
+  - 记住：我喜欢深色主题，主色是紫色。之后再问我「我喜欢什么主题配色」。
+  - 记住我的生日是 1995-08-20，然后问我「我的生日是哪天」并回答。
 ---
 ## 为什么需要它
 

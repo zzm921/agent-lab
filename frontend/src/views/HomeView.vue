@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCapabilities } from '../composables/useCapabilities'
 import { useChatStream } from '../composables/useChatStream'
+import { LAB_PRESET_STORAGE_KEY } from '../data/capabilityData'
 import type { Capability, ModeId, PromptStrategy, ApprovalPolicy, RagSchemeId } from '../types/agent'
 import CapabilitySidebar from '../components/CapabilitySidebar.vue'
 import ChatPanel from '../components/ChatPanel.vue'
@@ -41,9 +42,13 @@ const mode = ref<ModeId>(validModes.includes(route.query.mode as ModeId) ? (rout
 const strategy = ref<PromptStrategy>(validStrategies.includes(route.query.strategy as PromptStrategy) ? (route.query.strategy as PromptStrategy) : 'standard')
 const policy = ref<ApprovalPolicy>(validPolicies.includes(route.query.policy as ApprovalPolicy) ? (route.query.policy as ApprovalPolicy) : 'always')
 const ragScheme = ref<RagSchemeId>(validRagSchemes.includes(route.query.rag_scheme as RagSchemeId) ? (route.query.rag_scheme as RagSchemeId) : 'naive')
+/** 知识库检索开关：后端能力默认开启，此开关控制每轮是否调用（默认开，可在对话时关闭） */
+const ragEnabled = ref(true)
 const sidebarOpen = ref(false)
 const filesOpen = ref(false)
 const filesRefreshKey = ref(0)
+/** 输入框下方的快捷 Prompt：跳转卡片配置的 prompts 列表（content 驱动） */
+const presetPrompts = ref<string[]>([])
 
 onMounted(async () => {
   await load()
@@ -69,9 +74,36 @@ onMounted(async () => {
       await setFault(tool, 'off')
     }
   }
-  // 预设任务：?prompt=...
-  if (route.query.prompt) {
+  // 预设任务：优先从 sessionStorage 读取跳转卡片携带的 prompts（避免长文本进 URL）
+  // 读取顺序：sessionStorage(jump) → ?prompts=（分享/兜底） → 旧版 ?prompt=
+  const jump = route.query.jump
+  let jumpedPrompts: string[] = []
+  if (jump) {
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(LAB_PRESET_STORAGE_KEY) ?? 'null')
+      if (stored && stored.nonce === String(jump) && Array.isArray(stored.prompts)) {
+        jumpedPrompts = stored.prompts.filter((p): p is string => typeof p === 'string')
+      }
+    } catch {
+      /* sessionStorage 异常时忽略，走 URL 兜底 */
+    }
+  }
+  const promptsParam = route.query.prompts
+  if (jumpedPrompts.length) {
+    presetPrompts.value = jumpedPrompts
+    // 自动填入第一条，可直接发送
+    task.value = presetPrompts.value[0]
+  } else if (promptsParam) {
+    presetPrompts.value = String(promptsParam)
+      .split('\n')
+      .map((p) => p.trim())
+      .filter(Boolean)
+    if (presetPrompts.value.length) {
+      task.value = presetPrompts.value[0]
+    }
+  } else if (route.query.prompt) {
     task.value = String(route.query.prompt)
+    presetPrompts.value = [task.value]
   }
 })
 
@@ -122,6 +154,7 @@ function send() {
     strategy: strategy.value,
     policy: policy.value,
     ragScheme: ragScheme.value,
+    ragEnabled: ragEnabled.value,
   })
   task.value = '' // 发送后清空输入框
 }
@@ -141,6 +174,7 @@ function send() {
       :policy="policy"
       :rag-scheme="ragScheme"
       :rag-schemes="ragSchemes"
+      :rag-enabled="ragEnabled"
       :open="sidebarOpen"
       :mcp-enabled="mcpEnabled"
       :mcp-caps="mcpCaps"
@@ -152,6 +186,7 @@ function send() {
       @update:strategy="strategy = $event"
       @update:policy="policy = $event"
       @update:rag-scheme="ragScheme = $event"
+      @update:rag-enabled="ragEnabled = $event"
       @close="sidebarOpen = false"
     />
 
@@ -177,6 +212,7 @@ function send() {
         :policy="policy"
         :sending="sending"
         :enabled-capabilities="enabledCapabilities"
+        :content-prompts="presetPrompts"
         :files-open="filesOpen"
         @send="send"
         @toggle-files="filesOpen = $event"

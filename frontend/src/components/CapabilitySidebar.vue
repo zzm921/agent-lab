@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import CapabilityGrid from './CapabilityGrid.vue'
 import ModeSelector from './ModeSelector.vue'
 import PromptStrategyPicker from './PromptStrategyPicker.vue'
@@ -18,6 +17,7 @@ const props = defineProps<{
   policy: ApprovalPolicy
   ragScheme: RagSchemeId
   ragSchemes: RagScheme[]
+  ragEnabled: boolean
   open?: boolean
   mcpEnabled?: boolean
   mcpCaps?: Capability[]
@@ -32,13 +32,11 @@ const emit = defineEmits<{
   'update:strategy': [v: PromptStrategy]
   'update:policy': [v: ApprovalPolicy]
   'update:rag-scheme': [v: RagSchemeId]
+  'update:rag-enabled': [v: boolean]
   close: []
 }>()
 
 const POLICIES: ApprovalPolicy[] = ['always', 'never']
-
-/** 仅当 rag 能力可用时展示方案选择器（体验「换方案看提升」） */
-const ragAvailable = computed(() => props.caps.some((c) => c.id === 'rag' && c.availability === 'available'))
 
 function onFault(id: string, mode: string) {
   emit('fault', id, mode)
@@ -93,17 +91,36 @@ function onFault(id: string, mode: string) {
         <PromptStrategyPicker :model-value="strategy" @update:model-value="emit('update:strategy', $event)" />
       </section> -->
 
-      <!-- RAG 方案：仅 rag 能力可用时展示，直观对比各方案检索与回答差异 -->
-      <section  class="space-y-3 border-t border-slate-800 pt-4">
+      <!-- 知识库检索：仅后端开启（返回方案目录）时展示；可在此开关，开启时选择方案 -->
+      <section v-if="ragSchemes.length" class="space-y-3 border-t border-slate-800 pt-4">
         <div class="mb-1 flex items-center justify-between">
-          <h3 class="text-xs font-semibold text-slate-300">RAG 方案</h3>
-          <span class="text-[10px] text-slate-500" title="同一语料、不同检索策略；切换后检索卡片与回答随方案变化">对比检索差异</span>
+          <h3 class="text-xs font-semibold text-slate-300">知识库检索</h3>
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="ragEnabled"
+            :title="ragEnabled ? '关闭知识库检索（本轮不再前置检索）' : '开启知识库检索（按所选方案前置检索并注入上下文）'"
+            class="flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition"
+            :class="ragEnabled ? 'bg-emerald-500' : 'bg-slate-700'"
+            @click="emit('update:rag-enabled', !ragEnabled)"
+          >
+            <span class="h-4 w-4 rounded-full bg-white transition" :class="ragEnabled ? 'translate-x-4' : ''"></span>
+          </button>
         </div>
-        <RagSchemeSelector
-          :model-value="ragScheme"
-          :schemes="ragSchemes"
-          @update:model-value="emit('update:rag-scheme', $event)"
-        />
+
+        <div v-if="!ragEnabled" class="rounded-xl border border-dashed border-slate-700/70 px-3 py-3 text-center">
+          <p class="text-[11px] text-slate-500">知识库检索已关闭 — 不注入检索上下文</p>
+          <p class="mt-1 text-[10px] text-slate-600">开启后按所选方案前置检索，答案优先基于知识库</p>
+        </div>
+
+        <div v-else class="space-y-3">
+          <p class="text-[11px] text-slate-500">同一语料、不同检索策略；切换后检索卡片与回答随方案变化</p>
+          <RagSchemeSelector
+            :model-value="ragScheme"
+            :schemes="ragSchemes"
+            @update:model-value="emit('update:rag-scheme', $event)"
+          />
+        </div>
       </section>
 
       <!-- MCP 能力：服务连接在启动时已建立；开关仅控制 MCP 工具是否在能力目录中使用 -->

@@ -8,6 +8,7 @@ import ArchitectureOverview from '../components/ArchitectureOverview.vue'
 import { useContentData } from '../composables/useContentData'
 import {
   ARCH_LAYERS,
+  LAB_PRESET_STORAGE_KEY,
   MODE_AGENT_LABELS,
   type LandingCapability,
 } from '../data/capabilityData'
@@ -93,8 +94,16 @@ function experience(cap: LandingCapability) {
   if (cap.policy) {
     query.policy = cap.policy
   }
-  if (cap.prompt) {
-    query.prompt = cap.prompt
+  if (cap.prompts.length) {
+    // 长文本不放进 URL：写入 sessionStorage，URL 只带短 nonce
+    const nonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+    try {
+      sessionStorage.setItem(LAB_PRESET_STORAGE_KEY, JSON.stringify({ nonce, prompts: cap.prompts }))
+      query.jump = nonce
+    } catch {
+      // sessionStorage 不可用（如隐私模式）：退回 URL 传递
+      query.prompts = cap.prompts.join('\n')
+    }
   }
   const faults = Object.entries(cap.faults ?? {})
     .filter(([, type]) => type && type !== 'off')
@@ -157,13 +166,13 @@ function iconPath(name: string) {
       <section class="grid items-center gap-10 py-16 md:grid-cols-2 md:py-24">
         <div>
           <h1 class="text-3xl font-bold leading-tight text-white sm:text-4xl md:text-5xl">
-            探索 AI Agent 的
+            Agent 技术实验室
             <span class="block bg-gradient-to-r from-indigo-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent">
-              每一层原理与实践
+              以场景为尺，向前沿而行
             </span>
           </h1>
           <p class="mt-5 text-sm leading-relaxed text-slate-400 sm:text-base">
-            这是一个可交互的 AI Agent 技术展示空间。从提示词到协议，覆盖六大技术域——推理模式、工具调用、多智能体编排、故障容错……每一项能力都有原理讲解、核心代码和可运行的在线演示。点开任意卡片，直接进入实验室体验。
+            这里是 AI Agent 技术实验室。从提示词到协议，覆盖六大技术域——推理模式、工具调用、多智能体编排、故障容错……每一项能力都有原理讲解、核心代码与可运行的在线演示。技术没有绝对的高低，适合场景才是最好；新技术代表前沿方向，项目未必用得上，但不能不了解。点开任意卡片，直接进入实验室体验。
           </p>
 
           <div class="mt-8 flex flex-wrap items-center gap-6 text-sm">

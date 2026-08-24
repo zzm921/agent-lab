@@ -9,6 +9,10 @@ tags: [MCP, Tooling, Protocol]
 techFilters: [MCP]
 accent: '#22d3a8'
 enabledTools: [save_note, list_notes, get_note, delete_note]
+prompts:
+  - 帮我把「周三下午三点和客户张总开会」记成一条笔记，然后列出我所有的笔记标题。
+  - 查看我笔记里关于「RAG」的笔记内容。
+  - 把「记住：老板不喜欢红色方案」存为一条笔记。
 ---
 ## 概述
 

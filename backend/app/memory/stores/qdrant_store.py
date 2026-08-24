@@ -93,8 +93,12 @@ class QdrantStore(StoreBackend):
         return not (isinstance(sparse, dict) and "sparse" in sparse)
 
     def add(self, text: str, metadata: dict | None = None) -> None:
-        """写入一条文本：稠密向量（+ 稀疏向量，若开启混合检索）。"""
-        payload = {"text": text, **(metadata or {})}
+        """写入一条文本：稠密向量（+ 稀疏向量，若开启混合检索）。
+
+        payload 结构与 ES 后端一致：text 与 metadata 分离（metadata 嵌套存放），
+        保证跨后端（Qdrant + Elasticsearch）多路召回时元数据语义一致。
+        """
+        payload = {"text": text, "metadata": metadata or {}}
         vector: dict = {"dense": self.embeddings.embed_query(text)}
         if self.sparse:
             sparse = self.embeddings.embed_sparse_query(text)
@@ -111,7 +115,7 @@ class QdrantStore(StoreBackend):
             {
                 "text": hit.payload.get("text", ""),
                 "score": round(float(hit.score), 4),
-                "metadata": {k: v for k, v in hit.payload.items() if k != "text"},
+                "metadata": hit.payload.get("metadata") or {},
             }
             for hit in hits
         ]

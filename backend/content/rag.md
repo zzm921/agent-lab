@@ -9,6 +9,9 @@ tags: [RAG, Qdrant, Embedding, Hybrid-Search, Rerank]
 techFilters: [Qdrant, FastAPI]
 accent: '#38bdf8'
 enabledTools: [rag]
+prompts:
+  - 用 RAG 检索知识库回答：什么是检索增强生成？它解决什么问题？
+  - 检索「多智能体」相关文档，总结三种主流编排方式。
 ---
 ## 概述
 

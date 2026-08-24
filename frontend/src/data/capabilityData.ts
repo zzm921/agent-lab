@@ -27,8 +27,8 @@ export interface LandingCapability {
   strategy: PromptStrategy | null
   /** 进入实验室的审批策略；null 用实验室默认 */
   policy: ApprovalPolicy | null
-  /** 进入实验室自动填入输入框的预设任务 */
-  prompt: string
+  /** 进入实验室的预设任务列表：跳转后自动填入第一条，其余显示在输入框下方快捷区 */
+  prompts: string[]
   /** 纯知识卡置 false：隐藏「立即体验」按钮与完成度徽标 */
   experience: boolean
   /** 详情抽屉正文 Markdown */
@@ -55,6 +55,9 @@ export interface ArchLayer {
   color: string
   capability: string
 }
+
+/** 落地页 → 实验室传递 prompt 列表的 sessionStorage 键（避免长文本进 URL） */
+export const LAB_PRESET_STORAGE_KEY = 'labPresetPrompts'
 
 /** Agent 模式 → 智能体名称（卡片上"对应智能体"徽标用） */
 export const MODE_AGENT_LABELS: Record<ModeId, string> = {

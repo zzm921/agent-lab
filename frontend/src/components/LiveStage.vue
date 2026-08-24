@@ -156,6 +156,12 @@ const RETRIEVE_KIND: Record<string, string> = {
             </li>
           </ul>
           <p v-else-if="s.content" class="mt-1.5 text-slate-300">{{ s.content }}</p>
+          <p
+            v-else-if="s.kind === 'retrieve'"
+            class="mt-1.5 text-slate-500"
+          >
+            未检索到相关内容（相关度低于阈值已过滤，本轮不注入知识库上下文）
+          </p>
         </section>
 
         <!-- 反思意见（评审过程流式展示，流式中显示转圈动效） -->

@@ -3,7 +3,7 @@ from langchain_core.messages import AIMessage
 
 from app.agents.runner import AgentRunner
 from app.llm.fake_model import FakeChatModel
-from tests.conftest import ai_with_tool, collect_stream
+from tests.conftest import ai_with_tool, collect_stream, make_settings
 
 
 async def _runner_with(registry, sessions, settings, script):
@@ -404,10 +404,13 @@ async def test_unknown_mode(settings, registry, sessions):
 
 async def test_rag_enabled_auto_retrieves(settings, registry, sessions):
     """RAG 作为独立检索阶段：启用 rag 后自动召回并产 retrieve 事件，不产生工具调用。"""
+    # 固定语料与 FakeEmbeddings 的 cosine 可能低于生产阈值 0.6，此处显式放宽阈值，
+    # 专注验证「启用即检索并注入」链路；阈值过滤行为由 test_rag_min_score_filters 覆盖。
+    settings = make_settings(rag_min_score=0.0)
     registry.rag_manager.ingest_all(["LangGraph 基于 StateGraph 构建有状态、多步骤的 AI Agent。"])
     script = [AIMessage(content="（基于知识库回答）")]
     runner = await _runner_with(registry, sessions, settings, script)
-    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive")
+    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive", rag_enabled=True)
     retrieve = next((e for e in events if e["type"] == "retrieve"), None)
     assert retrieve is not None
     assert retrieve["scheme"] == "naive"
@@ -418,13 +421,39 @@ async def test_rag_enabled_auto_retrieves(settings, registry, sessions):
     assert any(e["type"] == "message" for e in events)
 
 
+async def test_rag_min_score_filters_low_scores(settings, registry, sessions):
+    """最小相关度阈值（rag_min_score）：低相关命中被过滤，全部低于阈值则不注入上下文。"""
+    # 高分语料（与查询完全一致，FakeEmbeddings cosine = 1.0）应保留
+    registry.rag_manager.ingest_all(["测试任务"])
+    script = [AIMessage(content="（基于知识库回答）")]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive", rag_enabled=True)
+    retrieve = next((e for e in events if e["type"] == "retrieve"), None)
+    assert retrieve is not None and retrieve["hits"], "高相关命中不应被阈值过滤"
+    assert retrieve["hits"][0]["score"] >= settings.rag_min_score
+
+    # 低分语料（与查询完全无关，cosine < 0.6）应被过滤为空，且不注入上下文
+    registry.rag_manager.ingest_all(["公司考勤制度要求所有员工在岗打卡。"])
+    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive", rag_enabled=True)
+    retrieve = next((e for e in events if e["type"] == "retrieve"), None)
+    assert retrieve is not None and retrieve["hits"] == [], "低相关命中应被阈值过滤为空"
+
+
 async def test_rag_enabled_default_scheme_fallback(settings, registry, sessions):
     """未指定 rag_scheme 时回退默认方案（naive），仍自动检索。"""
     registry.rag_manager.ingest_all(["ReAct 模式由 思考-行动-观察 循环组成。"])
     runner = await _runner_with(registry, sessions, settings, [AIMessage(content="ok")])
-    events = await collect_stream(runner, mode="react", enabled=["rag"])
+    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_enabled=True)
     retrieve = next((e for e in events if e["type"] == "retrieve"), None)
     assert retrieve is not None and retrieve["scheme"] == "naive"
+
+
+async def test_rag_disabled_no_retrieval(settings, registry, sessions):
+    """知识库检索被前端开关关闭（rag_enabled=False）时不产 retrieve 事件、不注入上下文。"""
+    registry.rag_manager.ingest_all(["LangGraph 基于 StateGraph 构建有状态、多步骤的 AI Agent。"])
+    runner = await _runner_with(registry, sessions, settings, [AIMessage(content="ok")])
+    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive", rag_enabled=False)
+    assert not any(e["type"] == "retrieve" for e in events)
 
 
 def test_augment_query_injects_context():

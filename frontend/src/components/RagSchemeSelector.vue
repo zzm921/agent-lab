@@ -6,22 +6,12 @@ const props = defineProps<{
   schemes: RagScheme[]
 }>()
 const emit = defineEmits<{ 'update:modelValue': [v: RagSchemeId] }>()
-
-/** 后端未返回方案目录时兜底展示的方案 */
-const FALLBACK: RagScheme[] = [
-  { id: 'naive', name: '朴素 RAG', description: '固定切块 + 纯稠密向量检索', collection: '', count: 0 },
-  { id: 'advanced', name: '高级 RAG', description: '语义分块 + 混合检索 + Query重写 + Rerank', collection: '', count: 0 },
-]
-
-function options(): RagScheme[] {
-  return props.schemes.length ? props.schemes : FALLBACK
-}
 </script>
 
 <template>
   <div class="flex flex-wrap gap-2">
     <button
-      v-for="o in options()"
+      v-for="o in schemes"
       :key="o.id"
       type="button"
       class="rounded-xl border px-3 py-2 text-left transition"

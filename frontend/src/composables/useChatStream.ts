@@ -100,6 +100,8 @@ export interface SendParams {
   strategy: PromptStrategy
   policy: ApprovalPolicy
   ragScheme: RagSchemeId
+  /** 本轮是否启用知识库检索（RAG 前置检索），后端能力默认开启，由前端开关控制 */
+  ragEnabled: boolean
   /** 覆盖会话 id（对比视图每个 runner 独立会话） */
   sessionId?: string
 }
@@ -109,6 +111,7 @@ export interface ChatStream {
   sessionId: string
   mode: ModeId
   ragScheme: RagSchemeId
+  ragEnabled: boolean
   /** 流水线时间线：按事件发生顺序排列的步骤 */
   steps: StepEntry[]
   done: { summary: string; stats: Record<string, unknown> } | null
@@ -248,6 +251,7 @@ export function useChatStream(): ChatStream {
         stream.mode = ev.mode as ModeId
         stream.enabled = ev.capabilities
         if (ev.rag_scheme) stream.ragScheme = ev.rag_scheme as RagSchemeId
+        if (ev.rag_enabled !== undefined) stream.ragEnabled = ev.rag_enabled
         break
       case 'thinking':
         accThinking.add(ev.delta)
@@ -396,6 +400,7 @@ export function useChatStream(): ChatStream {
         prompt_strategy: params.strategy,
         approval_policy: params.policy,
         rag_scheme: params.ragScheme,
+        rag_enabled: params.ragEnabled,
       },
       controller.signal,
     )
@@ -449,6 +454,7 @@ export function useChatStream(): ChatStream {
     sessionId: '',
     mode: 'react',
     ragScheme: 'naive',
+    ragEnabled: true,
     steps: [],
     done: null,
     error: null,

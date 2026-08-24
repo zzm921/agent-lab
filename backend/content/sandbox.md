@@ -9,6 +9,10 @@ tags: [Sandbox, Code-Exec, Security, Harness]
 techFilters: [MCP, FastAPI]
 accent: '#22d3a8'
 enabledTools: [run_command]
+prompts:
+  - 在沙箱里运行 python 脚本，输出斐波那契数列前 20 项。
+  - 在沙箱里写一个文本文件，统计它的行数和字数。
+  - 运行 python 计算 1 到 100 的和，并把结果写入 result.txt。
 ---
 ## 概述
 

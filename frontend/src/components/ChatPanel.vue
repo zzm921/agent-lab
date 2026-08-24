@@ -14,6 +14,7 @@ const props = defineProps<{
   policy: ApprovalPolicy
   sending: boolean
   enabledCapabilities: Capability[]
+  contentPrompts?: string[]
   filesOpen?: boolean
 }>()
 
@@ -56,11 +57,16 @@ const strategyName = computed(() => {
   return map[props.strategy]
 })
 
-// 快捷 Prompt：由已启用能力卡片的 example 动态生成，开关能力实时增删
+// 快捷 Prompt：优先展示跳转卡片配置的 prompts（content 驱动）；直接进入实验室（未配置）时回退到已启用能力的示例
 const presetPrompts = computed(() =>
-  props.enabledCapabilities
-    .map((c) => c.example?.trim())
-    .filter((p): p is string => Boolean(p)),
+  props.contentPrompts?.length
+    ? props.contentPrompts
+    : props.enabledCapabilities
+        .map((c) => c.example?.trim())
+        .filter((p): p is string => Boolean(p)),
+)
+const presetLabel = computed(() =>
+  props.contentPrompts?.length ? '快捷 Prompt · 该能力预设任务' : '快捷 Prompt · 来自已启用能力',
 )
 
 function onSend() {
@@ -159,7 +165,7 @@ watch(
         @update:model-value="emit('update:task', $event)"
         @submit="onSend"
       />
-      <PromptPresets :presets="presetPrompts" @insert="emit('update:task', $event)" />
+      <PromptPresets :presets="presetPrompts" :label="presetLabel" @insert="emit('update:task', $event)" />
       <div class="mt-3 flex gap-2">
         <button
           type="button"

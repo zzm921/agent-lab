@@ -1,11 +1,11 @@
 <script setup lang="ts">
-defineProps<{ presets: string[] }>()
+defineProps<{ presets: string[]; label?: string }>()
 const emit = defineEmits<{ insert: [v: string] }>()
 </script>
 
 <template>
   <div class="mt-3">
-    <span class="text-[11px] text-slate-500">快捷 Prompt · 来自已启用能力</span>
+    <span class="text-[11px] text-slate-500">{{ label ?? '快捷 Prompt' }}</span>
     <div v-if="presets.length" class="mt-2 flex flex-wrap gap-1.5">
       <span
         v-for="(p, i) in presets"

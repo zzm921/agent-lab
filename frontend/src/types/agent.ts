@@ -46,7 +46,7 @@ export interface ApprovalRequest {
 
 /** SSE 事件联合类型（data 行 JSON 的结构化描述） */
 export type AgentEvent =
-  | { type: 'meta'; session_id: string; mode: string; capabilities: string[]; rag_scheme?: string }
+  | { type: 'meta'; session_id: string; mode: string; capabilities: string[]; rag_scheme?: string; rag_enabled?: boolean }
   | { type: 'thinking'; delta: string }
   | { type: 'message'; delta: string }
   | { type: 'tool_start'; tool: string; args: Record<string, unknown> }

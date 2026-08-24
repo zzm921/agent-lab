@@ -15,6 +15,7 @@ class StreamRequest(BaseModel):
     prompt_strategy: str = Field(default="standard", description="提示词策略")
     approval_policy: str = Field(default="always", description="HITL 审批策略")
     rag_scheme: str = Field(default="naive", description="RAG 方案 id（当前仅 naive）")
+    rag_enabled: bool = Field(default=True, description="本轮是否启用知识库检索（RAG）前置检索；默认开启，前端开关可关闭")
 
 
 class ApproveRequest(BaseModel):

@@ -116,11 +116,14 @@ class AgentRunner:
 
         return emit
 
-    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None):
+    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None, rag_enabled=True):
         """启动新一轮对话并产出 SSE 事件；遇 HITL 中断产出 approval_request 后暂停。
 
         rag_scheme：本轮选定的 RAG 方案 id（当前仅 naive，后续扩展），在 meta 中回显，
         并用于前置检索——RAG 是独立检索阶段，不进入工具集。
+        rag_enabled：本轮是否启用知识库检索（默认开启，由前端开关控制；总开关由
+        settings.rag_enabled 控制，未开启时 registry.rag_manager 为 None，
+        二者都满足才执行前置检索）。
         """
         queue = asyncio.Queue()
         # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
@@ -135,23 +138,28 @@ class AgentRunner:
         config = self._config(session_id, approval_policy, prompt_strategy)
         self._configs[session_id] = config
         self._specs[session_id] = (mode, tools)
-        yield {"type": "meta", "session_id": session_id, "mode": mode, "capabilities": enabled, "rag_scheme": rag_scheme}
-        # RAG 前置检索：启用 rag 能力时按选定方案自动召回并注入上下文（不依赖模型调用工具）
+        yield {"type": "meta", "session_id": session_id, "mode": mode, "capabilities": enabled, "rag_scheme": rag_scheme, "rag_enabled": rag_enabled}
+        # RAG 前置检索：启用 rag 能力时按选定方案自动召回并注入上下文（不依赖模型调用工具）。
+        # 需总开关开启（rag_manager 非 None）且本轮请求开启（rag_enabled=True）才执行。
+        # 命中按最小相关度阈值（settings.rag_min_score）过滤：低于阈值丢弃，全部被丢弃则
+        # 不注入上下文（rag_context=None），避免无关内容污染答案。
         rag_context = None
-        if self.registry.rag_manager is not None:
+        if self.registry.rag_manager is not None and rag_enabled:
             scheme = self.registry.rag_manager.resolve(rag_scheme)
             result = scheme.retrieve_full(message, self.settings.rag_top_k)
+            hits = [h for h in result.hits if h.get("score", 0) >= self.settings.rag_min_score]
             emit(
                 {
                     "type": "retrieve",
                     "query": message,
                     "scheme": scheme.id,
-                    "hits": result.hits,
+                    "hits": hits,
                     "rewrites": result.rewrites,  # Query 重写变体（advanced 有值）
                     "reranked": result.reranked,  # 是否经过重排
                 }
             )
-            rag_context = {"name": scheme.name, "hits": result.hits}
+            if hits:
+                rag_context = {"name": scheme.name, "hits": hits}
         inputs = await self._make_inputs(graph, config, message, prompt_strategy, rag_context=rag_context)
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
             yield ev
