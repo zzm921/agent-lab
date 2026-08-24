@@ -73,8 +73,11 @@ def _step_failure(state) -> bool:
     return False
 
 
-def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harness=None):
-    """构建 plan-and-execute 代理：planner → executor ⇄ tools → replanner。"""
+def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, checkpointer=None, harness=None):
+    """构建 plan-and-execute 代理：planner → executor ⇄ tools → replanner。
+
+    planner_llm：任务规划/重规划（低随机、输出精炼）；executor_llm：分步执行（流式）。
+    """
     tool_list = list(tools)
     tools_node = make_tools_node(tool_list, emit, harness=harness)
     max_replans = max(1, settings.max_iterations // 2)
@@ -82,7 +85,7 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
 
     async def planner(state):
         task = _latest_task(state)
-        text = (await llm.ainvoke([SystemMessage(_PLAN_PROMPT), HumanMessage(task)])).content
+        text = (await planner_llm.ainvoke([SystemMessage(_PLAN_PROMPT), HumanMessage(task)])).content
         steps = _parse_steps(text)
         emit({"type": "plan", "steps": steps, "current_step": 0, "status": "created"})
         return {"plan": steps, "current_step": 0, "past_steps": [], "replans": 0, "step_failed": False}
@@ -99,7 +102,7 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
             base = str(msgs[0].content)
             msgs = msgs[1:]
         system_prompt = (base + "\n" + _step_hint(state)).strip()
-        msg = await stream_model_call(llm, msgs, emit, tools=tool_list, system_prompt=system_prompt)
+        msg = await stream_model_call(executor_llm, msgs, emit, tools=tool_list, system_prompt=system_prompt)
         failed = _step_failure(state)
         if getattr(msg, "tool_calls", None):
             return {"messages": [msg], "step_failed": failed, "steps": steps}
@@ -117,7 +120,7 @@ def build_plan_execute_agent(llm, tools, emit, settings, checkpointer=None, harn
         task = _latest_task(state)
         progress = "\n".join(state.get("past_steps") or [])
         context = f"原任务：{task}\n已完成步骤：\n{progress or '（无）'}"
-        text = (await llm.ainvoke([SystemMessage(_REPLAN_PROMPT), HumanMessage(context)])).content
+        text = (await planner_llm.ainvoke([SystemMessage(_REPLAN_PROMPT), HumanMessage(context)])).content
         steps = _parse_steps(text)
         emit({"type": "plan", "steps": steps, "current_step": 0, "status": "created"})
         return {"plan": steps, "current_step": 0, "replans": (state.get("replans") or 0) + 1}

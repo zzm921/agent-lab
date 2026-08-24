@@ -16,7 +16,7 @@ from http import HTTPStatus
 from typing import Any, Iterator
 
 import dashscope
-from dashscope import Generation
+from dashscope import Generation, MultiModalConversation
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -114,11 +114,45 @@ def _tool_to_ds(tool: BaseTool | dict | type) -> dict:
     }
 
 
+def _is_url_error(resp) -> bool:
+    """DashScope「模型名与调用端点不匹配」错误判定。
+
+    多模态模型（如 qwen3-vl-plus / qwen3.8-max / qwen3.7-plus）被当作纯文本模型
+    走文本端点 Generation.call()，或模型名不可用/未开通时，服务端返回该 url error。
+    """
+    message = (getattr(resp, "message", "") or "").lower()
+    return "url error" in message or "please check url" in message
+
+
+def _content_text(content) -> str:
+    """把 DashScope content（字符串或内容元素列表）归一化为纯文本。
+
+    多模态响应中 content 为 [{...}] 结构（如 [{"text": "..."}]），需提取文本拼接；
+    纯文本响应 content 直接是字符串，原样返回。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for elem in content:
+            if isinstance(elem, str):
+                parts.append(elem)
+            elif isinstance(elem, dict):
+                text = elem.get("text")
+                if text:
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
+
 def _parse_message(message: dict) -> DashScopeTurn:
-    """解析 DashScope 响应 message 字典：分离 reasoning_content(reason) 与 content(output)。"""
+    """解析 DashScope 响应 message 字典：分离 reasoning_content(reason) 与 content(output)。
+
+    多模态模型返回的 content / reasoning_content 可能是内容元素列表，统一归一化为纯文本。
+    """
     return DashScopeTurn(
-        reasoning=message.get("reasoning_content") or "",
-        output=message.get("content") or "",
+        reasoning=_content_text(message.get("reasoning_content") or ""),
+        output=_content_text(message.get("content") or ""),
         tool_calls=list(message.get("tool_calls") or []),
         finish_reason="",
     )
@@ -164,7 +198,7 @@ def _to_tool_call_chunks(ds_tool_calls: list[dict]) -> list[dict]:
 class DashScopeChatModel(BaseChatModel):
     """基于 DashScope 官方 SDK 的 ChatModel：流式、工具调用、思考(reasoning_content) 分离。"""
 
-    model_name: str = "qwen-plus"
+    model_name: str = "qwen3.5-flash"
     api_key: str = ""
     base_url: str = ""
     temperature: float = 0.3
@@ -236,31 +270,64 @@ class DashScopeChatModel(BaseChatModel):
             additional_kwargs=extra,
         )
 
+    def _friendly_error(self, resp) -> str:
+        """把 DashScope 常见错误改写为可操作的中文提示（原始信息保留便于排查）。
+
+        主要针对「url error」：模型名与调用端点不匹配（多模态模型走文本端点等），
+        改写后给出原因与处理建议，避免只暴露晦涩的英文原始报错。
+        """
+        status = getattr(resp, "status_code", "")
+        message = getattr(resp, "message", "") or ""
+        base = f"DashScope 调用失败(status={status})"
+        if _is_url_error(resp):
+            return (
+                f"{base}：模型名称与调用端点不匹配（当前 model={self.model_name}）。\n"
+                f"  可能原因：\n"
+                f"    1) 多模态模型（如 qwen3-vl-plus / qwen3.8-max / qwen3.7-plus 等）"
+                f"被当作纯文本模型调用（误用 Generation.call() 文本端点）；\n"
+                f"    2) 模型名不存在或当前账号未开通该模型。\n"
+                f"  处理：多模态模型应走 multimodal-generation 端点（MultiModalConversation.call()）；"
+                f"纯文本模型（qwen-plus / qwen-max 等）走文本端点；并确认模型名正确且已开通。\n"
+                f"  原始信息：{message}\n"
+                f"  参考：https://help.aliyun.com/zh/model-studio/error-code#error-url"
+            )
+        return f"{base}: {message}"
+
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
         """非流式调用：供 planner / reflection / worker 使用。"""
-        resp = Generation.call(**self._payload(list(messages), stream=False))
+        payload = self._payload(list(messages), stream=False)
+        resp = Generation.call(**payload)
+        # 模型名与端点不匹配（多模态模型走文本端点）时，自动改用 multimodal-generation 端点重试
+        if resp.status_code != HTTPStatus.OK and _is_url_error(resp):
+            resp = MultiModalConversation.call(**payload)
         if resp.status_code != HTTPStatus.OK:
-            raise RuntimeError(
-                f"DashScope 调用失败(status={resp.status_code}): {getattr(resp, 'message', '')}"
-            )
+            raise RuntimeError(self._friendly_error(resp))
         turn = _parse_message(resp.output.choices[0].message)
         turn.finish_reason = resp.output.choices[0].get("finish_reason") or ""
         return ChatResult(generations=[ChatGeneration(message=self._to_message(turn))])
 
     def _stream(self, messages, stop=None, run_manager=None, **kwargs) -> Iterator[ChatGenerationChunk]:
         """流式调用：逐 token 产出，reasoning_content 与 content 分别透出。"""
-        for resp in Generation.call(**self._payload(list(messages), stream=True)):
+        payload = self._payload(list(messages), stream=True)
+        it = iter(Generation.call(**payload))
+        while True:
+            try:
+                resp = next(it)
+            except StopIteration:
+                break
+            # 首个错误块为 url error（多模态模型走文本端点）时，切换 multimodal-generation 端点
+            if resp.status_code != HTTPStatus.OK and _is_url_error(resp):
+                it = iter(MultiModalConversation.call(**payload))
+                continue
             if resp.status_code != HTTPStatus.OK:
-                raise RuntimeError(
-                    f"DashScope 流式调用失败(status={resp.status_code}): {getattr(resp, 'message', '')}"
-                )
+                raise RuntimeError(self._friendly_error(resp))
             output = getattr(resp, "output", None)
             choices = output.get("choices") if isinstance(output, dict) else []
             if not choices:
                 continue
             msg = choices[0].get("message") or {}
-            reasoning = msg.get("reasoning_content") or ""
-            content = msg.get("content") or ""
+            reasoning = _content_text(msg.get("reasoning_content") or "")
+            content = _content_text(msg.get("content") or "")
             extra = {"reasoning_content": reasoning} if reasoning else {}
             chunk = AIMessageChunk(
                 content=content,

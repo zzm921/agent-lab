@@ -89,12 +89,12 @@ function onFault(id: string, mode: string) {
         </div>
       </section>
 
-      <section class="space-y-3 border-t border-slate-800 pt-4">
+      <!-- <section class="space-y-3 border-t border-slate-800 pt-4">
         <PromptStrategyPicker :model-value="strategy" @update:model-value="emit('update:strategy', $event)" />
-      </section>
+      </section> -->
 
       <!-- RAG 方案：仅 rag 能力可用时展示，直观对比各方案检索与回答差异 -->
-      <section v-if="ragAvailable" class="space-y-3 border-t border-slate-800 pt-4">
+      <section  class="space-y-3 border-t border-slate-800 pt-4">
         <div class="mb-1 flex items-center justify-between">
           <h3 class="text-xs font-semibold text-slate-300">RAG 方案</h3>
           <span class="text-[10px] text-slate-500" title="同一语料、不同检索策略；切换后检索卡片与回答随方案变化">对比检索差异</span>
@@ -106,7 +106,7 @@ function onFault(id: string, mode: string) {
         />
       </section>
 
-      <!-- MCP 服务：默认关闭，页面点选开启；直观对比有无 MCP -->
+      <!-- MCP 能力：服务连接在启动时已建立；开关仅控制 MCP 工具是否在能力目录中使用 -->
       <section class="border-t border-slate-800 pt-4">
         <div class="mb-2 flex items-center justify-between">
           <h3 class="text-xs font-semibold text-slate-300">MCP 服务</h3>
@@ -114,7 +114,7 @@ function onFault(id: string, mode: string) {
             type="button"
             role="switch"
             :aria-checked="mcpEnabled"
-            :title="mcpEnabled ? '关闭 MCP 服务（移除 MCP 能力）' : '开启 MCP 服务（连接 mcp-notes 便签 server）'"
+            :title="mcpEnabled ? '停用 MCP 能力（从能力目录移除 mcp-notes 工具，服务连接保持）' : '启用 MCP 能力（在能力目录中使用 mcp-notes 工具）'"
             class="flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition"
             :class="mcpEnabled ? 'bg-fuchsia-500' : 'bg-slate-700'"
             @click="emit('toggle-mcp', !mcpEnabled)"
@@ -124,12 +124,12 @@ function onFault(id: string, mode: string) {
         </div>
 
         <div v-if="!mcpEnabled" class="rounded-xl border border-dashed border-slate-700/70 px-3 py-3 text-center">
-          <p class="text-[11px] text-slate-500">MCP 未启用 — 仅使用内置能力</p>
-          <p class="mt-1 text-[10px] text-slate-600">开启后接入 mcp-notes 便签服务，可扩展 4 个 MCP 工具</p>
+          <p class="text-[11px] text-slate-500">MCP 能力已停用 — 仅使用内置能力</p>
+          <p class="mt-1 text-[10px] text-slate-600">启用后 mcp-notes 的 4 个工具将出现在能力目录</p>
         </div>
 
         <div v-else class="space-y-2">
-          <p class="text-[11px] text-fuchsia-300/90">已连接 mcp-notes · 发现 {{ mcpCaps?.length ?? 0 }} 个工具</p>
+          <p class="text-[11px] text-fuchsia-300/90">mcp-notes 已连接（服务启动时建立）· 能力 {{ mcpCaps?.length ?? 0 }} 个</p>
           <CapabilityGrid
             :caps="mcpCaps ?? []"
             :enabled-ids="enabledIds"

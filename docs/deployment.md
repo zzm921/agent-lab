@@ -29,7 +29,7 @@ cp .env.example .env     # Linux/macOS
 # 必填（阿里云百炼 DashScope，Key 在 https://bailian.console.aliyun.com/ 获取）
 LLM_API_KEY=sk-xxxx
 LLM_BASE_URL=https://dashscope.aliyuncs.com/api/v1
-CHAT_MODEL=qwen-plus
+CHAT_MODEL=qwen3.5-flash
 # 开启思考：返回 reasoning_content（思考过程）与 content（最终输出）两类结果
 ENABLE_THINKING=true
 
@@ -50,6 +50,18 @@ uvicorn app.main:app --reload --port 8000
 
 未配置 `LLM_API_KEY` 时，`POST /api/stream` 返回 `500 {"detail":"未配置 LLM_API_KEY（阿里云百炼 DashScope API Key），请在 backend/.env 中设置后重启服务"}`。
 
+### 2.3 离线建库（RAG，线上前运行）
+
+RAG 向量库数据在**线上前**通过独立建库脚本预写（在线服务启动时只加载、不现场入库，保证能力加载快速）。不同 RAG 方案各自独立成脚本，按需分别运行；需配置 `EMBEDDING_API_KEY` 与 `QDRANT_URL`（或 ES）：
+
+```bash
+cd backend
+python scripts/ingest_naive.py     # naive 方案：固定切块 + 纯稠密检索
+python scripts/ingest_advanced.py  # advanced 方案：语义分块 + 混合检索
+```
+
+脚本幂等：语料未变则跳过，变更自动重建；`--force` 强制清空重建。
+
 ## 3. 前端
 
 ```bash
@@ -61,13 +73,17 @@ npm run dev        # 开发模式 http://localhost:5173（需后端 8000 端口�
 ## 4. 生产部署
 
 ```bash
-cd frontend && npm run build        # 产物输出到 frontend/dist
+cd backend
+python scripts/ingest_naive.py && python scripts/ingest_advanced.py  # 线上前建库
+cd ../frontend && npm run build                                      # 产物输出到 frontend/dist
 cd ../backend && uvicorn app.main:app --port 8000
 ```
 
-`app/main.py` 检测到 `frontend/dist` 存在时自动以静态资源托管前端，直接访问 http://localhost:8000 即可使用完整功能（单 uvicorn 进程）。
+`app/main.py` 检测到 `frontend/dist` 存在时自动以静态资源托管前端，直接访问 http://localhost:8000 即可使用完整功能（单 uvicorn 进程）。服务启动时自动连接并发现 MCP（stdio 子进程拉起 `mcp-notes`），无需单独启动。`MCP_ENABLED=false` 可关闭。
 
 ## 5. MCP 集成配置示例
+
+> 本项目自带 `mcp-notes` 便签 server 默认以 **stdio** 方式由在线服务启动时自动拉起（`MCP_ENABLED` 默认 `true`），无需手动启动；如需独立 HTTP 部署仍可用 `uvicorn app.mcp_server.notes_server:app --port 8001`。以下为通用 MCP 配置示例。
 
 ### 5.1 stdio transport
 

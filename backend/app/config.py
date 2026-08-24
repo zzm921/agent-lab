@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # 阿里云百炼（DashScope 原生 SDK）大模型
     llm_api_key: str = ""
     llm_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
-    chat_model: str = "qwen-plus"
+    chat_model: str = "qwen3.5-flash"
     # 开启思考：返回 reasoning_content（思考过程）与 content（最终输出）两类结果
     enable_thinking: bool = True
 
@@ -38,12 +38,12 @@ class Settings(BaseSettings):
     rag_default_scheme: str = "naive"
     # Advanced 方案：Query 重写生成的查询变体数（LLM Multi-Query）与重排模型
     rag_rewrite_variants: int = 3
-    rag_rerank_model: str = "gte-rerank"
+    rag_rerank_model: str = "qwen3-rerank"
 
-    # MCP Servers（JSON 字符串，声明可用 server；MCP_ENABLED=false 时只注册不连接）
+    # MCP Servers（JSON 字符串，声明可用 server；stdio 子进程由服务启动时自动拉起）
     mcp_servers: str = "{}"
-    # 是否默认连接 MCP Server；false 时由前端页面「MCP 服务」开关点选开启（POST /api/mcp）
-    mcp_enabled: bool = False
+    # 是否默认连接 MCP Server；默认 true，服务启动时自动发现（stdio 拉起）已配置的 server
+    mcp_enabled: bool = True
 
     # 每日对话配额：限制「一台电脑 / 一个 IP」每天的对话次数（部署防滥用）
     quota_enabled: bool = True

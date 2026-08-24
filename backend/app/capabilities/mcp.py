@@ -21,23 +21,26 @@ class McpManager:
         self._discovered = False
 
     async def enable(self) -> None:
-        """页面点选开启：连接全部注册的 MCP Server 并发现工具。"""
+        """页面点选开启：仅把 MCP 能力纳入能力目录。
+
+        连接在服务启动时已建立（见 lifespan → discover），此处不重新连接；
+        仅当启动时未连接（如 MCP_ENABLED=false）才补连。
+        """
         self.enabled = True
-        await self.discover()
+        if not self._discovered:
+            await self.discover()
 
     def disable(self) -> None:
-        """页面点选关闭：清空能力与工具映射，允许再次 discover。"""
+        """页面点选关闭：仅把 MCP 能力移出能力目录，不关闭已建立的服务连接。"""
         self.enabled = False
-        self.capabilities.clear()
-        self.tools_by_id.clear()
-        self._discovered = False
 
     async def discover(self) -> None:
-        """连接全部配置的 MCP Server 并收集工具；单个失败不影响其它。
+        """连接全部配置的 MCP Server 并收集工具（服务启动时调用；幂等）。
 
-        仅当开关开启（enabled）时执行，且幂等；开关未开时能力目录不包含任何 MCP 工具。
+        连接与否不受页面开关控制：启动时连接并保持存活；开关只决定能力是否进入目录
+        （见 registry.list 按 enabled 过滤）。单个 Server 失败不影响其它。
         """
-        if not self.enabled or self._discovered:
+        if self._discovered:
             return
         self._discovered = True
         for name, conf in self.servers.items():

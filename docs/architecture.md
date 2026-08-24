@@ -155,7 +155,7 @@
 | 配置 | 环境变量 | 默认 |
 |---|---|---|
 | 百炼（DashScope）Key | `LLM_API_KEY` | 空（必填） |
-| Chat 模型 | `CHAT_MODEL` | `qwen-plus` |
+| Chat 模型 | `CHAT_MODEL` | `qwen3.5-flash` |
 | Embedding Key | `EMBEDDING_API_KEY` | 空 |
 | MCP Servers | `MCP_SERVERS` | `{}` |
 | 最大迭代 | `MAX_ITERATIONS` | 8 |

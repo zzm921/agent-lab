@@ -50,7 +50,9 @@ class CapabilityRegistry:
                     "unavailable_reason": None if ok else "未配置 Embedding API Key（EMBEDDING_API_KEY）",
                 }
             )
-        caps.extend(self.mcp.capabilities)
+        # MCP 能力仅当页面开关开启（enabled）时进入目录；连接在服务启动时已建立，与开关无关
+        if self.mcp.enabled:
+            caps.extend(self.mcp.capabilities)
         self._index = {c["id"]: c for c in caps}
         return caps
 

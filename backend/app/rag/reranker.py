@@ -1,6 +1,6 @@
 """重排序（Rerank）：对多路召回候选做精排，把真正相关的片段顶到前面。
 
-- DashScopeReranker：交叉编码器（gte-rerank），对 (query, 候选) 逐对打分，精度最高；
+- DashScopeReranker：交叉编码器（qwen3-rerank），对 (query, 候选) 逐对打分，精度最高；
 - LexicalReranker：离线确定性回退（词法重叠 + 原分融合），保证未开通重排模型/离线可测。
 - build_reranker：有 Embedding API Key 优先交叉编码器，否则词法回退（对齐稀疏向量回退模式）。
 """
@@ -78,12 +78,12 @@ class LexicalReranker(Reranker):
 
 
 class DashScopeReranker(Reranker):
-    """交叉编码器重排：DashScope gte-rerank，对 (query, 候选) 逐对打分。
+    """交叉编码器重排：DashScope qwen3-rerank，对 (query, 候选) 逐对打分。
 
     任何异常（未开通/网络失败/导入失败）回退 LexicalReranker，保证检索链路不中断。
     """
 
-    def __init__(self, api_key: str = "", model: str = "gte-rerank"):
+    def __init__(self, api_key: str = "", model: str = "qwen3-rerank"):
         self.api_key = api_key
         self.model = model
         self._fallback = LexicalReranker()
@@ -123,7 +123,7 @@ class DashScopeReranker(Reranker):
         return reordered
 
 
-def build_reranker(embeddings, model: str = "gte-rerank") -> Reranker:
+def build_reranker(embeddings, model: str = "qwen3-rerank") -> Reranker:
     """有 Embedding API Key 优先交叉编码器重排，否则本地词法重排（离线可测）。"""
     api_key = getattr(embeddings, "api_key", "") or ""
     if api_key:

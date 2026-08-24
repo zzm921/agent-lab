@@ -38,6 +38,17 @@ def test_unknown_scheme_raises(settings):
         make_manager(settings)
 
 
+def test_scheme_ids_builds_only_selected(settings):
+    """指定 scheme_ids 时只构建对应方案（离线建库按方案独立脚本用）。"""
+    manager = RagManager(settings, FakeEmbeddings(), top_k=3, scheme_ids=["naive"])
+    assert set(manager.schemes) == {"naive"}
+    manager.ingest_all(CORPUS)
+    assert len(manager.get("naive")) == len(CORPUS)
+    # 缺省参数时仍按 settings.rag_schemes 构建全部方案
+    manager = make_manager(settings)
+    assert set(manager.schemes) == {"naive", "advanced"}
+
+
 def test_ingest_all_idempotent(settings):
     manager = make_manager(settings)
     manager.ingest_all(CORPUS)

@@ -16,10 +16,10 @@ MCP（Model Context Protocol）是 AI 工具调用的「USB 标准」——一�
 
 一句话：**工具不再写死在 Agent 里，而是像插件一样挂在外面，Agent 运行时按需连接、发现、调用、断开。**
 
-本项目把 MCP 落成**一条完整可运行的链路**，并且默认关闭、页面点选开启，直观对比「有 MCP / 无 MCP」的能力差异：
+本项目把 MCP 落成**一条完整可运行的链路**，并且默认开启、服务启动即就绪，页面侧边栏可随时关闭，直观对比「有 MCP / 无 MCP」的能力差异：
 
-- **服务端（MCP Server）**：自建 `mcp-notes` 便签服务（FastMCP + Streamable HTTP，独立进程端口 8001），提供 `save_note / list_notes / get_note / delete_note` 四个工具，JSON 文件持久化；
-- **客户端（MCP Client）**：后端 `McpManager` 默认只注册不连接（`MCP_ENABLED=false`），页面侧边栏「MCP 服务」开关点选开启 → `POST /api/mcp` 触发连接 + 发现工具 → 工具以 `mcp-notes:xxx` 能力出现在页面，可逐个启用/示例/对话调用；关闭则能力消失。
+- **服务端（MCP Server）**：自建 `mcp-notes` 便签服务（FastMCP + **stdio 传输**，由在线服务启动时以子进程自动拉起），提供 `save_note / list_notes / get_note / delete_note` 四个工具，JSON 文件持久化；
+- **客户端（MCP Client）**：后端 `McpManager` 默认开启（`MCP_ENABLED=true`），**服务启动时自动连接 + 发现工具** → 工具以 `mcp-notes:xxx` 能力出现在页面，可逐个启用/示例/对话调用；页面「MCP 服务」开关**只控制这些能力是否进入目录**（服务连接在启动时已建立、与开关无关），关闭则能力从目录消失。
 
 ## 为什么需要
 
@@ -95,42 +95,41 @@ def list_notes() -> str:
 
 # get_note / delete_note 同理，中文 docstring 即工具描述
 
-app = mcp.streamable_http_app()   # Starlette app，独立进程：
-                                  # uvicorn app.mcp_server.notes_server:app --port 8001
+app = mcp.streamable_http_app()   # 可选：独立 HTTP 部署时用 uvicorn app.mcp_server.notes_server:app --port 8001
+                                  # 默认以 stdio 由在线服务子进程拉起（python -m app.mcp_server.notes_server）
 ```
 
 要点：
 
 - `FastMCP` + `@mcp.tool()` 自动从函数签名生成 JSON Schema（参数、必填、描述），Client 侧 `tools/list` 拿到的就是它；
-- `streamable_http_app()` 把 server 变成可独立部署的 HTTP 服务；
+- 默认 **stdio 传输**：`mcp.run()` 走标准输入输出，在线服务以子进程自动拉起，无需手动启动；`streamable_http_app()` 可选地把它变成可独立部署的 HTTP 服务；
 - 每个工具是**纯函数 + 原子持久化**，无状态、可并发、可挂到任何宿主上。
 
 ### 二、MCP Client 端（`backend/app/capabilities/mcp.py`）
 
-后端 `McpManager` 是 MCP 客户端：读取 `.env` 里注册的 server 配置，默认**只注册不连接**；页面开关打开后连接、发现工具、转成 LangChain 工具注入 Agent。
+后端 `McpManager` 是 MCP 客户端：读取 `.env` 里注册的 server 配置，**服务启动时默认连接**（`MCP_ENABLED=true`，stdio 以子进程自动拉起 server）；**连接在启动时建立并保持**，页面开关只决定 MCP 能力是否进入能力目录（转成 LangChain 工具注入 Agent 的开关）。
 
 伪代码：
 
 ```python
 class McpManager:
-    def __init__(self, servers_json="{}", enabled=False):
-        self.servers = parse(servers_json)   # {"mcp-notes": {"url": "http://127.0.0.1:8001/mcp"}}
-        self.enabled = enabled               # 默认关闭
-        self.capabilities: list[dict] = []   # 暴露给页面的能力
+    def __init__(self, servers_json="{}", enabled=True):
+        self.servers = parse(servers_json)   # {"mcp-notes": {"command": "python", "args": ["-m", "app.mcp_server.notes_server"]}}
+        self.enabled = enabled               # 页面开关：是否在能力目录中使用 MCP（默认开启）
+        self.capabilities: list[dict] = []   # 已发现的能力（是否暴露由 registry.list 按 enabled 过滤）
         self.tools_by_id: dict = {}          # cap_id -> LangChain 工具
         self._contexts: dict = {}            # 持有传输上下文，防 GC 关流
 
-    async def enable(self):                  # 页面点选开启
+    async def enable(self):                  # 页面点选开启：仅把能力纳入目录，不重新连接
         self.enabled = True
-        await self.discover()
+        if not self._discovered:
+            await self.discover()            # 仅当启动时未连接（MCP_ENABLED=false）才补连
 
-    def disable(self):                       # 页面点选关闭
+    def disable(self):                       # 页面点选关闭：仅把能力移出目录，连接保持
         self.enabled = False
-        self.capabilities.clear()
-        self.tools_by_id.clear()
 
-    async def discover(self):                # 门卫：开关未开 / 已发现则不执行
-        if not self.enabled or self._discovered:
+    async def discover(self):                # 服务启动时连接（幂等，与开关无关）
+        if self._discovered:
             return
         for name, conf in self.servers.items():
             tools = await self._load_tools(name, conf)   # stdio / streamable http
@@ -178,19 +177,19 @@ async def mcp_toggle(req: McpToggleRequest):
 
 ### 四、前端「MCP 服务」开关与分组（`useCapabilities.ts` + `CapabilitySidebar.vue`）
 
-- 状态：`mcpEnabled` 默认 `false`，`builtinCaps` / `mcpCaps` 按 `source` 分组；
+- 状态：`mcpEnabled` 初始 `false`，`loadMcp()` 从后端 `/api/mcp` 读取（后端默认 `MCP_ENABLED=true`）；`builtinCaps` / `mcpCaps` 按 `source` 分组；
 - 交互：`setMcpEnabled(v)` → `POST /api/mcp` 成功后重新拉能力列表；
-- 展示：侧边栏「MCP 服务」分组有开关——**关闭态**显示「MCP 未启用 — 仅使用内置能力」；**开启态**显示「已连接 mcp-notes · 发现 N 个工具」+ fuchsia「MCP」徽标卡片（可逐个开关/示例/故障注入）；内置能力单列一组，直观对比有无 MCP。
+- 展示：侧边栏「MCP 服务」分组有开关——**开启态**（默认）显示「已连接 mcp-notes · 发现 N 个工具」+ fuchsia「MCP」徽标卡片（可逐个开关/示例/故障注入）；**关闭态**显示「MCP 未启用 — 仅使用内置能力」；内置能力单列一组，直观对比有无 MCP。
 
 ### 五、端到端流程：有无 MCP 的对比
 
-| 阶段 | 无 MCP（默认） | 有 MCP（页面点选开启） |
-|------|---------------|----------------------|
-| 能力目录 | 只有内置能力（计算器/时间/搜索/沙箱…） | 内置能力 + 4 个 `mcp-notes:*`（fuchsia MCP 徽标，独立分组） |
-| 侧边栏 | 「MCP 服务」开关关闭，虚线框提示未启用 | 「已连接 mcp-notes · 发现 4 个工具」 |
-| 对话能力 | 记不了便签 | 发「记一条便签：明天 10 点开会」→ 模型调用 `save_note` → 落盘 `data/mcp-notes.json` |
-| 开关动作 | — | 关闭开关 → MCP 分组消失，回到仅内置能力（不重启） |
-| server 未启动时开启 | — | 能力标「不适配（连接失败）」置灰，其余对话不受影响 |
+| 阶段 | 有 MCP（默认开启） | 无 MCP（页面点选关闭） |
+|------|-------------------|----------------------|
+| 能力目录 | 内置能力 + 4 个 `mcp-notes:*`（fuchsia MCP 徽标，独立分组） | 只有内置能力（计算器/时间/搜索/沙箱…） |
+| 侧边栏 | 「已连接 mcp-notes · 发现 4 个工具」 | 「MCP 服务」开关关闭，虚线框提示未启用 |
+| 对话能力 | 发「记一条便签：明天 10 点开会」→ 模型调用 `save_note` → 落盘 `data/mcp-notes.json` | 记不了便签 |
+| 开关动作 | 关闭开关 → MCP 分组消失，回到仅内置能力（不重启） | 再开启 → 重新连接并发现（不重启） |
+| server 无法拉起 | 能力标「不适配（连接失败）」置灰，其余对话不受影响 | — |
 
 伪代码（前端交互）：
 
@@ -217,13 +216,13 @@ async function setMcpEnabled(v: boolean) {   // 页面开关
 
 | 通用概念 | 本项目实现 |
 |---------|-----------|
-| MCP Server（工具服务进程） | `mcp-notes`（FastMCP + Streamable HTTP，端口 8001，JSON 持久化） |
+| MCP Server（工具服务进程） | `mcp-notes`（FastMCP + stdio，服务启动时以子进程自动拉起，JSON 持久化） |
 | MCP Client（Agent 宿主） | `McpManager`：连接 + `tools/list` 发现 → 能力注册 → 工具注入 |
-| 传输：stdio / Streamable HTTP | 两者均支持；本项目默认 streamable HTTP |
+| 传输：stdio / Streamable HTTP | 两者均支持；本项目默认 stdio |
 | 握手 / 发现 / 调用 | `initialize` → `load_mcp_tools`（内部 `tools/list`）→ `tools/call` |
 | 工具 Schema | `@mcp.tool()` 函数签名自动生成（描述 + 参数 JSON Schema） |
-| 能力目录 / 工具注入 | `registry.list()` 合并 MCP 能力；`registry.tool_for()` 解析 |
-| 开关 / 热插拔 | 默认关；`POST /api/mcp` 开启/关闭，不重启服务 |
+| 能力目录 / 工具注入 | `registry.list()` 按 `mcp.enabled` 合并 MCP 能力；`registry.tool_for()` 解析 |
+| 开关 / 热插拔 | 默认开；连接在服务启动时建立，开关仅控制能力是否入目录，不重启服务 |
 | 连接失败降级 | 标记「不适配（连接失败）」置灰，不影响其它能力 |
 
 ## 收益与边界
@@ -232,12 +231,12 @@ async function setMcpEnabled(v: boolean) {   // 页面开关
 
 - 工具以独立服务存在，与 Agent 解耦，新增/下线能力不改主程序代码；
 - 标准化协议：同一 MCP Server 可被任意支持 MCP 的 Agent 复用；
-- 默认关闭 + 页面点选开启 + 分组展示，能力热插拔直观可见，降级友好（连接失败不影响对话）。
+- 默认开启（服务启动即就绪）+ 页面可关闭 + 分组展示，能力热插拔直观可见，降级友好（连接失败不影响对话）。
 
 **边界**
 
 - 连接管理是进程级：`disable()` 只清空能力与工具映射、允许再次 discover，不显式关闭底层 session（连接由进程生命周期兜底）；
-- 依赖 MCP Server 进程可用：server 未启动时开启开关 → 能力标「不适配」，需先 `uvicorn app.mcp_server.notes_server:app --port 8001`；
+- stdio server 由在线服务以子进程自动拉起，无需手动启动；仅当 server 无法拉起（如模块/依赖缺失）时能力标「不适配」；
 - 本项目是 MCP **Client + Server** 的自证闭环（一个自建 Server 验证全链路），更复杂场景（鉴权、资源/提示词、多 server 管理）可按同一协议扩展。
 
 ## 参考链接

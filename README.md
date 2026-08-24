@@ -44,19 +44,21 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `LLM_API_KEY` | 是 | 阿里云百炼（DashScope）API Key，对话模型 `qwen-plus` |
+| `LLM_API_KEY` | 是 | 阿里云百炼（DashScope）API Key，对话模型 `qwen3.5-flash` |
 | `LLM_BASE_URL` | 否 | 默认 `https://dashscope.aliyuncs.com/api/v1`（DashScope 原生 SDK） |
 | `ENABLE_THINKING` | 否 | 默认 `true`：开启思考，返回 `reasoning_content`（思考）与 `content`（输出）两类结果 |
 | `EMBEDDING_API_KEY` | 否 | RAG / 长期记忆需要（OpenAI 兼容接口，默认与百炼共用 Key） |
 | `EMBEDDING_BASE_URL` | 否 | 默认 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `EMBEDDING_MODEL` | 否 | 默认 `text-embedding-v3` |
 | `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server（本项目自带 `mcp-notes` 便签 server） |
-| `MCP_ENABLED` | 否 | 默认 `false`：只注册不连接；开启请在页面侧边栏「MCP 服务」开关点选（`POST /api/mcp`），无需重启 |
+| `MCP_ENABLED` | 否 | 默认 `true`：服务启动时自动连接并发现已配置的 MCP Server（stdio 以子进程拉起 `mcp-notes`），无需手动启动 |
 
-MCP 便签 server（可选，先在另一终端启动）：
+RAG 向量库数据在**线上前**通过建库脚本预建（在线服务启动时只加载、不现场入库）：
 
 ```bash
-cd backend && uvicorn app.mcp_server.notes_server:app --port 8001
+cd backend
+python scripts/ingest_naive.py     # naive 方案（固定切块 + 纯稠密检索）
+python scripts/ingest_advanced.py  # advanced 方案（语义分块 + 混合检索）
 ```
 
 详见 [docs/deployment.md](docs/deployment.md)。

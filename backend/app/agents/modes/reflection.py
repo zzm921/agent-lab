@@ -74,8 +74,12 @@ def _judge_text(text: str) -> bool:
     return head.startswith("【PASS】") or head.startswith("PASS")
 
 
-def build_reflection_agent(llm, tools, emit, settings, checkpointer=None, harness=None):
-    """构建 reflection 代理：generator ⇄ tools → critic → 条件循环（评审通过/达上限/达轮数上限即结束）。"""
+def build_reflection_agent(generator_llm, critic_llm, tools, emit, settings, checkpointer=None, harness=None):
+    """构建 reflection 代理：generator ⇄ tools → critic → 条件循环（评审通过/达上限/达轮数上限即结束）。
+
+    generator_llm：生成草稿/修订稿（流式，产出 message/revise 事件）；
+    critic_llm：质量评审（严格、低随机，产出 critique 事件）。
+    """
     max_iter = max(1, settings.max_iterations)
     max_steps = max(1, settings.max_steps)
     tool_list = list(tools)
@@ -110,7 +114,7 @@ def build_reflection_agent(llm, tools, emit, settings, checkpointer=None, harnes
 
         # 首稿 → message 事件；修订稿 → revise 事件（前端按修订稿样式展示）
         msg = await stream_model_call(
-            llm, msgs, emit,
+            generator_llm, msgs, emit,
             tools=tool_list,
             system_prompt=base if base else _GENERATOR_SYSTEM,
             output_event="revise" if revising else "message",
@@ -133,7 +137,7 @@ def build_reflection_agent(llm, tools, emit, settings, checkpointer=None, harnes
         draft = state.get("draft") or ""
         # 流式评审：思考 → thinking 事件，评审文本 → critique 增量事件（前端流式展示评审过程）
         msg = await stream_model_call(
-            llm,
+            critic_llm,
             [HumanMessage(f"原始用户问题：{query}\n当前回答草稿：{draft}\n\n请输出评审结论。")],
             emit,
             system_prompt=_CRITIC_SYSTEM,

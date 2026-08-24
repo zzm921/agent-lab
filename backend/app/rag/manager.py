@@ -40,13 +40,16 @@ class RagManager:
         top_k: int = 3,
         llm=None,
         stores: dict[str, StoreBackend] | None = None,
+        scheme_ids: list[str] | None = None,
     ):
         self.settings = settings
         self.embeddings = embeddings
         self.top_k = top_k
         self.llm = llm
         self.schemes: dict[str, RagScheme] = {}
-        for scheme_id in settings.rag_schemes:
+        # 指定方案时只构建这些方案（离线建库按方案独立脚本用）；缺省用 settings.rag_schemes
+        ids = scheme_ids if scheme_ids is not None else settings.rag_schemes
+        for scheme_id in ids:
             if scheme_id not in _SCHEME_REGISTRY:
                 raise ConfigError(f"未知 RAG 方案：{scheme_id}（支持 {list(_SCHEME_REGISTRY)}）")
             store = stores.get(scheme_id) if stores else self._build_store(scheme_id)

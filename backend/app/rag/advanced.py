@@ -5,7 +5,7 @@
 - 入库：句子边界感知 + Embedding 相似度贪心合并（含重叠），保留嵌套规则完整语义；
 - 检索前：Query 重写（LLM Multi-Query，无 LLM 规则回退）扩展查询变体；
 - 检索中：每变体做稠密+稀疏混合召回（Qdrant RRF 融合），多路宽召回后去重合并；
-- 检索后：交叉编码器（gte-rerank）精排，把真正相关的片段顶到前面。
+- 检索后：交叉编码器（qwen3-rerank）精排，把真正相关的片段顶到前面。
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class AdvancedRagScheme(RagScheme):
         top_k: int = 3,
         llm=None,
         rewrite_variants: int = 3,
-        rerank_model: str = "gte-rerank",
+        rerank_model: str = "qwen3-rerank",
         rewriter: QueryRewriter | None = None,
         reranker: Reranker | None = None,
     ):

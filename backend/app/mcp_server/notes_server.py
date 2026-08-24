@@ -1,13 +1,12 @@
-"""MCP Server：mcp-notes 便签服务（Streamable HTTP 传输）。
+"""MCP Server：mcp-notes 便签服务（默认 stdio 传输，由在线服务启动时自动拉起）。
 
 提供 save_note / list_notes / get_note / delete_note 四个工具，
 数据以 JSON 文件持久化（默认 backend/data/mcp-notes.json，可用 MCP_NOTES_FILE 覆盖）。
 
-启动：
-    uvicorn app.mcp_server.notes_server:app --port 8001
+默认启动方式（stdio，在线服务以子进程自动拉起，无需手动启动）：
+    MCP_SERVERS={"mcp-notes": {"command": "python", "args": ["-m", "app.mcp_server.notes_server"]}}
 
-后端发现（页面「MCP 服务」开关开启后）：
-    MCP_SERVERS={"mcp-notes": {"url": "http://127.0.0.1:8001/mcp"}}
+需要独立 HTTP 部署时仍可用：uvicorn app.mcp_server.notes_server:app --port 8001
 """
 from __future__ import annotations
 
@@ -133,6 +132,4 @@ app = mcp.streamable_http_app()
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    mcp.run()  # 默认 stdio 传输：在线服务以子进程 `python -m app.mcp_server.notes_server` 拉起

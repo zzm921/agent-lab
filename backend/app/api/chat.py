@@ -11,8 +11,7 @@ from app.capabilities.registry import CapabilityRegistry
 from app.config import settings
 from app.core.errors import ConfigError
 from app.core.rate_limit import DailyQuota
-from app.llm.client import create_chat_model, create_embeddings
-from app.memory.corpus import KNOWLEDGE_CORPUS
+from app.llm.client import create_chat_model, create_embeddings, llm_service
 from app.memory.session_store import SessionStore
 from app.rag.manager import RagManager
 from app.schemas import ApproveRequest, FaultRequest, McpToggleRequest, StopRequest, StreamRequest
@@ -37,7 +36,8 @@ _QUOTA: DailyQuota | None = None
 def _build_embeddings_and_rag():
     """构建 Embedding 与多 RAG 方案管理器；未配 Embedding Key 时二者均为 None。
 
-    配了 Qdrant 时每个方案一个独立集合并灌入同一份语料；未配/连接失败回退内存存储。
+    向量库数据在线上前由 scripts/ingest_naive.py / scripts/ingest_advanced.py 预建，
+    本函数只构建各方案的 store（加载已建好的集合），不做现场入库，保证能力加载快速。
     advanced 方案的 Query 重写需要聊天模型：未配聊天 Key 时 llm 为 None，
     方案自动回退规则化重写（保证仅 Embedding 也能跑通）。
     """
@@ -47,11 +47,10 @@ def _build_embeddings_and_rag():
         return None, None
     llm = None
     try:
-        llm = create_chat_model(fake=False)
+        llm = create_chat_model(fake=False, scenario="rag_rewrite")  # advanced 重写专用场景
     except ConfigError:
         llm = None  # 未配聊天 Key：advanced 用规则重写
     rag = RagManager(settings, embeddings, top_k=settings.rag_top_k, llm=llm)
-    rag.ingest_all(KNOWLEDGE_CORPUS)
     return embeddings, rag
 
 
@@ -75,8 +74,8 @@ def get_registry() -> CapabilityRegistry:
 
 def get_runner() -> AgentRunner:
     if _RUNTIME["runner"] is None:
-        llm = create_chat_model(fake=False)  # 未配百炼 API Key 时抛 ConfigError
-        _RUNTIME["runner"] = AgentRunner(settings, llm, get_registry(), get_sessions())
+        # 传入全局 LLMService：runner 按模式场景（chat/planner/critic）取不同模型与参数
+        _RUNTIME["runner"] = AgentRunner(settings, llm_service, get_registry(), get_sessions())
     return _RUNTIME["runner"]
 
 
@@ -136,20 +135,24 @@ async def list_capabilities():
 
 @router.get("/mcp")
 async def mcp_status():
-    """MCP 开关状态：enabled + 已注册 server + 已发现能力。"""
+    """MCP 开关状态：enabled（是否在能力目录中使用）+ 已注册 server + 当前暴露的能力。"""
     mcp = get_registry().mcp
-    return {"enabled": mcp.enabled, "servers": list(mcp.servers.keys()), "capabilities": mcp.capabilities}
+    return {
+        "enabled": mcp.enabled,
+        "servers": list(mcp.servers.keys()),
+        "capabilities": mcp.capabilities if mcp.enabled else [],
+    }
 
 
 @router.post("/mcp")
 async def mcp_toggle(req: McpToggleRequest):
-    """页面点选开启/关闭 MCP 服务：开启即连接注册的 server 并发现工具，关闭清空能力。"""
+    """页面点选开启/关闭 MCP 能力：仅控制能力是否进入目录（服务连接在启动时已建立）。"""
     mcp = get_registry().mcp
     if req.enabled and not mcp.enabled:
         await mcp.enable()
     elif not req.enabled and mcp.enabled:
         mcp.disable()
-    return {"enabled": mcp.enabled, "capabilities": mcp.capabilities}
+    return {"enabled": mcp.enabled, "capabilities": mcp.capabilities if mcp.enabled else []}
 
 
 @router.post("/stream")

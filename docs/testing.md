@@ -134,7 +134,7 @@ npm run test
 
 ## 5. 冒烟验证（无真实 Key 环境）
 
-- `GET /api/health` → 200，`{"status":"ok","model":"qwen-plus","mcp_configured":false,"embedding_configured":false}`
+- `GET /api/health` → 200，`{"status":"ok","model":"qwen3.5-flash","mcp_configured":false,"embedding_configured":false}`
 - `GET /api/capabilities` → 内置能力可用；rag/memory 因缺 Embedding Key 标记 `unavailable`（含原因）
 - `GET /` → 200 返回前端构建页面
 - `GET /api/source/react` → 200 返回后端真实源码

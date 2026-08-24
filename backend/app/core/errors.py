@@ -19,3 +19,28 @@ class RetryableToolError(ToolError):
 
 class ConfigError(Exception):
     """配置缺失或错误（如缺少 API Key）。"""
+
+
+class LLMError(Exception):
+    """LLM 调用失败：带场景/模型/参数/方法上下文，便于定位具体实例。
+
+    LoggedChatModel 把底层供应商异常统一包装为本异常，并保留 cause。
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        scenario: str = "",
+        model: str = "",
+        params: dict | None = None,
+        method: str = "",
+        cause: Exception | None = None,
+    ):
+        self.scenario = scenario
+        self.model = model
+        self.params = params or {}
+        self.method = method
+        self.cause = cause
+        detail = message or (f"{type(cause).__name__}: {cause}" if cause else "未知错误")
+        super().__init__(f"[LLM {scenario}/{model}] {method or 'call'} 失败：{detail}")

@@ -18,6 +18,7 @@ from app.agents.modes.plan_execute import build_plan_execute_agent
 from app.agents.modes.react import build_react_agent
 from app.agents.modes.reflection import build_reflection_agent
 from app.agents.tools_builder import build_tools
+from app.llm.service import LLMService
 
 STRATEGY_PROMPTS = {
     "standard": "你是专业的 AI 助手，请直接、准确地回答用户的问题。",
@@ -44,22 +45,29 @@ class AgentRunner:
     def __init__(self, settings, llm, registry, session_store):
         self.harness = AgentHarness(settings)  # 护栏层：审批策略/资源上限/止损/统计
         self.settings = settings
-        self.llm = llm
+        self.llm = llm  # 单模型路径（测试注入 Fake 等）时所有场景共用
+        self.llm_service = llm if isinstance(llm, LLMService) else None  # 按场景取模型的路径
         self.registry = registry
         self.sessions = session_store
         self._configs: dict[str, dict] = {}
         self._specs: dict[str, tuple] = {}
 
+    def _scenario_llm(self, scenario: str):
+        """取指定场景的模型：有 LLMService 走场景配置，否则回退单模型。"""
+        if self.llm_service is not None:
+            return self.llm_service.get(scenario)
+        return self.llm
+
     def _build_graph(self, mode, tools, emit):
         checkpointer = self.sessions.checkpointer
         if mode == "react":
-            return build_react_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
+            return build_react_agent(self._scenario_llm("chat"), tools, emit, self.settings, checkpointer, self.harness)
         if mode == "plan_execute":
-            return build_plan_execute_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
+            return build_plan_execute_agent(self._scenario_llm("planner"), self._scenario_llm("chat"), tools, emit, self.settings, checkpointer, self.harness)
         if mode == "reflection":
-            return build_reflection_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
+            return build_reflection_agent(self._scenario_llm("chat"), self._scenario_llm("critic"), tools, emit, self.settings, checkpointer, self.harness)
         if mode == "multi_agent":
-            return build_multi_agent_agent(self.llm, tools, emit, self.settings, checkpointer, self.harness)
+            return build_multi_agent_agent(self._scenario_llm("chat"), tools, emit, self.settings, checkpointer, self.harness)
         raise ValueError(f"未知模式：{mode}")
 
     def _config(self, session_id, approval_policy, strategy):
@@ -118,7 +126,6 @@ class AgentRunner:
         # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
         tool_count = self.harness.new_tool_counter(session_id)
         emit = self._make_emit(queue, tool_count)
-
         tools = build_tools(self.registry, enabled, session_id, emit)
         try:
             graph = self._build_graph(mode, tools, emit)

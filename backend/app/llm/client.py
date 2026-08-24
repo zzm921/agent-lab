@@ -1,28 +1,29 @@
-"""大模型工厂：阿里云百炼（DashScope 原生 SDK）Chat + Embedding，测试时注入 Fake。"""
+"""大模型工厂：基于 LLMService 按业务场景构建 ChatModel，保留兼容入口。
+
+- llm_service：全局 LLMService 单例（默认场景配置见 service.DEFAULT_PROFILES）；
+- create_chat_model(fake, scenario)：按场景取 ChatModel（含日志/错误包装）；
+- create_embeddings(fake)：Embedding 模型（RAG / 长期记忆，OpenAI 兼容接口）。
+"""
 from app.config import settings
 from app.core.errors import ConfigError
-from app.llm.dashscope_chat import DashScopeChatModel
 from app.llm.dashscope_embeddings import DashScopeEmbeddings
-from app.llm.fake_model import FakeChatModel, FakeEmbeddings
+from app.llm.fake_model import FakeEmbeddings
+from app.llm.service import DEFAULT_PROFILES, LLMService
+
+# 全局 LLM 服务单例：构建时仅注册供应商与场景配置，不联网；实例在首次 get() 时惰性创建
+llm_service = LLMService(profiles=DEFAULT_PROFILES)
 
 
-def create_chat_model(fake: bool = False):
-    """构建 DashScope ChatModel（官方 SDK）；fake=True 时返回 FakeChatModel。"""
-    if fake:
-        return FakeChatModel()
-    if not settings.llm_api_key:
-        raise ConfigError("未配置 LLM_API_KEY（阿里云百炼 DashScope API Key），请在 backend/.env 中设置后重启服务")
-    return DashScopeChatModel(
-        model_name=settings.chat_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        temperature=0.3,
-        enable_thinking=settings.enable_thinking,
-    )
+def create_chat_model(fake: bool = False, scenario: str = "chat"):
+    """按场景构建 ChatModel；fake=True 返回 Fake 场景（测试/离线用）。
+
+    未配 LLM_API_KEY 时抛 ConfigError（由调用方决定是否回退规则实现）。
+    """
+    return llm_service.get("fake" if fake else scenario)
 
 
 def create_embeddings(fake: bool = False):
-    """构建 Embedding 模型；fake=True 时返回 FakeEmbeddings。"""
+    """构建 Embedding 模型；fake=True 返回 FakeEmbeddings。"""
     if fake:
         return FakeEmbeddings()
     if not settings.embedding_api_key:

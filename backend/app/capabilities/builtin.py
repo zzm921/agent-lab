@@ -36,14 +36,6 @@ BUILTIN_CAPABILITIES = [
         "desc": "在隔离沙箱中执行系统命令；无论审批策略如何，每次执行前都强制人工审批（HITL）。",
         "example": "帮我在沙箱里查看当前目录有哪些文件",
         "code_key": "run_command",
-    },
-    # {
-    #     "id": "memory",
-    #     "name": "长期记忆",
-    #     "source": "builtin",
-    #     "requires": "embedding",
-    #     "desc": "跨轮次记住关键事实，后续对话按语义召回。",
-    #     "example": "记住我叫小明，正在做 AI Agent 项目；下一轮再问我叫什么",
-    #     "code_key": "memory",
-    # },
+    }
+  
 ]

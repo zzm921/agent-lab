@@ -1,0 +1,271 @@
+"""独立 LLM 服务模块：按业务场景统一管理模型与参数。
+
+- LLMProfile：单个场景的配置（供应商 / 模型 / 生成参数 / 可覆盖的 Key 与地址）；
+- LLMService：统一入口——按场景注册供应商（扩展新模型）、配置与动态调整场景参数、
+  惰性构建并缓存实例；get(scenario) 返回已绑定该场景参数的模型；
+- LoggedChatModel：对底层模型做日志 + 错误包装，记录每次调用的
+  场景 / 模型 / 参数 / 延迟 / 是否成功 / 错误，异常统一包装为 LLMError。
+
+新增模型只需 register_provider(name, builder)；调整某场景参数只需 update_profile。
+"""
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Callable, Iterable
+
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessageChunk, BaseMessageChunk
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from pydantic import BaseModel, Field, PrivateAttr
+
+from app.config import settings
+from app.core.errors import ConfigError, LLMError
+from app.llm.dashscope_chat import DashScopeChatModel
+from app.llm.fake_model import FakeChatModel
+
+logger = logging.getLogger(__name__)
+
+
+class LLMProfile(BaseModel):
+    """单个业务场景的 LLM 配置。"""
+
+    scenario: str = Field(description="业务场景名，如 chat / planner / critic / rag_rewrite")
+    provider: str = Field(default="dashscope", description="模型供应商（须已注册）")
+    model: str = Field(default="", description="模型名；留空回退全局 settings.chat_model")
+    params: dict[str, Any] = Field(default_factory=dict, description="生成参数：temperature / max_tokens / top_p / enable_thinking 等")
+    api_key: str = Field(default="", description="本场景专属 API Key；留空回退全局")
+    base_url: str = Field(default="", description="本场景专属服务地址；留空回退全局")
+
+
+# 默认场景配置：按业务区分模型与参数（可通过 update_profile 动态调整）
+DEFAULT_PROFILES: list[dict[str, Any]] = [
+    {
+        "scenario": "chat",  # 主对话 Agent（react / plan_execute 执行 / multi_agent）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.7, "enable_thinking": True},
+    },
+    {
+        "scenario": "planner",  # plan_execute 的任务规划/重规划：低随机性，输出精炼
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 300, "enable_thinking": True},
+    },
+    {
+        "scenario": "critic",  # reflection 评审：严格、确定性
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_rewrite",  # advanced RAG Query 重写：低随机 + 输出长度受限
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.3, "max_tokens": 200, "enable_thinking": False},
+    },
+    {
+        "scenario": "fake",  # 测试 / 无 Key 回退
+        "provider": "fake",
+        "model": "fake-chat",
+        "params": {},
+    },
+]
+
+
+def _build_dashscope(profile: LLMProfile) -> BaseChatModel:
+    """DashScope 供应商：从 profile 读取，未配置项回退全局 settings。"""
+    if not profile.api_key and not settings.llm_api_key:
+        raise ConfigError("未配置 LLM_API_KEY（阿里云百炼 DashScope API Key），请在 backend/.env 中设置后重启服务")
+    return DashScopeChatModel(
+        model_name=profile.model or settings.chat_model,
+        api_key=profile.api_key or settings.llm_api_key,
+        base_url=profile.base_url or settings.llm_base_url,
+        temperature=0.3,  # 默认；profile.params 经 bind 覆盖
+        enable_thinking=settings.enable_thinking,
+    )
+
+
+def _build_fake(profile: LLMProfile) -> BaseChatModel:
+    """Fake 供应商：确定性输出，供测试 / 离线回退。"""
+    return FakeChatModel(model_name=profile.model or "fake-chat")
+
+
+class LoggedChatModel(BaseChatModel):
+    """带日志与错误包装的聊天模型：委托真实模型，记录调用过程并统一异常。"""
+
+    scenario: str = "default"
+    params: dict[str, Any] = Field(default_factory=dict)
+    model_name: str = ""
+
+    _inner: Any = PrivateAttr(default=None)
+
+    def __init__(
+        self,
+        inner: BaseChatModel,
+        scenario: str = "default",
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(
+            model_name=getattr(inner, "model_name", "") or "",
+            scenario=scenario,
+            params=dict(params or {}),
+            **kwargs,
+        )
+        self._inner = inner
+
+    @property
+    def _llm_type(self) -> str:
+        return getattr(self._inner, "_llm_type", "logged-chat")
+
+    def _log_start(self, method: str) -> None:
+        logger.info(
+            "[llm:%s] %s 开始 model=%s params=%s",
+            self.scenario,
+            method,
+            self.model_name,
+            self.params,
+        )
+
+    def _wrap_error(self, exc: Exception, method: str) -> LLMError:
+        logger.error(
+            "[llm:%s] %s 失败 model=%s params=%s: %s",
+            self.scenario,
+            method,
+            self.model_name,
+            self.params,
+            exc,
+            exc_info=True,
+        )
+        return LLMError(scenario=self.scenario, model=self.model_name, params=self.params, method=method, cause=exc)
+
+    def bind(self, **kwargs: Any) -> "LoggedChatModel":
+        """把附加参数绑定到底层模型并保持包装（保留日志/错误能力）。"""
+        return LoggedChatModel(inner=self._inner.bind(**kwargs), scenario=self.scenario, params=self.params)
+
+    def bind_tools(self, tools, *, tool_choice: str | None = None, **kwargs: Any) -> "LoggedChatModel":
+        """把工具绑定到底层模型并保持包装。"""
+        return LoggedChatModel(
+            inner=self._inner.bind_tools(tools, tool_choice=tool_choice, **kwargs),
+            scenario=self.scenario,
+            params=self.params,
+        )
+
+    # ---- 同步调用：委托底层私有方法（_generate/_stream 契约稳定，不受公开层包装影响）----
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        self._log_start("invoke")
+        start = time.perf_counter()
+        try:
+            result = self._inner._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — 统一包装为 LLMError
+            raise self._wrap_error(exc, "invoke") from exc
+        logger.info("[llm:%s] invoke 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
+        return result
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        self._log_start("stream")
+        start = time.perf_counter()
+        try:
+            # 公开 stream() 已按 _should_stream 分流：流式模型逐块产出，非流式回退整条消息；
+            # 统一转成 ChatGenerationChunk（整条消息需转成 AIMessageChunk）。
+            for chunk in self._inner.stream(messages, stop=stop, **kwargs):
+                if not isinstance(chunk, BaseMessageChunk):
+                    chunk = AIMessageChunk(**chunk.model_dump(exclude={"type"}))
+                yield ChatGenerationChunk(message=chunk)
+        except Exception as exc:  # noqa: BLE001
+            raise self._wrap_error(exc, "stream") from exc
+        logger.info("[llm:%s] stream 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
+
+    # ---- 异步调用 ----
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        self._log_start("ainvoke")
+        start = time.perf_counter()
+        try:
+            result = await self._inner._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            raise self._wrap_error(exc, "ainvoke") from exc
+        logger.info("[llm:%s] ainvoke 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
+        return result
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        self._log_start("astream")
+        start = time.perf_counter()
+        try:
+            async for chunk in self._inner.astream(messages, stop=stop, **kwargs):
+                if not isinstance(chunk, BaseMessageChunk):
+                    chunk = AIMessageChunk(**chunk.model_dump(exclude={"type"}))
+                yield ChatGenerationChunk(message=chunk)
+        except Exception as exc:  # noqa: BLE001
+            raise self._wrap_error(exc, "astream") from exc
+        logger.info("[llm:%s] astream 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
+
+
+class LLMService:
+    """LLM 统一服务：供应商注册 + 场景配置 + 实例构建与缓存。"""
+
+    def __init__(self, profiles: Iterable[LLMProfile | dict] | None = None):
+        self._providers: dict[str, Callable[[LLMProfile], BaseChatModel]] = {}
+        self._profiles: dict[str, LLMProfile] = {}
+        self._cache: dict[str, BaseChatModel] = {}
+        self.register_provider("dashscope", _build_dashscope)
+        self.register_provider("fake", _build_fake)
+        for profile in profiles if profiles is not None else DEFAULT_PROFILES:
+            self.set_profile(profile)
+
+    def register_provider(self, name: str, builder: Callable[[LLMProfile], BaseChatModel]) -> None:
+        """注册一个模型供应商（builder：profile → 模型实例），便于扩展新模型。"""
+        self._providers[name] = builder
+
+    def set_profile(self, profile: LLMProfile | dict) -> LLMProfile:
+        """新增/覆盖一个场景配置；旧实例失效（下次 get 重建）。"""
+        p = profile if isinstance(profile, LLMProfile) else LLMProfile(**profile)
+        self._profiles[p.scenario] = p
+        self._cache.pop(p.scenario, None)
+        return p
+
+    def update_profile(self, scenario: str, **fields: Any) -> LLMProfile:
+        """动态调整某场景的配置（如 temperature / model / params），立即生效。"""
+        if scenario not in self._profiles:
+            raise LLMError(f"未注册的 LLM 场景：{scenario}（可用：{sorted(self._profiles)}）")
+        merged = self._profiles[scenario].model_copy(update=fields)
+        self._profiles[scenario] = merged
+        self._cache.pop(scenario, None)
+        return merged
+
+    def get(self, scenario: str) -> BaseChatModel:
+        """按场景构建（并缓存）模型实例：已绑定该场景参数，套日志/错误包装。"""
+        cached = self._cache.get(scenario)
+        if cached is not None:
+            return cached
+        profile = self._profiles.get(scenario)
+        if profile is None:
+            raise LLMError(f"未注册的 LLM 场景：{scenario}（可用：{sorted(self._profiles)}）")
+        builder = self._providers.get(profile.provider)
+        if builder is None:
+            raise LLMError(f"未注册的 LLM 供应商：{profile.provider}（可用：{sorted(self._providers)}）")
+        model = builder(profile)
+        if profile.params:
+            model = model.bind(**profile.params)
+        wrapped = LoggedChatModel(inner=model, scenario=scenario, params=dict(profile.params))
+        self._cache[scenario] = wrapped
+        return wrapped
+
+    def clear(self, scenario: str | None = None) -> None:
+        """清空实例缓存：scenario 为空则全部重建。"""
+        if scenario is None:
+            self._cache.clear()
+        else:
+            self._cache.pop(scenario, None)
+
+    def list(self) -> list[dict[str, Any]]:
+        """返回全部场景配置（供调试 / 展示）。"""
+        return [
+            {
+                "scenario": p.scenario,
+                "provider": p.provider,
+                "model": p.model or settings.chat_model,
+                "params": dict(p.params),
+            }
+            for p in self._profiles.values()
+        ]
