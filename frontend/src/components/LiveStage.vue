@@ -160,7 +160,7 @@ const RETRIEVE_KIND: Record<string, string> = {
             v-else-if="s.kind === 'retrieve'"
             class="mt-1.5 text-slate-500"
           >
-            未检索到相关内容（相关度低于阈值已过滤，本轮不注入知识库上下文）
+            未检索到相关内容（本轮不注入知识库上下文）
           </p>
         </section>
 

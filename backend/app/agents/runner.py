@@ -141,13 +141,11 @@ class AgentRunner:
         yield {"type": "meta", "session_id": session_id, "mode": mode, "capabilities": enabled, "rag_scheme": rag_scheme, "rag_enabled": rag_enabled}
         # RAG 前置检索：启用 rag 能力时按选定方案自动召回并注入上下文（不依赖模型调用工具）。
         # 需总开关开启（rag_manager 非 None）且本轮请求开启（rag_enabled=True）才执行。
-        # 命中按最小相关度阈值（settings.rag_min_score）过滤：低于阈值丢弃，全部被丢弃则
-        # 不注入上下文（rag_context=None），避免无关内容污染答案。
         rag_context = None
         if self.registry.rag_manager is not None and rag_enabled:
             scheme = self.registry.rag_manager.resolve(rag_scheme)
             result = scheme.retrieve_full(message, self.settings.rag_top_k)
-            hits = [h for h in result.hits if h.get("score", 0) >= self.settings.rag_min_score]
+            hits = result.hits
             emit(
                 {
                     "type": "retrieve",

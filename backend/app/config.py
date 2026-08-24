@@ -39,9 +39,6 @@ class Settings(BaseSettings):
     # 知识库检索（RAG）总开关：默认开启（项目约定：能力后端默认就绪），
     # 每轮是否真正检索由请求/前端开关（rag_enabled）控制；设为 false 可整体关闭
     rag_enabled: bool = True
-    # 最小相关度阈值：命中相似度低于该值直接丢弃（不注入上下文）；全部被丢弃则本轮不注入。
-    # naive 为 cosine、advanced 为 rerank 归一分数，均落在 [0,1]。
-    rag_min_score: float = 0.6
     # Advanced 方案：Query 重写生成的查询变体数（LLM Multi-Query）与重排模型
     rag_rewrite_variants: int = 3
     rag_rerank_model: str = "qwen3-rerank"

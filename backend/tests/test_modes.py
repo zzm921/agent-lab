@@ -404,9 +404,6 @@ async def test_unknown_mode(settings, registry, sessions):
 
 async def test_rag_enabled_auto_retrieves(settings, registry, sessions):
     """RAG 作为独立检索阶段：启用 rag 后自动召回并产 retrieve 事件，不产生工具调用。"""
-    # 固定语料与 FakeEmbeddings 的 cosine 可能低于生产阈值 0.6，此处显式放宽阈值，
-    # 专注验证「启用即检索并注入」链路；阈值过滤行为由 test_rag_min_score_filters 覆盖。
-    settings = make_settings(rag_min_score=0.0)
     registry.rag_manager.ingest_all(["LangGraph 基于 StateGraph 构建有状态、多步骤的 AI Agent。"])
     script = [AIMessage(content="（基于知识库回答）")]
     runner = await _runner_with(registry, sessions, settings, script)
@@ -419,24 +416,6 @@ async def test_rag_enabled_auto_retrieves(settings, registry, sessions):
     # RAG 不再进入工具集：无工具调用事件
     assert not any(e["type"] == "tool_start" for e in events)
     assert any(e["type"] == "message" for e in events)
-
-
-async def test_rag_min_score_filters_low_scores(settings, registry, sessions):
-    """最小相关度阈值（rag_min_score）：低相关命中被过滤，全部低于阈值则不注入上下文。"""
-    # 高分语料（与查询完全一致，FakeEmbeddings cosine = 1.0）应保留
-    registry.rag_manager.ingest_all(["测试任务"])
-    script = [AIMessage(content="（基于知识库回答）")]
-    runner = await _runner_with(registry, sessions, settings, script)
-    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive", rag_enabled=True)
-    retrieve = next((e for e in events if e["type"] == "retrieve"), None)
-    assert retrieve is not None and retrieve["hits"], "高相关命中不应被阈值过滤"
-    assert retrieve["hits"][0]["score"] >= settings.rag_min_score
-
-    # 低分语料（与查询完全无关，cosine < 0.6）应被过滤为空，且不注入上下文
-    registry.rag_manager.ingest_all(["公司考勤制度要求所有员工在岗打卡。"])
-    events = await collect_stream(runner, mode="react", enabled=["rag"], rag_scheme="naive", rag_enabled=True)
-    retrieve = next((e for e in events if e["type"] == "retrieve"), None)
-    assert retrieve is not None and retrieve["hits"] == [], "低相关命中应被阈值过滤为空"
 
 
 async def test_rag_enabled_default_scheme_fallback(settings, registry, sessions):
