@@ -26,9 +26,39 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 
 const RETRIEVE_KIND: Record<string, string> = {
   rewrite: 'Query 重写',
+  classify: '语义路由',
+  decompose: 'Query 分解',
+  multi_hop_plan: '多跳规划',
+  multi_hop: '多跳检索',
+  multi_hop_verify: '多跳验证',
+  compress: '上下文压缩',
   retrieve: '知识库检索',
   memory_read: '记忆召回',
   memory_write: '记忆写入',
+}
+
+// 路由决策各维度的中文展示与配色（modular 五维）
+const COMPLEXITY_LABEL: Record<string, string> = {
+  simple: '简单（单次检索）',
+  rewrite: '改写后检索',
+  decompose: '分解后检索',
+  multihop: '多跳（规划-执行-验证）',
+}
+const COMPLEXITY_CLS: Record<string, string> = {
+  simple: 'bg-slate-500/20 text-slate-200',
+  rewrite: 'bg-amber-500/20 text-amber-200',
+  decompose: 'bg-violet-500/20 text-violet-200',
+  multihop: 'bg-rose-500/20 text-rose-200',
+}
+const MODE_LABEL: Record<string, string> = {
+  vector: '向量检索',
+  hybrid: '混合检索',
+  multi_recall: '多路召回',
+}
+const GEN_LABEL: Record<string, string> = {
+  direct: '直接回答',
+  citation: '引用回答',
+  comparison: '对比回答',
 }
 </script>
 
@@ -111,6 +141,261 @@ const RETRIEVE_KIND: Record<string, string> = {
             :current-step="s.currentStep ?? 0"
             :status="s.planStatus ?? 'pending'"
           />
+        </section>
+
+        <!-- 语义路由（modular：五维路由决策 → 执行计划编排） -->
+        <section v-else-if="s.kind === 'classify'" class="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-indigo-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-normal text-indigo-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div class="mt-2 flex flex-wrap items-center gap-1.5">
+            <!-- retrieval_need=false 时 complexity/retrieval_mode/generation_mode 只是占位值（vector/simple/direct），不展示避免与"不检索"矛盾 -->
+            <span
+              v-if="s.complexity && s.retrieval_need !== false"
+              class="rounded px-1.5 py-0.5"
+              :class="COMPLEXITY_CLS[s.complexity] ?? 'bg-slate-800 text-slate-300'"
+            >
+              {{ COMPLEXITY_LABEL[s.complexity] ?? s.complexity }}
+            </span>
+            <span
+              v-if="s.retrieval_mode && s.retrieval_need !== false"
+              class="rounded bg-cyan-500/10 px-1.5 py-0.5 text-cyan-200"
+            >
+              检索：{{ MODE_LABEL[s.retrieval_mode] ?? s.retrieval_mode }}
+            </span>
+            <span
+              v-if="s.generation_mode && s.retrieval_need !== false"
+              class="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200"
+            >
+              生成：{{ GEN_LABEL[s.generation_mode] ?? s.generation_mode }}
+            </span>
+            <span
+              v-if="s.retrieval_need === false"
+              class="rounded bg-slate-600/30 px-1.5 py-0.5 text-slate-300"
+            >
+              不检索（直接回答）
+            </span>
+            <span v-if="typeof s.confidence === 'number'" class="text-slate-500">
+              置信度 {{ (s.confidence * 100).toFixed(0) }}%
+            </span>
+          </div>
+          <p v-if="s.reason" class="mt-1.5 text-slate-500">{{ s.reason }}</p>
+        </section>
+
+        <!-- Query 分解结果（modular：复杂对比/多实体问题的子查询） -->
+        <section v-else-if="s.kind === 'decompose'" class="rounded-xl border border-violet-500/20 bg-violet-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-violet-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-normal text-violet-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div class="mt-2 flex flex-wrap items-center gap-1.5">
+            <span
+              v-for="(q, qi) in s.sub_queries"
+              :key="qi"
+              class="rounded bg-violet-500/10 px-1.5 py-0.5 text-violet-200"
+            >
+              {{ q }}
+            </span>
+          </div>
+        </section>
+
+        <!-- 多跳规划（modular：规划-执行-验证的规划阶段，目标/依赖/可预判实体） -->
+        <section v-else-if="s.kind === 'multi_hop_plan'" class="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-rose-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-normal text-rose-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div v-if="s.plan?.steps?.length" class="mt-2 space-y-1.5">
+            <div
+              v-for="(st, si) in s.plan.steps"
+              :key="si"
+              class="flex flex-wrap items-center gap-1.5 rounded-lg bg-black/20 p-2"
+            >
+              <span class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200">{{ st.target }}</span>
+              <span class="text-slate-300">{{ st.query }}</span>
+              <span
+                v-if="st.depends_on?.length"
+                class="text-[11px] text-slate-500"
+                title="依赖的先前目标"
+              >
+                ← {{ st.depends_on.join('、') }}
+              </span>
+              <span
+                v-if="st.entity"
+                class="rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200/80"
+                title="可预判实体：若已被证据覆盖则该步复用跳过"
+              >
+                预判 {{ st.entity }}
+              </span>
+              <span
+                v-if="st.status === 'covered'"
+                class="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-200"
+              >
+                已覆盖（复用跳过）
+              </span>
+              <span
+                v-else-if="st.status === 'unexecuted'"
+                class="rounded bg-slate-600/30 px-1.5 py-0.5 text-[11px] text-slate-400"
+              >
+                超预算未执行
+              </span>
+            </div>
+            <p v-if="s.plan.reason" class="text-slate-500">{{ s.plan.reason }}</p>
+          </div>
+          <p v-else class="mt-1.5 text-slate-500">本轮未产生多跳计划</p>
+        </section>
+
+        <!-- 多跳迭代检索（modular：逐跳子查询 + 命中，多轮召回拼出中间环节） -->
+        <section v-else-if="s.kind === 'multi_hop'" class="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-rose-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-normal text-rose-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div v-if="s.hops?.length" class="mt-2 space-y-3">
+            <div
+              v-for="(hop, hi) in s.hops"
+              :key="hi"
+              class="border-l-2 border-rose-500/30 pl-3"
+            >
+              <p class="font-medium text-rose-300">
+                第 {{ hi + 1 }} 跳：{{ hop.query }}
+                <span v-if="hop.target" class="ml-1 font-normal text-rose-300/70">
+                  （目标：{{ hop.target }}）
+                </span>
+                <span
+                  v-if="hop.skipped"
+                  class="ml-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-normal text-emerald-300"
+                  title="该步目标已被既有证据覆盖，复用跳过（不重复检索）"
+                >
+                  已覆盖，跳过
+                </span>
+                <span v-if="hop.next_query" class="ml-1 font-normal text-rose-300/70">
+                  → 续查：{{ hop.next_query }}
+                </span>
+              </p>
+              <ul v-if="hop.hits.length" class="mt-1.5 space-y-1.5">
+                <li v-for="(h, i) in hop.hits" :key="i" class="rounded-lg bg-black/20 p-2">
+                  <p class="text-slate-300">{{ h.text }}</p>
+                  <p class="mt-0.5 text-[11px] text-cyan-400/80">
+                    相关度 {{ typeof h.score === 'number' ? h.score.toFixed(3) : h.score }}
+                  </p>
+                </li>
+              </ul>
+              <p v-else class="mt-1.5 text-slate-500">该跳未召回相关内容</p>
+            </div>
+          </div>
+          <p v-else class="mt-1.5 text-slate-500">本轮多跳检索未产生逐跳记录</p>
+        </section>
+
+        <!-- 多跳验证（modular：规划-执行-验证的验证阶段，质量闸门：覆盖对表 + 补缺子查询） -->
+        <section v-else-if="s.kind === 'multi_hop_verify'" class="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-rose-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-normal text-rose-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div v-if="s.verification" class="mt-2 space-y-2">
+            <p class="flex flex-wrap items-center gap-1.5">
+              <span class="text-slate-500">已覆盖：</span>
+              <template v-if="s.verification.covered?.length">
+                <span
+                  v-for="(c, ci) in s.verification.covered"
+                  :key="ci"
+                  class="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200"
+                >
+                  {{ c }}
+                </span>
+              </template>
+              <span v-else class="text-slate-600">—</span>
+            </p>
+            <p class="flex flex-wrap items-center gap-1.5">
+              <span class="text-slate-500">缺口：</span>
+              <template v-if="s.verification.missing?.length">
+                <span
+                  v-for="(m, mi) in s.verification.missing"
+                  :key="mi"
+                  class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200"
+                >
+                  {{ m }}
+                </span>
+              </template>
+              <span v-else class="text-slate-600">—</span>
+            </p>
+            <div v-if="s.verification.patched?.length" class="space-y-1.5">
+              <p class="text-slate-500">补缺子查询（局部修正）：</p>
+              <div
+                v-for="(p, pi) in s.verification.patched"
+                :key="pi"
+                class="rounded-lg bg-black/20 p-2"
+              >
+                <span v-if="p.target" class="mr-1.5 rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200">
+                  {{ p.target }}
+                </span>
+                <span class="text-slate-300">{{ p.query }}</span>
+              </div>
+            </div>
+          </div>
+          <p v-else class="mt-1.5 text-slate-500">本轮未产生多跳验证结果</p>
+        </section>
+
+        <!-- 上下文压缩（modular：多路召回后控制进入 LLM 的噪声） -->
+        <section v-else-if="s.kind === 'compress'" class="rounded-xl border border-orange-500/20 bg-orange-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-orange-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] font-normal text-orange-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <p v-if="s.metrics" class="mt-1.5 text-slate-300">
+            {{ s.metrics.original }} 条候选 → 保留 {{ s.metrics.kept }} 条
+            <template v-if="s.metrics.truncated > 0">（截断超长 {{ s.metrics.truncated }} 条）</template>
+          </p>
         </section>
 
         <!-- Query 重写结果（advanced：独立步骤，先于知识库检索展示） -->

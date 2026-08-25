@@ -4,7 +4,7 @@ export type ModeId = 'react' | 'plan_execute' | 'reflection' | 'multi_agent'
 export type PromptStrategy = 'standard' | 'few_shot' | 'cot'
 export type ApprovalPolicy = 'always' | 'never'
 export type ApprovalDecision = 'approve' | 'reject' | 'modify'
-export type RagSchemeId = 'naive' | 'advanced'
+export type RagSchemeId = 'naive' | 'advanced' | 'modular'
 
 export interface Capability {
   id: string
@@ -55,6 +55,59 @@ export type AgentEvent =
   | { type: 'plan'; steps: string[]; current_step: number; status: string }
   | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean }
   | { type: 'rewrite'; query: string; scheme?: string; rewrites: string[] }
+  | {
+      type: 'classify'
+      query: string
+      scheme?: string
+      retrieval_need: boolean
+      retrieval_mode: string
+      complexity: string
+      generation_mode: string
+      confidence: number
+      reason?: string
+    }
+  | { type: 'decompose'; query: string; scheme?: string; sub_queries: string[] }
+  | {
+      type: 'multi_hop_plan'
+      query: string
+      scheme?: string
+      /** 规划-执行-验证：多跳检索计划（目标/依赖/可预判实体） */
+      plan: {
+        steps: {
+          target: string
+          query: string
+          entity?: string | null
+          depends_on?: string[]
+          status?: string
+        }[]
+        reason?: string
+      }
+    }
+  | {
+      type: 'multi_hop'
+      query: string
+      scheme?: string
+      /** 逐跳流式：每完成一跳下发一个事件，index 从 1 递增 */
+      index: number
+      hop: { query: string; hits: HitItem[]; next_query?: string | null; target?: string | null; skipped?: boolean }
+    }
+  | {
+      type: 'multi_hop_verify'
+      query: string
+      scheme?: string
+      /** 规划-执行-验证：质量闸门结果（覆盖对表 + 补缺子查询） */
+      verification: {
+        covered: string[]
+        missing: string[]
+        patched: { target: string; query: string }[]
+      }
+    }
+  | {
+      type: 'compress'
+      query: string
+      scheme?: string
+      metrics: { original: number; kept: number; truncated: number }
+    }
   | { type: 'memory_write'; content: string }
   | { type: 'memory_read'; query: string; hits: HitItem[] }
   | { type: 'approval_request'; approval_id: string; tool_calls: ToolCallInfo[] }

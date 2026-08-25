@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     es_password: str = ""
     es_index_prefix: str = "knowledge"  # 索引名 = {prefix}_{scheme_id}，如 knowledge_advanced
     es_embedding_dim: int = 1024  # dense_vector 维度，与 embedding 模型一致
-    # 已注册的 RAG 方案（每个方案一个独立 Qdrant 集合；modular/graph/agentic 后续扩展）
-    rag_schemes: list[str] = ["naive", "advanced"]
+    # 已注册的 RAG 方案（每个方案一个独立 Qdrant 集合；graph/agentic 后续扩展）
+    rag_schemes: list[str] = ["naive", "advanced", "modular"]
     rag_default_scheme: str = "naive"
     # 知识库检索（RAG）总开关：默认开启（项目约定：能力后端默认就绪），
     # 每轮是否真正检索由请求/前端开关（rag_enabled）控制；设为 false 可整体关闭
@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # Advanced 方案：Query 重写生成的查询变体数（LLM Multi-Query）与重排模型
     rag_rewrite_variants: int = 3
     rag_rerank_model: str = "qwen3-rerank"
+    # Modular 方案多跳迭代检索：最大检索跳数（LLM 路径默认 3，规则兜底上限 2）
+    rag_max_hops: int = 3
 
     # MCP Servers（JSON 字符串，声明可用 server；stdio 子进程由服务启动时自动拉起）
     mcp_servers: str = "{}"

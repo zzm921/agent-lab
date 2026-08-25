@@ -1,6 +1,7 @@
 """Query 重写：把用户口语化/含混问题改写成更贴近语料的检索查询（Multi-Query）。
 
-- LLMQueryRewriter：接入百炼聊天模型，一次生成多个查询变体（工业界 Multi-Query 做法）；
+- LLMQueryRewriter：按命名场景 rag_rewrite 懒取聊天模型（模型/参数见 service.DEFAULT_PROFILES），
+  一次生成多个查询变体（工业界 Multi-Query 做法）；
 - RuleQueryRewriter：无 LLM（离线/仅配 Embedding）时的确定性回退：去客套语 + 关键词变体。
 
 检索方拿到多个变体分别召回再融合，弥补「单次查询覆盖不全」的缺陷。
@@ -10,8 +11,9 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.llm.client import get_chat_model
 
 # 客套/疑问前缀：去掉后得到更接近检索词的表达
 _POLITE_PREFIX = re.compile(r"^(请问|我想知道|我想问|麻烦问一下|帮我查一下|帮忙查一下|咨询一下|了解一下|请教一下|能不能告诉我|可以告诉我)")
@@ -52,33 +54,38 @@ class QueryRewriter(ABC):
 
 
 class LLMQueryRewriter(QueryRewriter):
-    """LLM 改写：一次调用生成 N 个更贴近制度语料的查询变体。
+    """LLM 改写：按场景懒取模型，一次调用生成 N 个更贴近制度语料的查询变体。
 
     始终把原始查询置于首位：即使 LLM 输出不佳，原查询也一定参与召回。
     """
 
-    def __init__(self, llm: BaseChatModel, variants: int = 3):
-        self.llm = llm
+    # 本阶段使用的模型/参数场景（qwen3.5-flash / temp=0.3 / max_tokens=200 / thinking=False，见 service.DEFAULT_PROFILES）
+    scenario = "rag_rewrite"
+
+    def __init__(self, variants: int = 3):
         self.variants = max(1, int(variants))
 
     def rewrite(self, query: str) -> list[str]:
-        try:
-            messages = [
-                SystemMessage(
-                    content=(
-                        f"你是企业知识库检索助手。请把用户的问题改写成 {self.variants} 个"
-                        "更适合检索企业制度语料的查询变体：保留关键实体与数字，"
-                        "用更正式、贴近规章制度原文的措辞；若原问题已足够正式，可做关键词化压缩。"
-                        "每个变体单独一行输出，不要编号、不要解释、不要其他文字。"
-                    )
-                ),
-                HumanMessage(content=query),
-            ]
-            resp = self.llm.invoke(messages)
-            content = resp.content if isinstance(resp.content, str) else str(resp.content or "")
-            parsed = self._parse_lines(content)
-        except Exception:  # noqa: BLE001 — LLM 失败时至少保留原始查询
-            parsed = []
+        parsed: list[str] = []
+        llm = get_chat_model(self.scenario)
+        if llm is not None:
+            try:
+                messages = [
+                    SystemMessage(
+                        content=(
+                            f"你是企业知识库检索助手。请把用户的问题改写成 {self.variants} 个"
+                            "更适合检索企业制度语料的查询变体：保留关键实体与数字，"
+                            "用更正式、贴近规章制度原文的措辞；若原问题已足够正式，可做关键词化压缩。"
+                            "每个变体单独一行输出，不要编号、不要解释、不要其他文字。"
+                        )
+                    ),
+                    HumanMessage(content=query),
+                ]
+                resp = llm.invoke(messages)
+                content = resp.content if isinstance(resp.content, str) else str(resp.content or "")
+                parsed = self._parse_lines(content)
+            except Exception:  # noqa: BLE001 — LLM 失败时至少保留原始查询
+                parsed = []
         return self._dedupe([query, *parsed])
 
     @staticmethod
@@ -131,8 +138,6 @@ class RuleQueryRewriter(QueryRewriter):
         return " ".join(tokens) if tokens else ""
 
 
-def build_rewriter(llm, variants: int = 3) -> QueryRewriter:
-    """按是否注入 LLM 选择改写器：有 LLM 用 LLM 改写，否则规则回退。"""
-    if llm is not None:
-        return LLMQueryRewriter(llm, variants=variants)
-    return RuleQueryRewriter()
+def build_rewriter(variants: int = 3) -> QueryRewriter:
+    """构造改写器：有 LLM 场景配置用 LLM 改写（内部懒取），否则规则回退。"""
+    return LLMQueryRewriter(variants=variants)

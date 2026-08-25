@@ -20,6 +20,11 @@ class RetrieveResult:
     hits: list[dict[str, Any]]
     rewrites: list[str] = field(default_factory=list)  # Query 重写变体（naive 为空）
     reranked: bool = False  # 是否经过重排
+    decomposed: list[str] = field(default_factory=list)  # Query 分解子问题（decompose 路径）
+    compressed: dict[str, int] | None = None  # 上下文压缩统计（{"original","kept","truncated"}）
+    hops: list[dict[str, Any]] = field(default_factory=list)  # 多跳检索逐跳记录（[{"query","hits","target","skipped"}]，非多跳为空）
+    plan: dict[str, Any] | None = None  # 多跳检索计划（规划-执行-验证：steps+reason，非多跳为空）
+    verification: dict[str, Any] | None = None  # 多跳质量闸门结果（{"covered","missing","patched"}，非多跳为空）
 
 
 class RagScheme(ABC):
@@ -31,8 +36,6 @@ class RagScheme(ABC):
     description: str = ""
     # 该方案集合是否启用稀疏向量（混合检索）；manager 据此构建稀疏后端
     hybrid: bool = False
-    # 该方案是否需要注入 LLM（如 Query 重写 / 重排）；manager 据此注入
-    needs_llm: bool = False
     # 该方案是否跨后端多路召回（同时查询 Qdrant + Elasticsearch，融合去重）
     multi_backend: bool = False
 

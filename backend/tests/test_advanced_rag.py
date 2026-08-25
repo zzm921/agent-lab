@@ -61,12 +61,13 @@ def test_split_long_without_punctuation(settings):
 
 # ---- Query 重写 ----
 
-def test_query_rewrite_llm():
-    """LLM 改写：解析多行变体，且首位始终为原始查询（保证基础召回）。"""
+def test_query_rewrite_llm(monkeypatch):
+    """LLM 改写：按场景懒取模型解析多行变体，且首位始终为原始查询（保证基础召回）。"""
     llm = FakeChatModel(
         script=[AIMessage(content="出差结束后需在多久内提交报销凭证\n出差报销材料提交时限")]
     )
-    rw = LLMQueryRewriter(llm, variants=2)
+    monkeypatch.setattr("app.rag.query_rewrite.get_chat_model", lambda scenario: llm)
+    rw = LLMQueryRewriter(variants=2)
     variants = rw.rewrite("出差结束多久提交报销材料")
     assert variants[0] == "出差结束多久提交报销材料"
     assert "出差结束后需在多久内提交报销凭证" in variants
@@ -94,10 +95,11 @@ def test_query_rewrite_rule_invoice_timeline():
     assert len(rw.rewrite("发票丢了怎么补开")) < len(variants)
 
 
-def test_llm_rewrite_failure_keeps_original():
+def test_llm_rewrite_failure_keeps_original(monkeypatch):
     """LLM 调用异常（如脚本耗尽抛错）时至少保留原始查询。"""
     llm = FakeChatModel(script=[])  # 队列耗尽返回默认回答而非抛错
-    rw = LLMQueryRewriter(llm, variants=2)
+    monkeypatch.setattr("app.rag.query_rewrite.get_chat_model", lambda scenario: llm)
+    rw = LLMQueryRewriter(variants=2)
     variants = rw.rewrite("如何申请年假")
     assert variants[0] == "如何申请年假"
 
@@ -124,7 +126,7 @@ def test_retrieve_full_pipeline(settings):
     assert scheme.retrieve("出差结束多久提交报销", top_k=2) == result.hits
 
 
-def test_retrieve_full_pipeline_with_llm_rewrite(settings):
+def test_retrieve_full_pipeline_with_llm_rewrite(settings, monkeypatch):
     """LLM 重写端到端：改写变体进入多路召回并重排。"""
     store = QdrantStore(
         FakeEmbeddings(),
@@ -134,8 +136,9 @@ def test_retrieve_full_pipeline_with_llm_rewrite(settings):
         client=QdrantClient(":memory:"),
     )
     llm = FakeChatModel(script=[AIMessage(content="出差结束报销凭证提交时限")])
+    monkeypatch.setattr("app.rag.query_rewrite.get_chat_model", lambda scenario: llm)
     scheme = AdvancedRagScheme(
-        FakeEmbeddings(), store, top_k=3, llm=llm, reranker=LexicalReranker()
+        FakeEmbeddings(), store, top_k=3, reranker=LexicalReranker()
     )
     scheme.ingest(["出差结束后15个自然日内必须上传报销材料。逾期不予受理。"])
     result = scheme.retrieve_full("出差结束后多久提交报销凭证", top_k=2)

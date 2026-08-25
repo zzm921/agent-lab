@@ -11,7 +11,7 @@ from app.capabilities.registry import CapabilityRegistry
 from app.config import settings
 from app.core.errors import ConfigError
 from app.core.rate_limit import DailyQuota
-from app.llm.client import create_chat_model, create_embeddings, llm_service
+from app.llm.client import create_embeddings, llm_service
 from app.memory.session_store import SessionStore
 from app.rag.manager import RagManager
 from app.schemas import ApproveRequest, FaultRequest, McpToggleRequest, StopRequest, StreamRequest
@@ -39,9 +39,9 @@ def _build_embeddings_and_rag():
     向量库数据在线上前由 scripts/ingest_naive.py / scripts/ingest_advanced.py 预建，
     本函数只构建各方案的 store（加载已建好的集合），不做现场入库，保证能力加载快速。
     rag_enabled（默认开启）控制是否构建 RagManager：关闭时不构建，知识库检索整体关闭，
-    仅保留 Embedding（长期记忆能力仍可用）；开启时构建 RAG（含 advanced 方案的 Query 重写聊天模型）。
-    advanced 方案的 Query 重写需要聊天模型：未配聊天 Key 时 llm 为 None，
-    方案自动回退规则化重写（保证仅 Embedding 也能跑通）。
+    仅保留 Embedding（长期记忆能力仍可用）；开启时构建 RAG。
+    方案内部需要 LLM 的阶段（Query 重写/路由/分解/多跳规划验证）按命名场景从全局
+    LLMService 懒取模型；未配聊天 Key 时自动回退确定性规则实现（仅 Embedding 也能跑通）。
     """
     try:
         embeddings = create_embeddings(fake=False)
@@ -49,12 +49,7 @@ def _build_embeddings_and_rag():
         return None, None
     if not settings.rag_enabled:
         return embeddings, None
-    llm = None
-    try:
-        llm = create_chat_model(fake=False, scenario="rag_rewrite")  # advanced 重写专用场景
-    except ConfigError:
-        llm = None  # 未配聊天 Key：advanced 用规则重写
-    rag = RagManager(settings, embeddings, top_k=settings.rag_top_k, llm=llm)
+    rag = RagManager(settings, embeddings, top_k=settings.rag_top_k)
     return embeddings, rag
 
 

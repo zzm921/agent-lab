@@ -40,6 +40,12 @@ export type StepKind =
   | 'plan' // 执行计划
   | 'retrieve' // RAG 检索
   | 'rewrite' // Query 重写结果
+  | 'classify' // 查询语义路由（五维决策，modular）
+  | 'decompose' // Query 分解子问题（modular）
+  | 'multi_hop_plan' // 多跳检索计划（规划-执行-验证，modular）
+  | 'multi_hop' // 多跳迭代检索（modular）
+  | 'multi_hop_verify' // 多跳质量闸门验证（规划-执行-验证，modular）
+  | 'compress' // 上下文压缩统计（modular）
   | 'memory_read' // 记忆召回
   | 'memory_write' // 记忆写入
   | 'reflect' // 反思意见
@@ -77,6 +83,26 @@ export interface StepEntry {
   rewrites?: string[]
   /** retrieve：是否经过重排 */
   reranked?: boolean
+  /** classify：五维路由决策（D1 是否检索 / D3 检索策略 / D4 复杂度 / D5 生成模式 + 置信度） */
+  retrieval_need?: boolean
+  retrieval_mode?: string
+  complexity?: string
+  generation_mode?: string
+  confidence?: number
+  reason?: string
+  /** decompose：查询分解子问题 */
+  sub_queries?: string[]
+  /** multi_hop_plan：多跳检索计划（规划-执行-验证） */
+  plan?: {
+    steps: { target: string; query: string; entity?: string | null; depends_on?: string[]; status?: string }[]
+    reason?: string
+  }
+  /** multi_hop：多跳迭代检索逐跳记录（每跳子查询 + 命中 + 目标 + 覆盖复用标记），前端逐跳流式追加 */
+  hops?: { query: string; hits: HitItem[]; next_query?: string | null; target?: string | null; skipped?: boolean }[]
+  /** multi_hop_verify：多跳质量闸门结果（covered / missing / patched） */
+  verification?: { covered: string[]; missing: string[]; patched: { target: string; query: string }[] }
+  /** compress：上下文压缩统计（original / kept / truncated） */
+  metrics?: { original: number; kept: number; truncated: number }
   /** memory_write */
   content?: string
   /** reflect */
@@ -317,6 +343,48 @@ export function useChatStream(): ChatStream {
         break
       case 'rewrite':
         pushStep({ kind: 'rewrite', query: ev.query, scheme: ev.scheme, rewrites: ev.rewrites })
+        break
+      case 'classify':
+        pushStep({
+          kind: 'classify',
+          query: ev.query,
+          scheme: ev.scheme,
+          retrieval_need: ev.retrieval_need,
+          retrieval_mode: ev.retrieval_mode,
+          complexity: ev.complexity,
+          generation_mode: ev.generation_mode,
+          confidence: ev.confidence,
+          reason: ev.reason,
+        })
+        break
+      case 'decompose':
+        pushStep({ kind: 'decompose', query: ev.query, scheme: ev.scheme, sub_queries: ev.sub_queries })
+        break
+      case 'multi_hop_plan':
+        // 规划-执行-验证：先展示多跳检索计划（目标/依赖），再逐跳检索
+        pushStep({ kind: 'multi_hop_plan', query: ev.query, scheme: ev.scheme, plan: ev.plan })
+        break
+      case 'multi_hop': {
+        // 逐跳流式：每跳一个事件，追加到当前多跳卡片（就地填充，逐跳呈现而非一次性返回全部跳）
+        const last = stream.steps[stream.steps.length - 1]
+        if (last && last.kind === 'multi_hop') {
+          last.hops = [...(last.hops ?? []), ev.hop]
+        } else {
+          pushStep({ kind: 'multi_hop', query: ev.query, scheme: ev.scheme, hops: [ev.hop] })
+        }
+        break
+      }
+      case 'multi_hop_verify':
+        // 规划-执行-验证：最后展示质量闸门结果（覆盖对表 + 补缺子查询）
+        pushStep({
+          kind: 'multi_hop_verify',
+          query: ev.query,
+          scheme: ev.scheme,
+          verification: ev.verification,
+        })
+        break
+      case 'compress':
+        pushStep({ kind: 'compress', query: ev.query, scheme: ev.scheme, metrics: ev.metrics })
         break
       case 'memory_write':
         pushStep({ kind: 'memory_write', content: ev.content })

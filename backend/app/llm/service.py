@@ -65,6 +65,36 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.3, "max_tokens": 200, "enable_thinking": False},
     },
     {
+        "scenario": "rag_classify",  # 语义路由：输出结构化 JSON 决策（五维度），低随机 + 输出受限
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_decompose",  # 查询分解：输出多行子问题，低随机
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_plan",  # 多跳子查询规划：输出结构化计划 JSON（推理型，开启思考）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": True},
+    },
+    {
+        "scenario": "rag_verify",  # 多跳验证对表：输出结构化 JSON（轻量决策，关闭思考）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 400, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_next_step",  # 多跳下一跳决策：输出结构化 JSON（轻量决策，关闭思考）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
+    },
+    {
         "scenario": "fake",  # 测试 / 无 Key 回退
         "provider": "fake",
         "model": "fake-chat",

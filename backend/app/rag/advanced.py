@@ -37,7 +37,6 @@ class AdvancedRagScheme(RagScheme):
     name: str = "高级 RAG"
     description: str = "语义分块 + 混合检索 + Query重写 + Rerank 精排"
     hybrid: bool = True   # 启用稀疏向量（稠密+稀疏多路召回）
-    needs_llm: bool = True  # 需要注入 LLM 做 Query 重写
     multi_backend: bool = True  # 跨后端多路召回（Qdrant + Elasticsearch 双路融合）
 
     def __init__(
@@ -45,16 +44,14 @@ class AdvancedRagScheme(RagScheme):
         embeddings,
         store: StoreBackend,
         top_k: int = 3,
-        llm=None,
         rewrite_variants: int = 3,
         rerank_model: str = "qwen3-rerank",
         rewriter: QueryRewriter | None = None,
         reranker: Reranker | None = None,
     ):
         super().__init__(embeddings, store, top_k)
-        self.llm = llm
         self.rewriter = (
-            rewriter if rewriter is not None else build_rewriter(llm, variants=rewrite_variants)
+            rewriter if rewriter is not None else build_rewriter(variants=rewrite_variants)
         )
         self.reranker = (
             reranker if reranker is not None else build_reranker(embeddings, model=rerank_model)

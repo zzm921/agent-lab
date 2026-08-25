@@ -1,8 +1,8 @@
 """RAG 方案管理器：按配置构建各方案（每方案一个独立 Qdrant 集合），统一入库与选择。
 
 未配置 Qdrant 或连接失败时回退到内存存储（MemoryStore），保证离线/测试可用。
-当前落地 naive（固定切块+纯稠密）与 advanced（语义分块+混合检索+重写重排）方案；
-modular / graph / agentic 后续在同一框架上扩展。
+当前落地 naive（固定切块+纯稠密）、advanced（语义分块+混合检索+重写重排）、
+modular（前置语义分类+按复杂度路由）方案；graph / agentic 后续在同一框架上扩展。
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from app.memory.stores.multi_backend_store import MultiBackendStore
 from app.memory.stores.qdrant_store import QdrantStore
 from app.rag.advanced import AdvancedRagScheme
 from app.rag.base import RagScheme
+from app.rag.modular import ModularRagScheme
 from app.rag.naive import NaiveRagScheme
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 _SCHEME_REGISTRY: dict[str, type[RagScheme]] = {
     "naive": NaiveRagScheme,
     "advanced": AdvancedRagScheme,
+    "modular": ModularRagScheme,
 }
 
 
@@ -38,14 +40,12 @@ class RagManager:
         settings: Settings,
         embeddings,
         top_k: int = 3,
-        llm=None,
         stores: dict[str, StoreBackend] | None = None,
         scheme_ids: list[str] | None = None,
     ):
         self.settings = settings
         self.embeddings = embeddings
         self.top_k = top_k
-        self.llm = llm
         self.schemes: dict[str, RagScheme] = {}
         # 指定方案时只构建这些方案（离线建库按方案独立脚本用）；缺省用 settings.rag_schemes
         ids = scheme_ids if scheme_ids is not None else settings.rag_schemes
@@ -54,15 +54,16 @@ class RagManager:
                 raise ConfigError(f"未知 RAG 方案：{scheme_id}（支持 {list(_SCHEME_REGISTRY)}）")
             store = stores.get(scheme_id) if stores else self._build_store(scheme_id)
             scheme_cls = _SCHEME_REGISTRY[scheme_id]
-            if scheme_cls.needs_llm:
-                self.schemes[scheme_id] = scheme_cls(
-                    embeddings,
-                    store,
-                    top_k,
-                    llm=llm,
+            # advanced/modular 含 Query 重写/重排等可选配置项；naive 为最简构造。
+            # 各方案内部的 LLM 阶段按命名场景从全局 LLMService 懒取，无需在此注入模型。
+            if issubclass(scheme_cls, AdvancedRagScheme):
+                kwargs: dict[str, Any] = dict(
                     rewrite_variants=self.settings.rag_rewrite_variants,
                     rerank_model=self.settings.rag_rerank_model,
                 )
+                if scheme_cls is ModularRagScheme:
+                    kwargs["max_hops"] = self.settings.rag_max_hops
+                self.schemes[scheme_id] = scheme_cls(embeddings, store, top_k, **kwargs)
             else:
                 self.schemes[scheme_id] = scheme_cls(embeddings, store, top_k)
 

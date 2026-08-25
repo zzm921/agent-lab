@@ -22,6 +22,18 @@ def create_chat_model(fake: bool = False, scenario: str = "chat"):
     return llm_service.get("fake" if fake else scenario)
 
 
+def get_chat_model(scenario: str):
+    """通用 LLM 工具：按场景懒取已绑定参数/模型的 ChatModel（含日志/错误包装）。
+
+    未配 LLM_API_KEY（ConfigError）时返回 None，由调用方回退确定性规则实现。
+    场景 → (model, params) 见 service.DEFAULT_PROFILES，可通过 llm_service.update_profile 动态调整。
+    """
+    try:
+        return create_chat_model(fake=False, scenario=scenario)
+    except ConfigError:
+        return None
+
+
 def create_embeddings(fake: bool = False):
     """构建 Embedding 模型；fake=True 返回 FakeEmbeddings。"""
     if fake:

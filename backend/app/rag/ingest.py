@@ -6,21 +6,19 @@
 from __future__ import annotations
 
 from app.config import settings
-from app.core.errors import ConfigError
-from app.llm.client import create_chat_model, create_embeddings
+from app.llm.client import create_embeddings
 from app.memory.corpus import KNOWLEDGE_CORPUS
 from app.rag.manager import RagManager
 
 
 def build_corpus(scheme_ids: list[str] | None = None, force: bool = False) -> list[dict]:
-    """构建 embeddings/chat 并只把语料写入指定方案（缺省为全部已注册方案）。"""
+    """构建 embeddings 并把语料写入指定方案（缺省为全部已注册方案）。
+
+    方案内部需要 LLM 的阶段（Query 重写等）按命名场景从全局 LLMService 懒取模型，
+    未配聊天 Key 时自动回退确定性规则实现，故建库不依赖聊天模型。
+    """
     embeddings = create_embeddings(fake=False)  # 未配 Embedding Key 时抛 ConfigError
-    llm = None
-    try:
-        llm = create_chat_model(fake=False, scenario="rag_rewrite")  # advanced 重写专用场景；未配则回退规则重写
-    except ConfigError:
-        llm = None
-    rag = RagManager(settings, embeddings, top_k=settings.rag_top_k, llm=llm, scheme_ids=scheme_ids)
+    rag = RagManager(settings, embeddings, top_k=settings.rag_top_k, scheme_ids=scheme_ids)
     if force:
         for scheme in rag.schemes.values():
             scheme.store.clear()
