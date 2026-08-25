@@ -1,5 +1,5 @@
 /** 落地页静态常量与类型：卡片数据由后端 /api/content 接口运行时拉取（见 useContentData） */
-import type { ApprovalPolicy, ModeId, PromptStrategy } from '../types/agent'
+import type { ApprovalPolicy, ModeId, PromptStrategy, RagSchemeId } from '../types/agent'
 
 export type Difficulty = 'beg' | 'int' | 'adv'
 export type TechId = 'all' | 'LangGraph' | 'MCP' | 'FastAPI' | 'Qdrant' | 'Vue3'
@@ -27,6 +27,8 @@ export interface LandingCapability {
   strategy: PromptStrategy | null
   /** 进入实验室的审批策略；null 用实验室默认 */
   policy: ApprovalPolicy | null
+  /** 进入实验室的 RAG 方案；null 用实验室默认（naive） */
+  ragScheme: RagSchemeId | null
   /** 进入实验室的预设任务列表：跳转后自动填入第一条，其余显示在输入框下方快捷区 */
   prompts: string[]
   /** 纯知识卡置 false：隐藏「立即体验」按钮与完成度徽标 */

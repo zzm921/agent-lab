@@ -54,7 +54,7 @@ export type AgentEvent =
   | { type: 'tool_retry'; tool: string; attempt: number; max: number; delay: number; base_delay?: number; reason: string }
   | { type: 'plan'; steps: string[]; current_step: number; status: string }
   | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean }
-  | { type: 'rewrite'; query: string; scheme?: string; rewrites: string[] }
+  | { type: 'rewrite'; query: string; scheme?: string; rewrites: string[]; reason?: string }
   | {
       type: 'classify'
       query: string
@@ -107,6 +107,20 @@ export type AgentEvent =
       query: string
       scheme?: string
       metrics: { original: number; kept: number; truncated: number }
+    }
+  | {
+      type: 'answerability'
+      query: string
+      scheme?: string
+      /** 检索后答案充分性验证（跨复杂度路径的质量闸门）：可答 / 升级检索 / 追问澄清 */
+      verdict: {
+        answerable: boolean
+        missing_facts: string[]
+        recommendation: string // answer | escalate | clarify
+        escalate_to?: string | null
+      }
+      /** 是否为检索不足后升级检索再验证的最终结论 */
+      escalated?: boolean
     }
   | { type: 'memory_write'; content: string }
   | { type: 'memory_read'; query: string; hits: HitItem[] }

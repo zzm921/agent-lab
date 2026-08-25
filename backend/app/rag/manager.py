@@ -17,10 +17,10 @@ from app.memory.stores.elasticsearch_store import ElasticsearchStore
 from app.memory.stores.memory_store import MemoryStore
 from app.memory.stores.multi_backend_store import MultiBackendStore
 from app.memory.stores.qdrant_store import QdrantStore
-from app.rag.advanced import AdvancedRagScheme
 from app.rag.base import RagScheme
-from app.rag.modular import ModularRagScheme
-from app.rag.naive import NaiveRagScheme
+from app.rag.schemes.advanced import AdvancedRagScheme
+from app.rag.schemes.modular import ModularRagScheme
+from app.rag.schemes.naive import NaiveRagScheme
 
 logger = logging.getLogger(__name__)
 

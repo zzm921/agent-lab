@@ -602,6 +602,32 @@ class ResultMergeModule:
 - 检索相关性：重排分数
 - 完整性：完整段落 > 碎片
 
+### 6.6 答案充分性验证（Answerability Verification）
+
+**职责**：检索完成后的质量闸门——判断当前检索到的上下文是否足以回答用户问题，而不是直接信任"检索了就有答案"。它跨所有复杂度路径（simple / rewrite / decompose / multihop）统一生效，是本方案解决"检索不足但仍硬答"类问题的核心。
+
+**三类结论（recommendation）**：
+- `answer`：检索内容足以回答 → 正常进入生成；
+- `escalate`：检索不足但还可补救 → 按验证器建议有界升级 1 轮检索路径（`simple/hybrid → multi_recall → multihop`），升级后重新验证；升级阶梯只升一级，防止死循环/成本失控；
+- `clarify`：已是最全路径仍不足（信息确实缺失）→ 如实上报缺失事实，由生成层强制追问澄清，禁止编造内部数据。
+
+**实现（LLM 为主，规则兜底）**：
+
+```python
+# 判据（规则兜底版）：覆盖度 = 关键查询词出现在命中中的比例
+def _coverage(query, hits):
+    terms = [t for t in tokenize(query) if len(t) > 1]
+    if not terms:
+        return 1.0
+    joined = " ".join(h["text"] for h in hits)
+    return sum(1 for t in terms if t in joined) / len(terms)
+
+# 覆盖度不足且仍有升级空间 → escalate；已是最全路径 → clarify
+# LLM 版复用 rag_verify 场景，结构化输出 answerable / missing_facts / recommendation
+```
+
+**与 7.4 追问生成的衔接**：验证器只负责"判断 + 上报缺口"，不直接生成追问文本；最终"是否追问、怎么追问"由生成层根据 `clarify` 结论 + `missing_facts` 决定，保证追问内容与缺失事实一一对应（例如"王刚的年假有多少天"缺失"王刚在岗工龄"，追问应请求补工龄而非泛泛问"请补充更多信息"）。
+
 ---
 
 ## 七、生成模块组（Generation）

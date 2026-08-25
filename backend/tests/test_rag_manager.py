@@ -9,7 +9,7 @@ from app.llm.fake_model import FakeEmbeddings
 from app.memory.stores.memory_store import MemoryStore
 from app.memory.stores.qdrant_store import QdrantStore
 from app.rag.manager import RagManager
-from app.rag.naive import CHUNK_SIZE
+from app.rag.schemes.naive import CHUNK_SIZE
 
 CORPUS = [
     "LangGraph 基于 StateGraph 构建有状态、多步骤的 AI Agent。",

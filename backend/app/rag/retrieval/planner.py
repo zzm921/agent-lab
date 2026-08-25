@@ -20,9 +20,9 @@ from abc import ABC, abstractmethod
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm.client import get_chat_model
-from app.rag.iterative_retrieval import HopPlan, PlanStep
+from app.rag.retrieval.iterative_retrieval import HopPlan, PlanStep
 
-# 实体链关系词：与 classifier 的 _MULTI_HOP 对齐（中间实体 = 领导的上级链）
+# 实体链关系词：X的{关系} 的规则拆跳仅用于无 LLM 兜底（中间实体 = 领导的上级链）
 _RELATIONS = "领导|上级|主管|经理|负责人|老板|下属|同事|秘书|助理"
 _ENTITY_CHAIN = re.compile(rf"(?P<subject>.+?)的(?P<rel>{_RELATIONS})(?P<rest>.+)")
 

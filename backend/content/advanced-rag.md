@@ -7,6 +7,11 @@ difficulty: int
 tags: [RAG, Advanced-RAG, Hybrid-Search, Rerank]
 techFilters: [Qdrant, FastAPI]
 accent: '#38bdf8'
+enabledTools: [rag]
+rag_scheme: advanced
+prompts:
+  - 发票提交时限是多少天？
+  - 出差每天餐补标准是多少？
 ---
 ## 概述
 
@@ -57,6 +62,47 @@ Naive RAG 的三个致命缺陷：**检索噪声多、无关键词命中、上�
 - **仍是固定管道**：假设「所有问题都检索一次、结果都可用」，无法按问题复杂度自适应；
 - **关系盲区仍在**：混合检索本质仍是「文本匹配」，跨文档实体关联、多跳问题依然无解（需 Graph RAG）。
 
+## 推荐 Prompt
+
+Advanced RAG 是**固定管道**，其中需要 LLM 参与（可 Prompt 化）的只有「检索前改写」与「最终生成」两环；混合检索 / RRF 融合 / Rerank / 压缩都是**算法实现，无 Prompt**（用「每层优化」模式，而非「每环都问一次模型」）。
+
+### 1. 查询改写（Multi-Query）
+
+**作用**：把口语化/含混问题改写成多个更贴近制度语料的检索变体，弥补「单次查询覆盖不全」与「问法与原文不一致」的缺陷（本项目 naive/advanced 对比演示的就是这一环）。
+
+**模型参数**：`qwen3.5-flash / temperature=0.3 / max_tokens=200 / enable_thinking=False`
+
+**示例 Prompt**：
+
+```
+你是企业知识库检索助手。请把用户的问题改写成 3 个
+更适合检索企业制度语料的查询变体：保留关键实体与数字，
+用更正式、贴近规章制度原文的措辞；若原问题已足够正式，可做关键词化压缩。
+每个变体单独一行输出，不要编号、不要解释、不要其他文字。
+```
+
+**要点**：每行一个变体、无编号无解释；返回时**始终把原始查询放首位**保证基础召回；未配聊天 Key 时回退规则化改写（去客套语 + 关键词变体）。
+
+### 2. 生成作答（注入式，全方案共用）
+
+RAG 的最终回答**不额外调用「RAG 生成模型」**，而是把检索命中（去重 → 精排后的 Top-K）注入主对话的用户消息（注入式增强）。推荐注入模板：
+
+```
+{用户原始问题}
+
+【知识库检索结果（{方案名}）】
+[相关度 0.91] {命中片段1}
+[相关度 0.87] {命中片段2}
+...
+
+{指令}
+```
+
+- 检索充分时：`请优先基于以上检索内容回答；若内容不足以回答，再结合自身知识补充。`
+- 需要严格引用时：`请基于以上检索内容回答，并标注内容对应的来源片段。`
+
+> 若你要做**按问题复杂度选策略**（该不该检索、要不要改写、要不要多跳），那是 Modular 的「前置语义路由」职责——路由 Prompt 见 [modular-rag.md](modular-rag.md)「推荐 Prompt（按分支）」第 1 节。
+
 ## 本项目的做法
 
 本项目把 RAG 做成**多方案可选框架**：同一份内置语料按方案写入各自独立的集合，侧边栏可随时切换方案，直观对比检索与回答差异。当前已落地 **naive**（固定切块 + 纯稠密，基线）与 **advanced**（全链路优化）两方案：
@@ -64,7 +110,7 @@ Naive RAG 的三个致命缺陷：**检索噪声多、无关键词命中、上�
 ### 1. 方案隔离：同一语料、不同库
 
 - 每个方案一个独立集合：`knowledge_naive`、`knowledge_advanced`（集合名 = `{prefix}_{scheme_id}`），互不干扰；
-- 存储层抽象 `StoreBackend` 接口，**Qdrant 与 Elasticsearch 均已实现**（同一接口，`.env` 改一行 `RAG_STORE_BACKEND` 即可无缝切换，见下文 §3）；
+- 存储层抽象「存储后端」接口，**Qdrant 与 Elasticsearch 均已实现**（同一接口，配置改一行 `RAG_STORE_BACKEND` 即可无缝切换，见下文 §3）；
 - 未配置后端或连接失败时回退内存检索，离线 / 测试也能跑通。
 
 ### 2. Advanced 方案（已落地）：检索前后全链路优化
@@ -79,7 +125,7 @@ Naive RAG 的三个致命缺陷：**检索噪声多、无关键词命中、上�
 
 - **naive**：单后端检索——默认 Qdrant（纯稠密余弦 Top-K），未配置时回退内存；
 - **advanced**：**跨后端多路召回**——主后端默认 **Qdrant**（稠密向量负责语义匹配），并**叠加 Elasticsearch** 的 `text` BM25 关键词路（负责专有名词 / 编号 / 精确表达命中），两路结果**按文本去重**后进入重排；主后端可通过 `RAG_STORE_BACKEND=qdrant|elasticsearch|memory` 切换（主 ES 时叠加 Qdrant）；
-- 两后端实现同一 `StoreBackend` 接口：Qdrant `dense`+`sparse` 命名向量 `Prefetch` + `Fusion.RRF`；ES 8.x `dense_vector` kNN + BM25 `rank.rrf`；**ES <8.x 兼容路径**退化为纯 `BM25`（旧服务器无 dense_vector / kNN，与 Qdrant 稠密路互补）；
+- 两后端实现同一存储后端抽象：Qdrant `dense`+`sparse` 命名向量 `Prefetch` + `Fusion.RRF`；ES 8.x `dense_vector` kNN + BM25 `rank.rrf`；**ES <8.x 兼容路径**退化为纯 `BM25`（旧服务器无 dense_vector / kNN，与 Qdrant 稠密路互补）；
 - 流水线：**召回（向量库 + ES 多路）→ 去重（跨后端 / 跨查询变体按文本去重，保留最高分）→ 重排（qwen3-rerank 精排，失败回退词法）**，把「宽召回」压缩为「准 Top-K」。
 
 > **关于多后端的价值（重要）**：本项目内置语料规模小，Qdrant 与 ES 在小语料上召回质量几乎无差别——ES 路的工程价值主要体现在**大规模语料**场景（分布式分片、全文 BM25 + 向量混合、与既有 ES 数据栈打通）。因此「跨后端多路召回」更多是**架构与扩展性储备**；验证检索优化效果请对比 **naive / advanced 两方案**（方案差异立竿见影），而不是对比单后端差异。
@@ -110,7 +156,7 @@ Naive RAG 的三个致命缺陷：**检索噪声多、无关键词命中、上�
 | 方案隔离 | 同一语料、每方案独立集合（`knowledge_{scheme_id}`） |
 | 向量化 + 索引 | DashScope `text-embedding-v3` 稠密 + `text-sparse-embedding-v1` 稀疏（Qdrant 命名向量 / ES `dense_vector`） |
 | 混合检索 | advanced 跨后端：Qdrant 稠密+稀疏 `Fusion.RRF` 与 ES BM25 并行召回 → 按文本去重 → qwen3-rerank 精排 |
-| 存储解耦 | `StoreBackend` 抽象接口，Qdrant / Elasticsearch 双实现（`.env` 切换） |
+| 存储解耦 | 存储后端抽象接口，Qdrant / Elasticsearch 双实现（配置切换） |
 | 生成 | 拼装检索上下文 + 用户问题，交给 LLM 作答 |
 
 ## 演进方向

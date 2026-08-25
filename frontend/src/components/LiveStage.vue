@@ -32,6 +32,7 @@ const RETRIEVE_KIND: Record<string, string> = {
   multi_hop: '多跳检索',
   multi_hop_verify: '多跳验证',
   compress: '上下文压缩',
+  answerability: '答案充分性',
   retrieve: '知识库检索',
   memory_read: '记忆召回',
   memory_write: '记忆写入',
@@ -59,6 +60,17 @@ const GEN_LABEL: Record<string, string> = {
   direct: '直接回答',
   citation: '引用回答',
   comparison: '对比回答',
+}
+// 答案充分性验证结论的中文展示与配色（answerability 卡片）
+const RECOMMENDATION_LABEL: Record<string, string> = {
+  answer: '可直接回答',
+  escalate: '需升级检索',
+  clarify: '需追问澄清',
+}
+const RECOMMENDATION_CLS: Record<string, string> = {
+  answer: 'bg-emerald-500/20 text-emerald-200',
+  escalate: 'bg-amber-500/20 text-amber-200',
+  clarify: 'bg-rose-500/20 text-rose-200',
 }
 </script>
 
@@ -398,6 +410,64 @@ const GEN_LABEL: Record<string, string> = {
           </p>
         </section>
 
+        <!-- 答案充分性验证（modular：检索后质量闸门，跨复杂度路径统一检查可答/升级/澄清） -->
+        <section v-else-if="s.kind === 'answerability'" class="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-emerald-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-normal text-emerald-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div v-if="s.verdict" class="mt-2 space-y-1.5">
+            <p class="flex flex-wrap items-center gap-1.5">
+              <span
+                class="rounded px-1.5 py-0.5 font-medium"
+                :class="RECOMMENDATION_CLS[s.verdict.recommendation] ?? 'bg-slate-800 text-slate-300'"
+              >
+                {{ RECOMMENDATION_LABEL[s.verdict.recommendation] ?? s.verdict.recommendation }}
+              </span>
+              <span
+                v-if="s.escalated"
+                class="rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-200"
+                title="初始检索不足，已按验证建议升级检索路径后复核"
+              >
+                已升级检索
+              </span>
+              <span
+                v-if="s.verdict.answerable"
+                class="text-emerald-400/80"
+              >
+                检索内容足以回答
+              </span>
+              <span
+                v-else-if="s.verdict.escalate_to"
+                class="text-slate-500"
+              >
+                建议升级：{{ s.verdict.escalate_to }}
+              </span>
+            </p>
+            <div v-if="s.verdict.missing_facts?.length" class="rounded-lg bg-black/20 p-2">
+              <p class="text-slate-500">缺失的关键信息：</p>
+              <ul class="mt-1 space-y-0.5">
+                <li
+                  v-for="(f, fi) in s.verdict.missing_facts"
+                  :key="fi"
+                  class="list-inside list-disc text-rose-300"
+                >
+                  {{ f }}
+                </li>
+              </ul>
+            </div>
+          </div>
+          <p v-else class="mt-1.5 text-slate-500">本轮未产生验证结论</p>
+        </section>
+
         <!-- Query 重写结果（advanced：独立步骤，先于知识库检索展示） -->
         <section v-else-if="s.kind === 'rewrite'" class="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs">
           <div class="flex items-center justify-between gap-2">
@@ -408,6 +478,12 @@ const GEN_LABEL: Record<string, string> = {
                 class="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-normal text-cyan-200"
               >
                 {{ s.scheme }}
+              </span>
+              <span
+                v-if="s.reason"
+                class="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-normal text-cyan-200"
+              >
+                {{ s.reason }}
               </span>
             </span>
             <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>

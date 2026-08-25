@@ -99,7 +99,7 @@ accent: '#10b981'
 
 - **解析层**：接入各类文档加载器，复杂文档（表格/扫描件）走结构化提取与 OCR；
 - **分块**：父子分层切分——小 chunk 精确定位 + 父 chunk 补全上下文；
-- **存储**：Qdrant 向量库（默认，向量索引）+ BM25 倒排（关键词），混合检索在在线阶段融合；后端经 `StoreBackend` 抽象可切换到 Elasticsearch（`dense_vector` kNN + `text` BM25），详见 [advanced-rag.md](advanced-rag.md) §3——内置语料规模小，切换后端几乎无感知，属扩展性储备；
+- **存储**：Qdrant 向量库（默认，向量索引）+ BM25 倒排（关键词），混合检索在在线阶段融合；后端经「存储后端」抽象可切换到 Elasticsearch（`dense_vector` kNN + `text` BM25），详见 [advanced-rag.md](advanced-rag.md) §3——内置语料规模小，切换后端几乎无感知，属扩展性储备；
 - **元数据**：保留来源信息，支撑答案可溯源到原文。
 
 ## 收益与边界

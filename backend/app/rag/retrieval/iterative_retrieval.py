@@ -28,7 +28,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm.client import get_chat_model
-from app.rag.fusion import reciprocal_rank_fusion
+from app.rag.retrieval.fusion import reciprocal_rank_fusion
 
 # 领域关键词：来自 classifier/query_rewrite 的关键词表（避免循环导入，此处内联一份）
 _KEYWORDS = [
@@ -395,8 +395,8 @@ class PlanExecuteRetriever(MultiHopRetriever):
     """
 
     def __init__(self, planner, verifier):
-        from app.rag.planner import MultiHopPlanner  # noqa: F401 — 仅类型提示
-        from app.rag.verifier import MultiHopVerifier  # noqa: F401 — 仅类型提示
+        from app.rag.retrieval.planner import MultiHopPlanner  # noqa: F401 — 仅类型提示
+        from app.rag.retrieval.verifier import MultiHopVerifier  # noqa: F401 — 仅类型提示
 
         self.planner = planner
         self.verifier = verifier
@@ -524,8 +524,8 @@ class PlanExecuteRetriever(MultiHopRetriever):
 def build_multi_hop_retriever(planner=None, verifier=None) -> MultiHopRetriever:
     """构造多跳检索器：默认「规划-执行-验证」（Planner + Verifier，各自按场景懒取 LLM）；
     也保留贪心迭代检索器（LLMMultiHopRetriever / RuleMultiHopRetriever）作为回退路径。"""
-    from app.rag.planner import build_planner
-    from app.rag.verifier import build_verifier
+    from app.rag.retrieval.planner import build_planner
+    from app.rag.retrieval.verifier import build_verifier
 
     planner = planner if planner is not None else build_planner()
     verifier = verifier if verifier is not None else build_verifier()

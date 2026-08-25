@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm.client import get_chat_model
-from app.rag.iterative_retrieval import HopPlan, VerifyResult, _KEYWORDS, step_covered
+from app.rag.retrieval.iterative_retrieval import HopPlan, VerifyResult, _KEYWORDS, step_covered
 
 
 class MultiHopVerifier(ABC):

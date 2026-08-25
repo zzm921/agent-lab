@@ -12,10 +12,10 @@ from qdrant_client import QdrantClient
 from app.llm.fake_model import FakeChatModel, FakeEmbeddings
 from app.memory.stores.memory_store import MemoryStore
 from app.memory.stores.qdrant_store import QdrantStore
-from app.rag.advanced import AdvancedRagScheme, CHUNK_MAX
 from app.rag.manager import RagManager
-from app.rag.query_rewrite import LLMQueryRewriter, RuleQueryRewriter
-from app.rag.reranker import LexicalReranker
+from app.rag.retrieval.reranker import LexicalReranker
+from app.rag.routing.query_rewrite import LLMQueryRewriter, RuleQueryRewriter
+from app.rag.schemes.advanced import AdvancedRagScheme, CHUNK_MAX
 
 
 def make_advanced(settings, store=None, **kw) -> AdvancedRagScheme:
@@ -66,7 +66,7 @@ def test_query_rewrite_llm(monkeypatch):
     llm = FakeChatModel(
         script=[AIMessage(content="出差结束后需在多久内提交报销凭证\n出差报销材料提交时限")]
     )
-    monkeypatch.setattr("app.rag.query_rewrite.get_chat_model", lambda scenario: llm)
+    monkeypatch.setattr("app.rag.routing.query_rewrite.get_chat_model", lambda scenario: llm)
     rw = LLMQueryRewriter(variants=2)
     variants = rw.rewrite("出差结束多久提交报销材料")
     assert variants[0] == "出差结束多久提交报销材料"
@@ -98,7 +98,7 @@ def test_query_rewrite_rule_invoice_timeline():
 def test_llm_rewrite_failure_keeps_original(monkeypatch):
     """LLM 调用异常（如脚本耗尽抛错）时至少保留原始查询。"""
     llm = FakeChatModel(script=[])  # 队列耗尽返回默认回答而非抛错
-    monkeypatch.setattr("app.rag.query_rewrite.get_chat_model", lambda scenario: llm)
+    monkeypatch.setattr("app.rag.routing.query_rewrite.get_chat_model", lambda scenario: llm)
     rw = LLMQueryRewriter(variants=2)
     variants = rw.rewrite("如何申请年假")
     assert variants[0] == "如何申请年假"
@@ -136,7 +136,7 @@ def test_retrieve_full_pipeline_with_llm_rewrite(settings, monkeypatch):
         client=QdrantClient(":memory:"),
     )
     llm = FakeChatModel(script=[AIMessage(content="出差结束报销凭证提交时限")])
-    monkeypatch.setattr("app.rag.query_rewrite.get_chat_model", lambda scenario: llm)
+    monkeypatch.setattr("app.rag.routing.query_rewrite.get_chat_model", lambda scenario: llm)
     scheme = AdvancedRagScheme(
         FakeEmbeddings(), store, top_k=3, reranker=LexicalReranker()
     )

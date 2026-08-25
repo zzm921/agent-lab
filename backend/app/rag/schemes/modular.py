@@ -26,9 +26,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.memory.stores.base import StoreBackend
-from app.rag.advanced import AdvancedRagScheme
+from app.rag.retrieval.answerability import (
+    ANSWER,
+    CLARIFY,
+    ESCALATE,
+    AnswerabilityVerdict,
+    AnswerabilityVerifier,
+    build_answerability_verifier,
+    verdict_to_dict,
+)
 from app.rag.base import RetrieveResult
-from app.rag.classifier import (
+from app.rag.routing.classifier import (
     DECOMPOSE,
     HYBRID,
     MULTIHOP,
@@ -39,9 +47,10 @@ from app.rag.classifier import (
     RouteDecision,
     build_classifier,
 )
-from app.rag.context_compress import ContextCompressor, build_compressor
-from app.rag.fusion import reciprocal_rank_fusion
-from app.rag.iterative_retrieval import (
+from app.rag.retrieval.context_compress import ContextCompressor, build_compressor
+from app.rag.routing.deictic_resolver import DeicticResolver, build_deictic_resolver
+from app.rag.retrieval.fusion import reciprocal_rank_fusion
+from app.rag.retrieval.iterative_retrieval import (
     MultiHopEvent,
     MultiHopRetriever,
     build_multi_hop_retriever,
@@ -49,7 +58,8 @@ from app.rag.iterative_retrieval import (
     plan_to_dict,
     verify_to_dict,
 )
-from app.rag.query_decompose import QueryDecomposer, build_decomposer
+from app.rag.schemes.advanced import AdvancedRagScheme
+from app.rag.routing.query_decompose import QueryDecomposer, build_decomposer
 
 
 @dataclass
@@ -94,6 +104,8 @@ class ModularRagScheme(AdvancedRagScheme):
         compressor: ContextCompressor | None = None,
         max_hops: int = 3,
         multi_hop: MultiHopRetriever | None = None,
+        deictic: DeicticResolver | None = None,
+        answerability: AnswerabilityVerifier | None = None,
     ):
         super().__init__(
             embeddings,
@@ -109,6 +121,10 @@ class ModularRagScheme(AdvancedRagScheme):
         self.compressor = compressor if compressor is not None else build_compressor()
         self.max_hops = max_hops
         self.multi_hop = multi_hop if multi_hop is not None else build_multi_hop_retriever()
+        self.deictic = deictic if deictic is not None else build_deictic_resolver()
+        self.answerability = (
+            answerability if answerability is not None else build_answerability_verifier()
+        )
 
     # ---- 调度层：路由决策 → 执行计划 ----
 
@@ -205,8 +221,37 @@ class ModularRagScheme(AdvancedRagScheme):
 
     # ---- 编排执行：同步（非流式/测试） ----
 
-    def _execute_plan(self, query: str, plan: ExecutionPlan, k: int) -> RetrieveResult:
-        """同步执行执行计划，返回完整检索结果（供非流式场景/测试）。"""
+    def _escalate(self, plan: ExecutionPlan, verdict) -> ExecutionPlan | None:
+        """答案充分性不足时的有界升级：按验证器建议把当前计划升一级（返回 None=不再升级）。
+
+        升级阶梯（一次只升一级，有界防死循环/控成本）：
+        - 已是最全路径（多跳）→ 不升级；
+        - 已多路召回 → 升到多跳（多路仍不足多因缺链式中间环节）；
+        - 单次/混合检索 → 升到多路召回（或验证器判定的多跳）。
+        """
+        if not plan.need_retrieval:
+            return None
+        if any(m.name == "multi_hop" for m in plan.retrieval):
+            return None
+        if any(m.name == "multi_recall" for m in plan.retrieval):
+            retrieval = [ModuleCall("multi_hop", params={"max_hops": self.max_hops})]
+            post = [ModuleCall("rerank")]
+        elif getattr(verdict, "escalate_to", None) == "multihop":
+            retrieval = [ModuleCall("multi_hop", params={"max_hops": self.max_hops})]
+            post = [ModuleCall("rerank")]
+        else:
+            retrieval = [ModuleCall("multi_recall")]
+            post = [ModuleCall("rerank"), ModuleCall("compress")]
+        return ExecutionPlan(
+            need_retrieval=True,
+            pre_retrieval=[],  # 多路/多跳自含召回与规划，无需再改写/分解
+            retrieval=retrieval,
+            post_retrieval=post,
+            generation_strategy=plan.generation_strategy,
+        )
+
+    def _run_plan(self, query: str, plan: ExecutionPlan, k: int) -> RetrieveResult:
+        """按执行计划执行一轮检索（预处理 → 召回 → 后处理），返回完整检索结果。"""
         if not plan.need_retrieval:
             return RetrieveResult(query=query, hits=[])
         sub_queries = [query]
@@ -236,6 +281,31 @@ class ModularRagScheme(AdvancedRagScheme):
             verification=verification,
         )
 
+    def _execute_plan(self, query: str, plan: ExecutionPlan, k: int) -> RetrieveResult:
+        """同步执行执行计划，返回完整检索结果；检索后过答案充分性验证闸门（不足则有界升级 1 轮）。"""
+        if not plan.need_retrieval:
+            return RetrieveResult(query=query, hits=[])
+        result = self._run_plan(query, plan, k)
+        verdict = self.answerability.verify(result.query, result.hits)
+        result.answerability = verdict_to_dict(verdict)
+        if not verdict.answerable and verdict.recommendation == ESCALATE:
+            escalated = self._escalate(plan, verdict)
+            if escalated is not None:
+                result = self._run_plan(query, escalated, k)
+                final = self.answerability.verify(result.query, result.hits)
+                result.answerability = verdict_to_dict(final)
+                return result
+        if not verdict.answerable:
+            # 已是最全路径/升级不可行仍不足 → 如实上报缺口（追问澄清交给生成层/前端）
+            result.answerability = verdict_to_dict(
+                AnswerabilityVerdict(
+                    answerable=False,
+                    missing_facts=verdict.missing_facts,
+                    recommendation=CLARIFY,
+                )
+            )
+        return result
+
     def _recall(
         self, query: str, sub_queries: list[str], retrieval: list[ModuleCall], k: int
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None]:
@@ -261,41 +331,25 @@ class ModularRagScheme(AdvancedRagScheme):
                 )
         return self._collect(query, sub_queries, retrieval, k), [], None, None
 
-    def retrieve_full(self, query: str, top_k: int | None = None) -> RetrieveResult:
-        """同步完整检索结果：先路由，再按执行计划动态编排。"""
+    def retrieve_full(self, query: str, top_k: int | None = None, context: str | None = None) -> RetrieveResult:
+        """同步完整检索结果：先指代消解，再路由，再按执行计划动态编排。"""
         k = top_k or self.top_k
-        decision = self.classifier.classify(query)
+        resolved = self.deictic.resolve(query, context) or query
+        decision = self.classifier.classify(resolved)
         plan = self._build_plan(decision)
-        return self._execute_plan(query, plan, k)
+        return self._execute_plan(resolved, plan, k)
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         return self.retrieve_full(query, top_k).hits
 
     # ---- 编排执行：异步流式（前端 SSE 事件） ----
 
-    async def astream(self, query: str, top_k: int | None = None):
-        """异步流式：先产出路由事件，再按计划产出 rewrite / decompose / 逐跳 multi_hop / retrieve / compress 事件。
+    async def _astream_plan(self, query: str, plan: ExecutionPlan, k: int):
+        """按执行计划流式执行一轮检索：预处理 → 召回（逐跳 multi_hop）→ 后处理，逐事件下发。
 
-        路由/召回/重排/压缩为同步调用（向量库/模型同步 HTTP），放线程池执行；
-        多跳迭代检索逐跳流式产出——每完成一跳立即下发一个 multi_hop 事件（index 递增），
-        而非一次性把全部跳合并返回，保证 classify / rewrite / decompose 事件先经 SSE 下发，再逐跳、最后 retrieve。
+        yield rewrite / decompose / multi_hop_plan / 逐跳 multi_hop / multi_hop_verify /
+        retrieve / compress 事件；retrieve 事件携带本轮最终命中（调用方据此做充分性验证）。
         """
-        k = top_k or self.top_k
-        decision = self.classifier.classify(query)
-        plan = self._build_plan(decision)
-        yield {
-            "type": "classify",
-            "query": query,
-            "scheme": self.id,
-            "retrieval_need": decision.retrieval_need,
-            "retrieval_mode": decision.retrieval_mode,
-            "complexity": decision.complexity,
-            "generation_mode": decision.generation_mode,
-            "confidence": decision.confidence,
-            "reason": decision.reason,
-        }
-        if not plan.need_retrieval:
-            return
         sub_queries = [query]
         rewrites: list[str] = []
         decomposed: list[str] = []
@@ -401,3 +455,93 @@ class ModularRagScheme(AdvancedRagScheme):
                 "scheme": self.id,
                 "metrics": compress_metrics,
             }
+
+    async def astream(self, query: str, top_k: int | None = None, context: str | None = None):
+        """异步流式：先指代消解，再产出路由事件，再按计划产出 rewrite / decompose / 逐跳 multi_hop / retrieve / compress 事件；
+        检索后过答案充分性验证闸门（不足则有界升级 1 轮，再产出 answerability 事件）。
+
+        路由/召回/重排/压缩为同步调用（向量库/模型同步 HTTP），放线程池执行；
+        多跳迭代检索逐跳流式产出——每完成一跳立即下发一个 multi_hop 事件（index 递增），
+        而非一次性把全部跳合并返回，保证 classify / rewrite / decompose 事件先经 SSE 下发，再逐跳、最后 retrieve。
+        """
+        k = top_k or self.top_k
+        resolved = self.deictic.resolve(query, context) or query
+        if resolved != query:
+            yield {
+                "type": "rewrite",
+                "query": query,
+                "scheme": self.id,
+                "rewrites": [resolved],
+                "reason": "指代消解",
+            }
+        query = resolved
+        decision = self.classifier.classify(query)
+        plan = self._build_plan(decision)
+        yield {
+            "type": "classify",
+            "query": query,
+            "scheme": self.id,
+            "retrieval_need": decision.retrieval_need,
+            "retrieval_mode": decision.retrieval_mode,
+            "complexity": decision.complexity,
+            "generation_mode": decision.generation_mode,
+            "confidence": decision.confidence,
+            "reason": decision.reason,
+        }
+        if not plan.need_retrieval:
+            return
+        # 第一轮执行 + 答案充分性验证
+        current_hits: list[dict[str, Any]] = []
+        async for ev in self._astream_plan(query, plan, k):
+            if ev["type"] == "retrieve":
+                current_hits = ev["hits"]
+            yield ev
+        verdict = self.answerability.verify(query, current_hits)
+        # 与同步 _execute_plan 保持一致：仅当验证建议升级（escalate）且有更高路径时
+        # 才有界升级 1 轮；建议澄清（clarify，如缺指代/信息确实缺失）不升级、直接如实上报，
+        # 避免「该追问却升级检索后越权作答」。
+        if not verdict.answerable and verdict.recommendation == ESCALATE:
+            escalated = self._escalate(plan, verdict)
+            if escalated is not None:
+                # 检索不足且建议升级 → 有界升级 1 轮（前端可见二次检索），再验证
+                yield {
+                    "type": "answerability",
+                    "query": query,
+                    "scheme": self.id,
+                    "verdict": verdict_to_dict(verdict),
+                    "escalated": False,
+                }
+                current_hits = []
+                async for ev in self._astream_plan(query, escalated, k):
+                    if ev["type"] == "retrieve":
+                        current_hits = ev["hits"]
+                    yield ev
+                final = self.answerability.verify(query, current_hits)
+                yield {
+                    "type": "answerability",
+                    "query": query,
+                    "scheme": self.id,
+                    "verdict": verdict_to_dict(final),
+                    "escalated": True,
+                }
+                return
+            # 升级不可行（已是最全路径）仍不足 → 如实上报缺口（追问澄清交给生成层/前端）
+            verdict = AnswerabilityVerdict(
+                answerable=False,
+                missing_facts=verdict.missing_facts,
+                recommendation=CLARIFY,
+            )
+        elif not verdict.answerable:
+            # 验证建议澄清（信息确实缺失，如缺指代/缺关键事实）→ 不升级，如实上报缺口
+            verdict = AnswerabilityVerdict(
+                answerable=False,
+                missing_facts=verdict.missing_facts,
+                recommendation=CLARIFY,
+            )
+        yield {
+            "type": "answerability",
+            "query": query,
+            "scheme": self.id,
+            "verdict": verdict_to_dict(verdict),
+            "escalated": False,
+        }

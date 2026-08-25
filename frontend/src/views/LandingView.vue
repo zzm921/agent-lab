@@ -94,6 +94,9 @@ function experience(cap: LandingCapability) {
   if (cap.policy) {
     query.policy = cap.policy
   }
+  if (cap.ragScheme) {
+    query.rag_scheme = cap.ragScheme
+  }
   if (cap.prompts.length) {
     // 长文本不放进 URL：写入 sessionStorage，URL 只带短 nonce
     const nonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`

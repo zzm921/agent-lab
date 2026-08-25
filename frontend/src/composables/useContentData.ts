@@ -1,7 +1,7 @@
 /** 能力卡片内容：通过后端 /api/content 接口获取（后端实时解析 backend/content/ 下的 md） */
 import { ref } from 'vue'
 import type { Difficulty, KnowledgeTag, LandingCapability, TechId } from '../data/capabilityData'
-import type { ApprovalPolicy, ModeId, PromptStrategy } from '../types/agent'
+import type { ApprovalPolicy, ModeId, PromptStrategy, RagSchemeId } from '../types/agent'
 
 /** 难度 → 难度展示文案 */
 const DIFFICULTY_LABELS: Record<Difficulty, string> = {
@@ -16,6 +16,7 @@ const DEFAULT_ACCENT = '#7c5cff'
 /** 合法取值白名单（非法值回退默认，不中断页面） */
 const VALID_STRATEGIES: PromptStrategy[] = ['standard', 'few_shot', 'cot']
 const VALID_POLICIES: ApprovalPolicy[] = ['always', 'never']
+const VALID_RAG_SCHEMES: RagSchemeId[] = ['naive', 'advanced', 'modular']
 
 /** tags.md 中标签注册表的原始结构 */
 interface TagManifest {
@@ -41,6 +42,7 @@ interface CardPayload {
   faults?: Record<string, string>
   strategy?: string
   policy?: string
+  ragScheme?: string
   prompts?: string[]
   prompt?: string
   experience?: boolean
@@ -78,6 +80,9 @@ function normalizeCard(card: CardPayload): LandingCapability | null {
         : {},
     strategy: VALID_STRATEGIES.includes(card.strategy as PromptStrategy) ? (card.strategy as PromptStrategy) : null,
     policy: VALID_POLICIES.includes(card.policy as ApprovalPolicy) ? (card.policy as ApprovalPolicy) : null,
+    ragScheme: VALID_RAG_SCHEMES.includes(card.ragScheme as RagSchemeId)
+      ? (card.ragScheme as RagSchemeId)
+      : null,
     prompts: Array.isArray(card.prompts)
       ? card.prompts.filter((p): p is string => typeof p === 'string').map((p) => p.trim()).filter(Boolean)
       : typeof card.prompt === 'string'

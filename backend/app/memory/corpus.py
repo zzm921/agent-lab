@@ -1,6 +1,6 @@
 """RAG 内嵌知识语料：从 Markdown 语料文件加载（不硬编码在代码里）。
 
-语料以 Markdown 保存于 app/rag/ 下（五代RAG梯度测试统一语料*.md），
+语料以 Markdown 保存于 app/rag/corpus/ 下（五代RAG梯度测试统一语料*.md），
 建库（ingest）时读取该文档并解析为「分章节的原始长文本」，供各 RAG 方案自行分块入库。
 语料为虚构「科创公司员工行政、考勤、福利与差旅全管理制度」——长文本、高冗余、
 规则嵌套、信息碎片化，天然制造「固定切块切断语义」「跨块信息无法关联」「多条件叠加」
@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 # 语料 Markdown 文件（与五代 RAG 迭代演示文档同目录）
-_CORPUS_MD = Path(__file__).resolve().parents[1] / "rag" / "五代RAG梯度测试统一语料（适配分块策略+全版本RAG迭代演示）.md"
+_CORPUS_MD = Path(__file__).resolve().parents[1] / "rag" / "corpus" / "五代RAG梯度测试统一语料（适配分块策略+全版本RAG迭代演示）.md"
 
 
 def _parse_corpus() -> dict[str, list[str]]:

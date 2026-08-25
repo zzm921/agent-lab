@@ -15,8 +15,8 @@ from typing import Any
 
 from app.memory.stores.base import StoreBackend
 from app.rag.base import RagScheme, RetrieveResult
-from app.rag.query_rewrite import QueryRewriter, build_rewriter
-from app.rag.reranker import Reranker, build_reranker
+from app.rag.retrieval.reranker import Reranker, build_reranker
+from app.rag.routing.query_rewrite import QueryRewriter, build_rewriter
 
 # 语义分块参数
 CHUNK_MAX = 300      # 单块最大字符数：超限强制闭合，避免超长块稀释向量语义
@@ -148,14 +148,14 @@ class AdvancedRagScheme(RagScheme):
         # 检索后精排：交叉编码器重排（失败回退词法），取 Top-K
         return self.reranker.rerank(query, hits)[:k]
 
-    def retrieve_full(self, query: str, top_k: int | None = None) -> RetrieveResult:
+    def retrieve_full(self, query: str, top_k: int | None = None, context: str | None = None) -> RetrieveResult:
         """同步完整检索结果（供非流式场景/测试）；页面事件走 astream 流式下发。"""
         k = top_k or self.top_k
         variants = self.rewriter.rewrite(query)
         hits = self._multi_recall_rerank(query, variants, k)
         return RetrieveResult(query=query, hits=hits, rewrites=variants, reranked=True)
 
-    async def astream(self, query: str, top_k: int | None = None):
+    async def astream(self, query: str, top_k: int | None = None, context: str | None = None):
         """异步流式检索：重写一结束立即 yield 重写事件，再召回/重排后 yield 检索事件。
 
         召回/重排为同步阻塞调用（向量库/重排模型的同步 HTTP），放线程池执行，

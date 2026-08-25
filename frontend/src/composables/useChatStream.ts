@@ -46,6 +46,7 @@ export type StepKind =
   | 'multi_hop' // 多跳迭代检索（modular）
   | 'multi_hop_verify' // 多跳质量闸门验证（规划-执行-验证，modular）
   | 'compress' // 上下文压缩统计（modular）
+  | 'answerability' // 检索后答案充分性验证（跨复杂度路径质量闸门，modular）
   | 'memory_read' // 记忆召回
   | 'memory_write' // 记忆写入
   | 'reflect' // 反思意见
@@ -89,6 +90,7 @@ export interface StepEntry {
   complexity?: string
   generation_mode?: string
   confidence?: number
+  /** classify：判定理由；rewrite：改写原因（modular 指代消解时为「指代消解」） */
   reason?: string
   /** decompose：查询分解子问题 */
   sub_queries?: string[]
@@ -103,6 +105,9 @@ export interface StepEntry {
   verification?: { covered: string[]; missing: string[]; patched: { target: string; query: string }[] }
   /** compress：上下文压缩统计（original / kept / truncated） */
   metrics?: { original: number; kept: number; truncated: number }
+  /** answerability：检索后答案充分性验证（answerable / missing_facts / recommendation / escalated） */
+  verdict?: { answerable: boolean; missing_facts: string[]; recommendation: string; escalate_to?: string | null }
+  escalated?: boolean
   /** memory_write */
   content?: string
   /** reflect */
@@ -342,7 +347,7 @@ export function useChatStream(): ChatStream {
         pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits, scheme: ev.scheme, reranked: ev.reranked })
         break
       case 'rewrite':
-        pushStep({ kind: 'rewrite', query: ev.query, scheme: ev.scheme, rewrites: ev.rewrites })
+        pushStep({ kind: 'rewrite', query: ev.query, scheme: ev.scheme, rewrites: ev.rewrites, reason: ev.reason })
         break
       case 'classify':
         pushStep({
@@ -385,6 +390,16 @@ export function useChatStream(): ChatStream {
         break
       case 'compress':
         pushStep({ kind: 'compress', query: ev.query, scheme: ev.scheme, metrics: ev.metrics })
+        break
+      case 'answerability':
+        // 检索后答案充分性验证：展示最终结论（可答 / 升级检索 / 追问澄清）与缺失事实
+        pushStep({
+          kind: 'answerability',
+          query: ev.query,
+          scheme: ev.scheme,
+          verdict: ev.verdict,
+          escalated: ev.escalated,
+        })
         break
       case 'memory_write':
         pushStep({ kind: 'memory_write', content: ev.content })
