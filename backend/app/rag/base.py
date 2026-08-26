@@ -76,14 +76,18 @@ class RagScheme(ABC):
             "reranked": False,
         }
 
-    def _rebuild_if_changed(self, expected: list[str]) -> None:
-        """按预期分块列表重建集合：指纹未变则幂等跳过，语料变更则清空重建。"""
-        if len(self.store) > 0 and sorted(expected) == sorted(self.store.all_texts()):
+    def _rebuild_if_changed(self, expected: list[tuple[str, dict]]) -> None:
+        """按预期分块列表重建集合：指纹未变则幂等跳过，语料变更则清空重建。
+
+        expected：[(子块文本, 块元数据)]；指纹仅比对文本，元数据随块入库（溯源用）。
+        """
+        texts = [text for text, _ in expected]
+        if len(self.store) > 0 and sorted(texts) == sorted(self.store.all_texts()):
             return  # 语料未变化：幂等跳过，避免重复向量化
         if len(self.store) > 0:
             self.store.clear()  # 语料已更新：清空后按新语料重建
-        for chunk in expected:
-            self.store.add(chunk, {"source": "builtin"})
+        for text, metadata in expected:
+            self.store.add(text, metadata)
 
     def __len__(self) -> int:
         return len(self.store)

@@ -62,8 +62,9 @@ def test_naive_fixed_chunking(settings):
     """固定切块：长文本被硬切为多块，演示固定切块切断长文本语义。"""
     manager = make_manager(settings)
     naive = manager.get("naive")
-    naive.ingest(["长文本" * CHUNK_SIZE])  # CHUNK_SIZE × 3 字符
-    assert len(naive) == 3
+    naive.ingest(["长文本" * CHUNK_SIZE])  # CHUNK_SIZE × 3 字符（1500 字符）
+    # 500 窗口 + 100 重叠（步长 400）：[0:500][400:900][800:1300][1200:1500] → 4 块
+    assert len(naive) == 4
 
 
 def test_ingest_rebuilds_on_corpus_change(settings):

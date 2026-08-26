@@ -54,6 +54,7 @@ from app.rag.retrieval.iterative_retrieval import (
     MultiHopEvent,
     MultiHopRetriever,
     build_multi_hop_retriever,
+    expand_scale_query,
     hop_to_dict,
     plan_to_dict,
     verify_to_dict,
@@ -187,10 +188,11 @@ class ModularRagScheme(AdvancedRagScheme):
                 if mod.name == "search":
                     ranked.append(self.store.search(sq, self._recall_k(k)))
                 elif mod.name == "hybrid_search":
-                    ranked.append(self.store.hybrid_search(sq, self._recall_k(k)))
+                    ranked.append(self.store.hybrid_search(expand_scale_query(sq), self._recall_k(k)))
                 elif mod.name == "multi_recall":
                     ranked.append(self.store.search(sq, self._recall_k(k)))
-                    ranked.append(self.store.hybrid_search(sq, self._recall_k(k)))
+                    # 混合路对人数/规模意图查询追加规模表规范词（与 _multi_recall 对齐）
+                    ranked.append(self.store.hybrid_search(expand_scale_query(sq), self._recall_k(k)))
                 else:
                     continue
         return reciprocal_rank_fusion(ranked)
@@ -269,6 +271,7 @@ class ModularRagScheme(AdvancedRagScheme):
         retrieved_hops = sum(1 for h in hops if not h.get("skipped"))
         keep = k * retrieved_hops if retrieved_hops else k
         hits, reranked, compress_metrics = self._apply_post(query, hits, plan.post_retrieval, k, keep)
+        hits = self._resolve_parents(hits)  # 重排/压缩后子块命中回填父块全文（含 answerability 验证基准）
         return RetrieveResult(
             query=query,
             hits=hits,
@@ -386,11 +389,20 @@ class ModularRagScheme(AdvancedRagScheme):
                 self._recall_k(k),
             ):
                 if isinstance(ev, MultiHopEvent):
-                    if ev.kind == "plan":
+                    if ev.kind == "plan_running":
+                        # 多跳规划（纯 LLM 阻塞调用）：先发「规划中」占位事件，规划完成后再填充计划
                         yield {
                             "type": "multi_hop_plan",
                             "query": query,
                             "scheme": self.id,
+                            "status": "running",
+                        }
+                    elif ev.kind == "plan":
+                        yield {
+                            "type": "multi_hop_plan",
+                            "query": query,
+                            "scheme": self.id,
+                            "status": "done",
                             "plan": plan_to_dict(ev.plan),
                         }
                     elif ev.kind == "hop" and ev.hop is not None:
@@ -437,6 +449,7 @@ class ModularRagScheme(AdvancedRagScheme):
         hits, reranked, compress_metrics = await asyncio.to_thread(
             self._apply_post, query, hits, plan.post_retrieval, k, keep
         )
+        hits = self._resolve_parents(hits)  # 重排/压缩后子块命中回填父块全文，注入 LLM 前完成
         yield {
             "type": "retrieve",
             "query": query,
@@ -475,12 +488,21 @@ class ModularRagScheme(AdvancedRagScheme):
                 "reason": "指代消解",
             }
         query = resolved
+        # 语义路由（纯 LLM 阻塞调用）：先发「路由中」占位事件让前端立即展示卡片，
+        # 路由完成后再填充五维决策——与多跳逐跳流式保持一致的渐进呈现，而非跟首跳结果一起弹出。
+        yield {
+            "type": "classify",
+            "query": query,
+            "scheme": self.id,
+            "status": "running",
+        }
         decision = self.classifier.classify(query)
         plan = self._build_plan(decision)
         yield {
             "type": "classify",
             "query": query,
             "scheme": self.id,
+            "status": "done",
             "retrieval_need": decision.retrieval_need,
             "retrieval_mode": decision.retrieval_mode,
             "complexity": decision.complexity,

@@ -24,6 +24,14 @@ CHUNK_MIN = 60       # 单块最小字符数：过小的碎片不单独成块（
 OVERLAP_SENTENCES = 1  # 相邻块重叠句数：块尾续接上一块末句，保留跨块上下文
 MERGE_THRESHOLD = 0.75  # 语义合并阈值：下一句与当前块的余弦相似度低于该值则闭合块
 
+# 结构父子分块参数（云帆制度语料：卷→章→节→条→表格）
+CHILD_MIN = 150       # 子块下限：过短正文单元与后续合并攒长度
+CHILD_MAX = 250       # 子块上限：正文子块不超限（表格原子组除外）
+PARENT_MIN = 800      # 父块下限：章末不足则就低闭合
+PARENT_MAX = 1200     # 父块上限：达到即闭合，超限强制断开
+TABLE_GROUP_ROWS = 25  # 大表格每组分块数据行数（组首重复表头，原子不切行）
+SOURCE_NAME = "云帆科技有限公司行政管理制度汇编.md"  # 结构化分块的 source 溯源
+
 # 句边界：中文句号/问号/感叹号/分号 + 换行
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？；])\s*|\n+")
 # 无标点超长句的硬切（退化为固定长度，防单句超长）
@@ -57,11 +65,184 @@ class AdvancedRagScheme(RagScheme):
             reranker if reranker is not None else build_reranker(embeddings, model=rerank_model)
         )
 
-    # ---- 入库拆分优化：语义分块 ----
+    # ---- 入库拆分优化：结构感知 + 父子分层分块 ----
 
     def ingest(self, texts: list[str]) -> None:
-        expected = [chunk for text in texts for chunk in self._semantic_chunks(text)]
+        expected: list[tuple[str, dict]] = []
+        for text in texts:
+            structured = self._structure_chunks(text)
+            if structured:
+                expected.extend(structured)
+            else:
+                # 无 `##` 结构（测试/历史平坦语料）回退语义分块
+                expected.extend(
+                    (chunk, {"source": "builtin"})
+                    for chunk in self._semantic_chunks(text)
+                )
         self._rebuild_if_changed(expected)
+
+    def _structure_chunks(self, text: str) -> list[tuple[str, dict]]:
+        """结构感知父子分块：解析卷/章/节标题与表格块，产出子块并聚合父块。
+
+        子块：正文 150-250（短单元贪心合并、超长单元句边界切分）、表格 25 行原子组；
+        父块：章内 800-1200，父块全文写入各子块 metadata["parent"] 供检索回填。
+        全文无 `##` 章节结构（平坦语料/测试文本）返回 []，调用方回退语义分块。
+        """
+        if not any(line.startswith("## ") for line in text.split("\n")):
+            return []
+        # 结构解析：按空行分块，识别 卷/章/节 标题上下文与表格块，其余为正文单元
+        units: list[dict] = []
+        volume = chapter = section = ""
+        for block in re.split(r"\n\s*\n", text):
+            b = block.strip()
+            if not b:
+                continue
+            blines = [line.strip() for line in b.split("\n")]
+            first = blines[0]
+            if first.startswith("# "):
+                volume = first[2:].strip()
+                chapter = section = ""
+                continue
+            if first.startswith("## "):
+                chapter = first[3:].strip()
+                section = ""
+                continue
+            if first.startswith("### "):
+                section = first[4:].strip()
+                continue
+            ctx = {"volume": volume, "chapter": chapter, "section": section}
+            if first.startswith("|"):
+                # 表格单元：表头 + 分隔行 + 数据行；>25 行按 25 行一组、组首重复表头
+                data_rows = blines[2:] if len(blines) > 1 else []
+                group_count = max(1, (len(data_rows) + TABLE_GROUP_ROWS - 1) // TABLE_GROUP_ROWS)
+                for g in range(group_count):
+                    group_rows = [first] + (blines[1:2] if len(blines) > 1 else []) + data_rows[g * TABLE_GROUP_ROWS:(g + 1) * TABLE_GROUP_ROWS]
+                    units.append({"kind": "table", "text": "\n".join(group_rows), **ctx})
+                continue
+            units.append({"kind": "para", "text": "\n".join(blines), **ctx})
+        # 子块构造：按章分组（不跨章），正文贪心合并至 [150,250]、表格 25 行原子组
+        children: list[dict] = []
+        grouped: list[list[dict]] = []
+        cur_group: list[dict] = []
+        cur_chapter = ""
+        for u in units:
+            if u["chapter"] != cur_chapter:
+                if cur_group:
+                    grouped.append(cur_group)
+                cur_group = []
+                cur_chapter = u["chapter"]
+            cur_group.append(u)
+        if cur_group:
+            grouped.append(cur_group)
+        for group in grouped:
+            chapter = group[0]["chapter"]
+            volume = group[0]["volume"]
+            buffer: list[str] = []
+            buf_len = 0
+            buf_section = group[0]["section"]
+            for u in group:
+                if u["kind"] == "table":
+                    if buffer:
+                        children.append(self._child_block("\n\n".join(buffer), volume, chapter, buf_section, False))
+                        buffer, buf_len = [], 0
+                    # 表格子块带章/节标题：表格本体常无引导段落，光秃表格嵌入与关键词都难命中
+                    #（回归：「第五章 各部门人员规模与编制」表因缺标题，查「部门人数」无法召回）。
+                    heading = " / ".join(x for x in (u["chapter"], u["section"]) if x) or u["volume"]
+                    table_text = f"{heading}\n{u['text']}" if heading else u["text"]
+                    children.append(self._child_block(table_text, u["volume"], u["chapter"], u["section"], True))
+                    continue
+                pieces = self._split_long_body(u["text"]) if len(u["text"]) > CHILD_MAX else [u["text"]]
+                for p in pieces:
+                    if buffer and buf_len + len(p) > CHILD_MAX:
+                        children.append(self._child_block("\n\n".join(buffer), volume, chapter, buf_section, False))
+                        buffer, buf_len = [], 0
+                    buffer.append(p)
+                    buf_len += len(p)
+                    buf_section = u["section"]
+            if buffer:
+                children.append(self._child_block("\n\n".join(buffer), volume, chapter, buf_section, False))
+        # 父块聚合：章内按文档顺序串联子块至 [800,1200]，父块文本 = 章/节标题 + 子块串联
+        parents: dict[int, str] = {}
+        p_window: list[tuple[int, str]] = []
+        p_len = 0
+        p_chapter = ""
+        p_volume = ""
+        p_section = ""
+        for idx, child in enumerate(children):
+            if p_window and (child["chapter"] != p_chapter or p_len + len(child["text"]) + 2 > PARENT_MAX):
+                anchor = (p_chapter or p_volume) + ("\n" + p_section if p_section else "")
+                body = "\n\n".join(t for _, t in p_window)
+                # 表格子块文本已带头部章标题时，不再重复拼接锚点标题
+                parent_text = (anchor + "\n" + body) if not body.startswith(anchor) else body
+                for ci, _ in p_window:
+                    parents[ci] = parent_text
+                p_window, p_len = [], 0
+            p_window.append((idx, child["text"]))
+            p_len += len(child["text"]) + 2
+            p_chapter = child["chapter"]
+            p_volume = child["volume"]
+            p_section = child["section"]
+        if p_window:
+            anchor = (p_chapter or p_volume) + ("\n" + p_section if p_section else "")
+            body = "\n\n".join(t for _, t in p_window)
+            parent_text = (anchor + "\n" + body) if not body.startswith(anchor) else body
+            for ci, _ in p_window:
+                parents[ci] = parent_text
+        return [
+            (
+                child["text"],
+                {
+                    "source": SOURCE_NAME,
+                    "volume": child["volume"],
+                    "chapter": child["chapter"],
+                    "section": child["section"],
+                    "table": child["table"],
+                    "parent": parents[i],
+                },
+            )
+            for i, child in enumerate(children)
+        ]
+
+    def _split_long_body(self, text: str) -> list[str]:
+        """超长正文单元：按句边界（。！？；/换行）切成约 CHILD_MAX 的子块；
+        无句边界的超长段按汉字/逗号边界兜底硬切，保证任一块不超上限。"""
+        sentences = [s.strip() for s in _SENTENCE_SPLIT.split(text) if s.strip()]
+        pieces, cur = [], ""
+        for s in sentences:
+            if cur and len(cur) + len(s) > CHILD_MAX:
+                pieces.append(cur)
+                cur = s
+            else:
+                cur += s
+        if cur:
+            pieces.append(cur)
+        out: list[str] = []
+        for p in pieces:
+            if len(p) <= CHILD_MAX:
+                out.append(p)
+                continue
+            sub, buf = [], ""
+            for part in [x for x in _CHUNK_OVERFLOW_SPLIT.split(p) if x]:
+                if len(buf) + len(part) > CHILD_MAX and buf:
+                    sub.append(buf)
+                    buf = part
+                else:
+                    buf += part
+            if buf:
+                sub.append(buf)
+            out.extend(sub or [p])
+        return out
+
+    @staticmethod
+    def _child_block(text: str, volume: str, chapter: str, section: str, table: bool) -> dict:
+        """构造一个子块记录（含溯源上下文，父块聚合后回填 parent 元数据）。"""
+        return {
+            "text": text,
+            "volume": volume,
+            "chapter": chapter,
+            "section": section,
+            "table": table,
+        }
 
     def _semantic_chunks(self, text: str) -> list[str]:
         """句子边界感知的语义分块：贪心按语义相似度合并，块尾重叠续接上一句。"""
@@ -148,11 +329,31 @@ class AdvancedRagScheme(RagScheme):
         # 检索后精排：交叉编码器重排（失败回退词法），取 Top-K
         return self.reranker.rerank(query, hits)[:k]
 
+    def _resolve_parents(self, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """检索后父块回填：metadata 含 parent 的命中以父块全文替换 text，同一父块去重保留最高分。
+
+        回填时机在重排/压缩之后：重排基于子块（精准定位），注入 LLM 的上下文用父块（完整）；
+        无 parent 的命中（语义分块回退路径）原样保留（no-op 安全）。
+        """
+        best: dict[str, dict[str, Any]] = {}
+        for h in hits:
+            parent = (h.get("metadata") or {}).get("parent")
+            text = parent if parent else h.get("text", "")
+            if text in best:
+                if (h.get("score") or 0) > (best[text].get("score") or 0):
+                    best[text]["score"] = h["score"]
+                continue
+            out = dict(h)
+            out["text"] = text
+            best[text] = out
+        return list(best.values())
+
     def retrieve_full(self, query: str, top_k: int | None = None, context: str | None = None) -> RetrieveResult:
         """同步完整检索结果（供非流式场景/测试）；页面事件走 astream 流式下发。"""
         k = top_k or self.top_k
         variants = self.rewriter.rewrite(query)
         hits = self._multi_recall_rerank(query, variants, k)
+        hits = self._resolve_parents(hits)  # 子块命中回填父块全文，供 LLM 完整上下文
         return RetrieveResult(query=query, hits=hits, rewrites=variants, reranked=True)
 
     async def astream(self, query: str, top_k: int | None = None, context: str | None = None):
@@ -172,6 +373,7 @@ class AdvancedRagScheme(RagScheme):
                 "rewrites": variants,
             }
         hits = await asyncio.to_thread(self._multi_recall_rerank, query, variants, k)
+        hits = self._resolve_parents(hits)  # 子块命中回填父块全文，供 LLM 完整上下文
         yield {
             "type": "retrieve",
             "query": query,

@@ -159,6 +159,15 @@ const RECOMMENDATION_CLS: Record<string, string> = {
         <section v-else-if="s.kind === 'classify'" class="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-xs">
           <div class="flex items-center justify-between gap-2">
             <span class="flex items-center gap-1.5 font-medium text-indigo-300">
+              <svg
+                v-if="s.running"
+                class="h-3.5 w-3.5 shrink-0 animate-spin text-indigo-400"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+              </svg>
               {{ RETRIEVE_KIND[s.kind] }}
               <span
                 v-if="s.scheme"
@@ -169,38 +178,42 @@ const RECOMMENDATION_CLS: Record<string, string> = {
             </span>
             <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
           </div>
-          <div class="mt-2 flex flex-wrap items-center gap-1.5">
-            <!-- retrieval_need=false 时 complexity/retrieval_mode/generation_mode 只是占位值（vector/simple/direct），不展示避免与"不检索"矛盾 -->
-            <span
-              v-if="s.complexity && s.retrieval_need !== false"
-              class="rounded px-1.5 py-0.5"
-              :class="COMPLEXITY_CLS[s.complexity] ?? 'bg-slate-800 text-slate-300'"
-            >
-              {{ COMPLEXITY_LABEL[s.complexity] ?? s.complexity }}
-            </span>
-            <span
-              v-if="s.retrieval_mode && s.retrieval_need !== false"
-              class="rounded bg-cyan-500/10 px-1.5 py-0.5 text-cyan-200"
-            >
-              检索：{{ MODE_LABEL[s.retrieval_mode] ?? s.retrieval_mode }}
-            </span>
-            <span
-              v-if="s.generation_mode && s.retrieval_need !== false"
-              class="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200"
-            >
-              生成：{{ GEN_LABEL[s.generation_mode] ?? s.generation_mode }}
-            </span>
-            <span
-              v-if="s.retrieval_need === false"
-              class="rounded bg-slate-600/30 px-1.5 py-0.5 text-slate-300"
-            >
-              不检索（直接回答）
-            </span>
-            <span v-if="typeof s.confidence === 'number'" class="text-slate-500">
-              置信度 {{ (s.confidence * 100).toFixed(0) }}%
-            </span>
-          </div>
-          <p v-if="s.reason" class="mt-1.5 text-slate-500">{{ s.reason }}</p>
+          <!-- 语义路由为纯 LLM 阻塞调用：running 占位显示转圈，done 后再填充五维决策 -->
+          <p v-if="s.running" class="mt-2 text-indigo-300/70">语义路由分析中…</p>
+          <template v-else>
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <!-- retrieval_need=false 时 complexity/retrieval_mode/generation_mode 只是占位值（vector/simple/direct），不展示避免与"不检索"矛盾 -->
+              <span
+                v-if="s.complexity && s.retrieval_need !== false"
+                class="rounded px-1.5 py-0.5"
+                :class="COMPLEXITY_CLS[s.complexity] ?? 'bg-slate-800 text-slate-300'"
+              >
+                {{ COMPLEXITY_LABEL[s.complexity] ?? s.complexity }}
+              </span>
+              <span
+                v-if="s.retrieval_mode && s.retrieval_need !== false"
+                class="rounded bg-cyan-500/10 px-1.5 py-0.5 text-cyan-200"
+              >
+                检索：{{ MODE_LABEL[s.retrieval_mode] ?? s.retrieval_mode }}
+              </span>
+              <span
+                v-if="s.generation_mode && s.retrieval_need !== false"
+                class="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200"
+              >
+                生成：{{ GEN_LABEL[s.generation_mode] ?? s.generation_mode }}
+              </span>
+              <span
+                v-if="s.retrieval_need === false"
+                class="rounded bg-slate-600/30 px-1.5 py-0.5 text-slate-300"
+              >
+                不检索（直接回答）
+              </span>
+              <span v-if="typeof s.confidence === 'number'" class="text-slate-500">
+                置信度 {{ (s.confidence * 100).toFixed(0) }}%
+              </span>
+            </div>
+            <p v-if="s.reason" class="mt-1.5 text-slate-500">{{ s.reason }}</p>
+          </template>
         </section>
 
         <!-- Query 分解结果（modular：复杂对比/多实体问题的子查询） -->
@@ -232,6 +245,15 @@ const RECOMMENDATION_CLS: Record<string, string> = {
         <section v-else-if="s.kind === 'multi_hop_plan'" class="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-xs">
           <div class="flex items-center justify-between gap-2">
             <span class="flex items-center gap-1.5 font-medium text-rose-300">
+              <svg
+                v-if="s.running"
+                class="h-3.5 w-3.5 shrink-0 animate-spin text-rose-400"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+              </svg>
               {{ RETRIEVE_KIND[s.kind] }}
               <span
                 v-if="s.scheme"
@@ -242,44 +264,48 @@ const RECOMMENDATION_CLS: Record<string, string> = {
             </span>
             <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
           </div>
-          <div v-if="s.plan?.steps?.length" class="mt-2 space-y-1.5">
-            <div
-              v-for="(st, si) in s.plan.steps"
-              :key="si"
-              class="flex flex-wrap items-center gap-1.5 rounded-lg bg-black/20 p-2"
-            >
-              <span class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200">{{ st.target }}</span>
-              <span class="text-slate-300">{{ st.query }}</span>
-              <span
-                v-if="st.depends_on?.length"
-                class="text-[11px] text-slate-500"
-                title="依赖的先前目标"
+          <!-- 多跳规划为纯 LLM 阻塞调用：running 占位显示转圈，done 后再填充计划 -->
+          <p v-if="s.running" class="mt-2 text-rose-300/70">多跳规划中…</p>
+          <template v-else>
+            <div v-if="s.plan?.steps?.length" class="mt-2 space-y-1.5">
+              <div
+                v-for="(st, si) in s.plan.steps"
+                :key="si"
+                class="flex flex-wrap items-center gap-1.5 rounded-lg bg-black/20 p-2"
               >
-                ← {{ st.depends_on.join('、') }}
-              </span>
-              <span
-                v-if="st.entity"
-                class="rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200/80"
-                title="可预判实体：若已被证据覆盖则该步复用跳过"
-              >
-                预判 {{ st.entity }}
-              </span>
-              <span
-                v-if="st.status === 'covered'"
-                class="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-200"
-              >
-                已覆盖（复用跳过）
-              </span>
-              <span
-                v-else-if="st.status === 'unexecuted'"
-                class="rounded bg-slate-600/30 px-1.5 py-0.5 text-[11px] text-slate-400"
-              >
-                超预算未执行
-              </span>
+                <span class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200">{{ st.target }}</span>
+                <span class="text-slate-300">{{ st.query }}</span>
+                <span
+                  v-if="st.depends_on?.length"
+                  class="text-[11px] text-slate-500"
+                  title="依赖的先前目标"
+                >
+                  ← {{ st.depends_on.join('、') }}
+                </span>
+                <span
+                  v-if="st.entity"
+                  class="rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200/80"
+                  title="可预判实体：若已被证据覆盖则该步复用跳过"
+                >
+                  预判 {{ st.entity }}
+                </span>
+                <span
+                  v-if="st.status === 'covered'"
+                  class="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-200"
+                >
+                  已覆盖（复用跳过）
+                </span>
+                <span
+                  v-else-if="st.status === 'unexecuted'"
+                  class="rounded bg-slate-600/30 px-1.5 py-0.5 text-[11px] text-slate-400"
+                >
+                  超预算未执行
+                </span>
+              </div>
+              <p v-if="s.plan.reason" class="text-slate-500">{{ s.plan.reason }}</p>
             </div>
-            <p v-if="s.plan.reason" class="text-slate-500">{{ s.plan.reason }}</p>
-          </div>
-          <p v-else class="mt-1.5 text-slate-500">本轮未产生多跳计划</p>
+            <p v-else class="mt-1.5 text-slate-500">本轮未产生多跳计划</p>
+          </template>
         </section>
 
         <!-- 多跳迭代检索（modular：逐跳子查询 + 命中，多轮召回拼出中间环节） -->

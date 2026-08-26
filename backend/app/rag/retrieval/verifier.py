@@ -48,8 +48,11 @@ class LLMMultiHopVerifier(MultiHopVerifier):
         if llm is None:
             return self._fallback.verify(query, plan, evidence_hits)
         try:
+            # 证据按条放宽到 800 字符：多跳累积证据多为表格型明细（花名册/部门规模表），
+            # 关键行可能位于 200 字符之外；过小截断会把已检索到的事实误判为缺口
+            #（与 answerability.py 对齐，避免同类回归）。
             evidence_text = "\n".join(
-                f"- {h.get('text', '')[:200]}" for h in evidence_hits
+                f"- {h.get('text', '')[:800]}" for h in evidence_hits
             ) or "（暂无）"
             steps_text = "\n".join(
                 f"- target={s.target} | 子查询={s.query}" for s in plan.steps

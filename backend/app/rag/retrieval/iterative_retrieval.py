@@ -38,6 +38,25 @@ _KEYWORDS = [
     "审批", "工资", "绩效", "城市", "一线", "二线",
 ]
 
+# 人数/规模意图：口语「多少人/哪个人多/比谁多」等（部门规模表需靠规范词命中）
+_SCALE_INTENT = re.compile(r"(人数|多少人|有多少人|人多|人员规模|编制|在职人数|比.{0,12}(多|少))")
+# 规模表规范词：与章节表头（第五章「各部门人员规模与编制」/「在职人数」列）对齐
+_SCALE_TERMS = "在职人数 人员规模 部门编制"
+
+
+def expand_scale_query(query: str) -> str:
+    """人数/规模意图查询 → 追加规模表规范词，弥补口语与表头词汇鸿沟。
+
+    部门规模表（如第五章）表头以「在职人数/人员规模」标识，纯「多少人」等口语
+    靠关键词（稀疏/BM25）命中不了该表；追加规范词让混合路能命中规模表行。
+    无人数/规模意图或已含规范词的查询原样返回（no-op 安全）。
+    """
+    if not _SCALE_INTENT.search(query):
+        return query
+    if any(t in query for t in ("在职人数", "人员规模", "部门编制")):
+        return query
+    return f"{query} {_SCALE_TERMS}"
+
 # 规则兜底最多续跳次数（受 max_hops 上限约束）
 _RULE_MAX_HOPS = 2
 
@@ -204,9 +223,13 @@ class MultiHopRetriever(ABC):
 
 
 def _multi_recall(store, query: str, recall_k: int) -> list[dict[str, Any]]:
-    """双路召回（向量 + 混合）经 RRF 融合：两路分数体系不同，不可直接比较取最大。"""
+    """双路召回（向量 + 混合）经 RRF 融合：两路分数体系不同，不可直接比较取最大。
+
+    混合路（含稀疏/BM25）对人数/规模意图查询追加规模表规范词（见 expand_scale_query），
+    弥补口语「多少人」与规模表表头「在职人数」的词汇鸿沟，让部门规模表可被命中。
+    """
     return reciprocal_rank_fusion(
-        [store.search(query, recall_k), store.hybrid_search(query, recall_k)]
+        [store.search(query, recall_k), store.hybrid_search(expand_scale_query(query), recall_k)]
     )
 
 
@@ -477,7 +500,9 @@ class PlanExecuteRetriever(MultiHopRetriever):
         max_hops: int,
         recall_k: int,
     ):
-        """异步流式：先产出 plan 事件，再逐跳产出 hop 事件（覆盖跳过带标记），最后产出 verify 事件。"""
+        """异步流式：先产出 plan_running（规划中占位）→ plan 事件，再逐跳产出 hop 事件（覆盖跳过带标记），最后产出 verify 事件。"""
+        # 规划是纯 LLM 阻塞调用：先发「规划中」占位，让前端立即展示多跳规划卡片，规划完成后再填充计划
+        yield MultiHopEvent(kind="plan_running")
         plan = self.planner.plan(query)
         yield MultiHopEvent(kind="plan", plan=plan)
         budget = self._hop_limit(max_hops)

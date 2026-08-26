@@ -118,7 +118,7 @@ class DashScopeReranker(Reranker):
         if not results:
             raise RuntimeError("重排结果为空")
         by_index = {int(r["index"]): float(r["relevance_score"]) for r in results}
-        reordered = [dict(h, score=round(by_index[i], 4)) for i in range(len(hits)) if i in by_index]
+        reordered = [dict(hits[i], score=round(by_index[i], 4)) for i in range(len(hits)) if i in by_index]
         reordered.sort(key=lambda h: h["score"], reverse=True)
         return reordered
 

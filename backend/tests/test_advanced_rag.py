@@ -15,7 +15,14 @@ from app.memory.stores.qdrant_store import QdrantStore
 from app.rag.manager import RagManager
 from app.rag.retrieval.reranker import LexicalReranker
 from app.rag.routing.query_rewrite import LLMQueryRewriter, RuleQueryRewriter
-from app.rag.schemes.advanced import AdvancedRagScheme, CHUNK_MAX
+from app.rag.schemes.advanced import (
+    AdvancedRagScheme,
+    CHILD_MAX,
+    CHILD_MIN,
+    CHUNK_MAX,
+    PARENT_MAX,
+    PARENT_MIN,
+)
 
 
 def make_advanced(settings, store=None, **kw) -> AdvancedRagScheme:
@@ -201,3 +208,111 @@ def test_naive_retrieve_full_default(settings):
     assert result.rewrites == []
     assert result.reranked is False
     assert result.hits
+
+
+# ---- 结构父子分块（云帆制度语料：卷→章→节→条→表格） ----
+
+def _clause(n: int, kw: str = "差旅报销") -> str:
+    """构造一条约 120 字符的条款正文，模拟「第X条（…） …。」的制度语料风格。"""
+    body = (
+        f"{kw}管理规定要求所有员工出差必须提前提交出差申请，经部门主管审批通过后方可出差，"
+        "出差期间产生的交通、住宿、餐饮费用需凭有效票据实报实销，逾期未报视为自动放弃，"
+        "违规报销将按公司奖惩制度严肃处理，相关记录纳入年度绩效考核。"
+    )
+    return f"第{n}条（{kw}条款） {body}"
+
+
+def _structured_volume() -> str:
+    """构造含 卷/章/节/条/表格 的强层级结构文本（结构分块断言用）。"""
+    clauses = "\n\n".join(_clause(i) for i in range(1, 11))  # 10 条 → 约 5 个正文子块
+    small_table = (
+        "| 费用类型 | 报销上限 | 说明 |\n"
+        "| --- | --- | --- |\n"
+        "| 高铁二等座 | 实报实销 | 单程1500公里内优先 |\n"
+        "| 市内交通 | 50元/天 | 凭票据实报 |\n"
+        "| 住宿费 | 450元/天 | 一线城市 |\n"
+    )
+    large_rows = "\n".join(f"| 参数{i} | 标准值{i} | 说明{i} |" for i in range(1, 31))
+    large_table = "| 参数项 | 标准值 | 说明 |\n| --- | --- | --- |\n" + large_rows
+    intro = (
+        "> 本卷为公司差旅报销管理的基础性制度文件，与考勤、休假、薪酬福利、人事组织等制度共同构成公司行政管理的完整制度体系。\n"
+        "> 全体员工因公出差产生的交通、住宿、餐饮等费用报销，一律以本卷全部条款及配套表单为准，其他文件与本卷不一致的以本卷为准。\n"
+        "> 本卷每年十二月由人力资源部联合财务部统一复盘修订，次年一月一日生效，旧版条款自动失效。"
+    )
+    return (
+        "# 卷九 差旅报销管理制度\n\n"
+        f"{intro}\n\n"
+        "## 第一章 总则\n\n"
+        f"{clauses}\n\n"
+        "### 1.1 差旅费用速查表\n\n"
+        f"{small_table}\n\n"
+        "### 1.2 差旅参数大表\n\n"
+        f"{large_table}\n"
+    )
+
+
+def test_structure_chunking_hierarchy(settings):
+    """结构分块：卷/章/节/条/表格 → 正文子块 150-250、表格原子组、父块 800-1200（章末可低）。"""
+    scheme = make_advanced(settings)
+    scheme.ingest([_structured_volume()])
+    pairs = list(zip(scheme.store.all_texts(), scheme.store._store.metadatas))
+    assert pairs, "结构语料应产出子块"
+    body = [(t, m) for t, m in pairs if not m["table"]]
+    tables = [(t, m) for t, m in pairs if m["table"]]
+    assert body and tables, "应同时包含正文子块与表格子块"
+    # 正文子块长度落在 [150, 250]
+    body_lens = [len(t) for t, _ in body]
+    assert all(CHILD_MIN <= n <= CHILD_MAX for n in body_lens), (
+        f"正文子块应落在 [{CHILD_MIN},{CHILD_MAX}]，实际 {sorted(body_lens)}"
+    )
+    # 元数据溯源字段齐备：卷首引言前的子块无章/节（chapter/section 为空），章内子块带章标题
+    for _, m in pairs:
+        assert m["source"] == "云帆科技有限公司行政管理制度汇编.md"
+        assert m["volume"] == "卷九 差旅报销管理制度"
+        assert m["parent"] and isinstance(m["parent"], str)
+    chaptered = [m for _, m in pairs if m["chapter"]]
+    assert chaptered and all(m["chapter"] == "第一章 总则" for m in chaptered)
+    assert all(m["section"] for t, m in tables), "表格所在节应记录节标题"
+    # 父块长度：全部 ≤1200，且章内存在达到 [800,1200] 的完整父块（卷首引言/章末短父块就低闭合）
+    unique_parents = list(dict.fromkeys(m["parent"] for _, m in pairs))
+    assert all(len(p) <= PARENT_MAX for p in unique_parents), "父块不应超 1200"
+    assert any(len(p) >= PARENT_MIN for p in unique_parents), "章内应有达到 [800,1200] 的完整父块"
+    # 表格：≤25 行单表 1 子块且 table=True；>25 行按 25 行一组且每组重复表头
+    #（表格子块带头部章/节标题，见 _structure_chunks；表头数据行位于标题行之后）
+    def _header(t: str) -> str:
+        for ln in t.splitlines():
+            if ln.startswith("|"):
+                return ln
+        return ""
+
+    small = [t for t, _ in tables if _header(t).startswith("| 费用类型")]
+    large = [t for t, _ in tables if _header(t).startswith("| 参数项")]
+    assert len(small) == 1, "≤25 行小表应整体为 1 个原子子块"
+    assert len(large) == 2, f">25 行大表（30 行）应按 25 行切为 2 组，实际 {len(large)}"
+    assert all(_header(t) == "| 参数项 | 标准值 | 说明 |" for t in large), "大表每组应重复表头"
+
+
+def test_structure_chunks_falls_back_on_flat(settings):
+    """无 `##` 的平坦文本：_structure_chunks 返回 [] → ingest 走语义分块兜底（回归保护）。"""
+    scheme = make_advanced(settings)
+    assert scheme._structure_chunks("公司规定员工每日按时打卡考勤。") == []
+    scheme.ingest(["公司规定员工每日按时打卡考勤。" * 20])
+    texts = scheme.store.all_texts()
+    assert texts, "平坦文本应回退语义分块产出子块"
+    assert all(m == {"source": "builtin"} for m in scheme.store._store.metadatas)
+
+
+def test_resolve_parents_backfills_and_dedupes(settings):
+    """父块回填：含 parent 的命中按父块去重、text 替换为父块全文并保留最高分；无 parent 命中原样。"""
+    scheme = make_advanced(settings)
+    parent = "第一章 总则\n第一条（目的） 为规范差旅报销……第二条（适用） 适用于全体员工。"
+    hits = [
+        {"text": "子块A", "score": 0.9, "metadata": {"parent": parent}},
+        {"text": "子块B", "score": 0.8, "metadata": {"parent": parent}},
+        {"text": "无父块片段", "score": 0.7, "metadata": {"source": "builtin"}},
+    ]
+    resolved = scheme._resolve_parents(hits)
+    assert len(resolved) == 2, "同一父块应去重为 1 条"
+    by_text = {h["text"]: h for h in resolved}
+    assert by_text.get(parent, {}).get("score") == 0.9, "父块回填应保留最高分"
+    assert by_text.get("无父块片段", {}).get("score") == 0.7, "无 parent 命中原样保留"

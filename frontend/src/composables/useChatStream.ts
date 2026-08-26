@@ -75,6 +75,8 @@ export interface StepEntry {
   steps?: string[]
   currentStep?: number
   planStatus?: string
+  /** classify / multi_hop_plan：running 占位（阶段进行中，内容未出，卡片显示转圈） */
+  running?: boolean
   /** retrieve / memory_read */
   query?: string
   hits?: HitItem[]
@@ -349,26 +351,53 @@ export function useChatStream(): ChatStream {
       case 'rewrite':
         pushStep({ kind: 'rewrite', query: ev.query, scheme: ev.scheme, rewrites: ev.rewrites, reason: ev.reason })
         break
-      case 'classify':
-        pushStep({
-          kind: 'classify',
-          query: ev.query,
-          scheme: ev.scheme,
-          retrieval_need: ev.retrieval_need,
-          retrieval_mode: ev.retrieval_mode,
-          complexity: ev.complexity,
-          generation_mode: ev.generation_mode,
-          confidence: ev.confidence,
-          reason: ev.reason,
-        })
+      case 'classify': {
+        // 语义路由：先收到 running 占位（卡片转圈），完成后再收到 done 就地填充同一张卡片
+        const last = stream.steps[stream.steps.length - 1]
+        if (last && last.kind === 'classify' && last.running) {
+          last.running = false
+          last.retrieval_need = ev.retrieval_need
+          last.retrieval_mode = ev.retrieval_mode
+          last.complexity = ev.complexity
+          last.generation_mode = ev.generation_mode
+          last.confidence = ev.confidence
+          last.reason = ev.reason
+        } else {
+          pushStep({
+            kind: 'classify',
+            query: ev.query,
+            scheme: ev.scheme,
+            running: ev.status === 'running',
+            retrieval_need: ev.retrieval_need,
+            retrieval_mode: ev.retrieval_mode,
+            complexity: ev.complexity,
+            generation_mode: ev.generation_mode,
+            confidence: ev.confidence,
+            reason: ev.reason,
+          })
+        }
         break
+      }
       case 'decompose':
         pushStep({ kind: 'decompose', query: ev.query, scheme: ev.scheme, sub_queries: ev.sub_queries })
         break
-      case 'multi_hop_plan':
-        // 规划-执行-验证：先展示多跳检索计划（目标/依赖），再逐跳检索
-        pushStep({ kind: 'multi_hop_plan', query: ev.query, scheme: ev.scheme, plan: ev.plan })
+      case 'multi_hop_plan': {
+        // 规划-执行-验证：先收到 running 占位（卡片转圈），完成后再收到 done 就地填充计划
+        const last = stream.steps[stream.steps.length - 1]
+        if (last && last.kind === 'multi_hop_plan' && last.running) {
+          last.running = false
+          last.plan = ev.plan
+        } else {
+          pushStep({
+            kind: 'multi_hop_plan',
+            query: ev.query,
+            scheme: ev.scheme,
+            running: ev.status === 'running',
+            plan: ev.plan,
+          })
+        }
         break
+      }
       case 'multi_hop': {
         // 逐跳流式：每跳一个事件，追加到当前多跳卡片（就地填充，逐跳呈现而非一次性返回全部跳）
         const last = stream.steps[stream.steps.length - 1]

@@ -59,11 +59,13 @@ export type AgentEvent =
       type: 'classify'
       query: string
       scheme?: string
-      retrieval_need: boolean
-      retrieval_mode: string
-      complexity: string
-      generation_mode: string
-      confidence: number
+      /** running：语义路由进行中（占位，决策未出）；done：携带完整五维路由决策 */
+      status?: 'running' | 'done'
+      retrieval_need?: boolean
+      retrieval_mode?: string
+      complexity?: string
+      generation_mode?: string
+      confidence?: number
       reason?: string
     }
   | { type: 'decompose'; query: string; scheme?: string; sub_queries: string[] }
@@ -71,8 +73,10 @@ export type AgentEvent =
       type: 'multi_hop_plan'
       query: string
       scheme?: string
+      /** running：多跳规划进行中（占位，计划未出）；done：携带完整计划 */
+      status?: 'running' | 'done'
       /** 规划-执行-验证：多跳检索计划（目标/依赖/可预判实体） */
-      plan: {
+      plan?: {
         steps: {
           target: string
           query: string

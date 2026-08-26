@@ -830,8 +830,10 @@ async def test_astream_simple_no_hits(settings):
     scheme = make_modular(settings)
     scheme.ingest(["公司规定员工每日按时打卡考勤。"])
     events = [ev async for ev in scheme.astream("你好", 2)]
-    classify = events[0]
+    # classify 先发 running 占位、再发 done 填充：取最后一条（done）验证完整决策
+    classify = [e for e in events if e["type"] == "classify"][-1]
     assert classify["type"] == "classify"
+    assert classify["status"] == "done"
     assert classify["retrieval_need"] is False
     assert classify["complexity"] == SIMPLE
     assert all(e["type"] != "retrieve" for e in events)
@@ -884,12 +886,17 @@ async def test_astream_multihop_events(settings):
         < kinds.index("multi_hop_verify")
         < kinds.index("retrieve")
     ), "事件顺序应为 classify → 规划 → 逐跳 → 验证 → 检索"
+    # classify / multi_hop_plan 均先发 running 占位、再发 done 填充：验证 running→done 的流式渐进呈现
+    classify_evs = [e for e in events if e["type"] == "classify"]
+    assert classify_evs[0]["status"] == "running" and classify_evs[-1]["status"] == "done"
+    plan_evs = [e for e in events if e["type"] == "multi_hop_plan"]
+    assert plan_evs[0]["status"] == "running" and plan_evs[-1]["status"] == "done"
     multi_hops = [e for e in events if e["type"] == "multi_hop"]
     assert len(multi_hops) >= 2, "多跳应逐跳流式产出多个 multi_hop 事件，而非一次性合并返回"
     assert [e["index"] for e in multi_hops] == list(range(1, len(multi_hops) + 1)), "逐跳事件 index 从 1 递增"
     assert all(e["hop"]["hits"] for e in multi_hops), "每一跳事件都应携带该跳命中"
     assert all(e["hop"]["target"] for e in multi_hops), "每一跳事件都应携带目标维度"
-    plan_ev = next(e for e in events if e["type"] == "multi_hop_plan")
+    plan_ev = plan_evs[-1]
     assert plan_ev["plan"]["steps"], "规划事件应携带子查询步骤"
     verify_ev = next(e for e in events if e["type"] == "multi_hop_verify")
     assert "covered" in verify_ev["verification"] and "missing" in verify_ev["verification"]
@@ -1003,6 +1010,77 @@ def test_llm_answerability_invalid_falls_back(monkeypatch):
     assert verdict.answerable is False, "空命中经规则回退应判不足"
 
 
+def test_llm_answerability_keeps_far_table_rows(monkeypatch):
+    """LLM 验证：证据按条保留 800 字符，表格型明细远在 200 字符外的关键行不丢失
+    （回归：表格明细的「李雪→产品部」位于 200 字符之外，原 200 截断会把该事实切掉误判缺失。
+    注：部门规模对比类查询已由确定性兜底短路（不依赖 LLM），故此处用人员属性查询验证截断行为）。"""
+    table = (
+        "第四章 关键人员权益明细\n"
+        "| 姓名 | 部门/岗位 | 入职 | 工龄(截至2026) | 年假 | 夜间交通报销 | 远程办公 | 大额报销终审 |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| 张三 | 研发部/算法工程师 | 2022-06-10 | 3年 | 7天 | 享有 | 可申请 | 无 |\n"
+        "| 王刚 | 研发部/部门主管 | 2018-03-01 | 7年 | 10天 | 享有 | 可申请 | 无（仅初审） |\n"
+        "| 李雪 | 产品部/产品经理 | 2023-03-05 | 2年 | 6天 | 不享有 | 可申请 | 无 |\n"
+        "| 陈丽 | 人力资源部/经理 | 2016-01-15 | 9年 | 10天 | 不享有 | 不可申请 | 无（终审年假） |\n"
+        "| 刘芳 | 财务部/主管 | 2017-08-22 | 8年 | 10天 | 不享有 | 不可申请 | 2000元以上二次复核 |\n"
+        "| 赵凯 | 市场部/市场专员 | 2024-02-20 | 1年 | 5天 | 不享有 | 可申请 | 无 |"
+    )
+    assert table.index("李雪 | 产品部") > 200, "测试前提：李雪行须位于 200 字符之外（原截断会切掉）"
+
+    captured = {}
+
+    class RecordingLLM:
+        def invoke(self, messages, *args, **kwargs):  # noqa: ARG002
+            captured["human"] = messages[1].content
+            return AIMessage(
+                content='{"answerable": false, "missing_facts": ["李雪的夜间交通报销"], '
+                '"recommendation": "escalate", "escalate_to": "multi_recall"}'
+            )
+
+    monkeypatch.setattr("app.rag.retrieval.answerability.get_chat_model", lambda scenario: RecordingLLM())
+    verdict = LLMAnswerabilityVerifier().verify("李雪的夜间交通报销是什么", [{"text": table}])
+    assert "李雪" in captured["human"] and "产品部" in captured["human"], (
+        "800 字符截断后「李雪→产品部」应仍出现在验证证据中，不应被误判为缺失"
+    )
+    assert verdict.recommendation == ESCALATE
+
+
+def test_llm_answerability_prompt_escalates_for_missing_structural_data(monkeypatch):
+    """LLM 验证提示词：明确「缺失库内结构化数据（部门编制规模/花名册/表格明细）→ escalate 而非 clarify」
+    （回归：验证器曾把「张三/李雪所在部门的人数」缺失判成需追问澄清，而数据本就存在于库内第五章）。"""
+    captured = {}
+
+    class RecordingLLM:
+        def invoke(self, messages, *args, **kwargs):  # noqa: ARG002
+            captured["system"] = messages[0].content
+            return AIMessage(content='{"answerable": true, "missing_facts": [], "recommendation": "answer"}')
+
+    monkeypatch.setattr("app.rag.retrieval.answerability.get_chat_model", lambda scenario: RecordingLLM())
+    LLMAnswerabilityVerifier().verify("张三的部门比李雪的部门哪个人多", [{"text": "研发部 130 人"}])
+    assert "部门编制规模" in captured["system"]
+    assert "escalate" in captured["system"]
+
+
+def test_llm_answerability_deterministic_escalates_without_llm(monkeypatch):
+    """确定性兜底：部门规模对比类查询、证据无规模数据 → 直接判 escalate（multihop），且不调用 LLM
+    （回归：LLM 曾仅凭人员花名册误判「可答/需追问」，绕过升级检索 → 第五章部门规模表永远召不回）。"""
+    called = {"n": 0}
+
+    class RecordingLLM:
+        def invoke(self, messages, *args, **kwargs):  # noqa: ARG002
+            called["n"] += 1
+            return AIMessage(content='{"answerable": true, "missing_facts": [], "recommendation": "answer"}')
+
+    monkeypatch.setattr("app.rag.retrieval.answerability.get_chat_model", lambda scenario: RecordingLLM())
+    hits = [{"text": "| 张三 | 研发部/算法工程师 | 2022-06-10 | 3年 |\n| 李雪 | 产品部/产品经理 | 2023-03-05 | 2年 |"}]
+    verdict = LLMAnswerabilityVerifier().verify("张三的部门比李雪的部门哪个人多", hits)
+    assert called["n"] == 0, "证据缺规模数据时应由确定性兜底直接升级，不依赖 LLM 判定"
+    assert verdict.answerable is False
+    assert verdict.recommendation == ESCALATE
+    assert verdict.escalate_to == "multihop"
+    assert "部门规模" in "".join(verdict.missing_facts)
+
+
 class ScriptedVerifier:
     """测试桩：按调用次数返回脚本化验证结论，记录调用次数（验证编排是否升级重检）。"""
 
@@ -1031,6 +1109,51 @@ def test_execute_plan_escalates_on_insufficient(settings):
     assert result.answerability is not None
     assert result.answerability["answerable"] is True
     assert result.reranked is True, "升级到多路召回后应执行重排"
+
+
+def test_execute_plan_department_size_escalation_reaches_chapter5(settings):
+    """回归：对比「张三/李雪所在部门人数」首轮多路召回未命中部门规模表 → 答案充分性建议升级 →
+    升级轮应命中第五章「各部门人员规模与编制」，最终判定可答（修复前会误报需追问澄清）。"""
+
+    class ComparisonClassifier:
+        def classify(self, query):
+            if "比" in query:
+                return RouteDecision(
+                    retrieval_need=True, retrieval_mode=MULTI_RECALL, complexity=DECOMPOSE,
+                    generation_mode=COMPARISON, confidence=0.92, reason="多实体对比",
+                )
+            return StubClassifier().classify(query)
+
+    ch4 = (
+        "第四章 关键人员权益明细\n"
+        "| 姓名 | 部门/岗位 | 入职 | 年假 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| 张三 | 研发部/算法工程师 | 2022-06-10 | 7天 |\n"
+        "| 李雪 | 产品部/产品经理 | 2023-03-05 | 6天 |\n"
+    )
+    ch5 = (
+        "第五章 各部门人员规模与编制\n"
+        "| 部门 | 在职人数 | 说明 |\n"
+        "| --- | --- | --- |\n"
+        "| 研发部 | 130 | 核心研发团队 |\n"
+        "| 产品部 | 120 | 产品体系 |\n"
+    )
+    verifier = ScriptedVerifier(
+        AnswerabilityVerdict(
+            answerable=False,
+            missing_facts=["张三所在部门的人数", "李雪所在部门的人数"],
+            recommendation=ESCALATE,
+            escalate_to="multi_recall",
+        ),
+        AnswerabilityVerdict(answerable=True, missing_facts=[], recommendation=ANSWER),
+    )
+    scheme = make_modular(settings, answerability=verifier, classifier=ComparisonClassifier())
+    scheme.ingest([ch4, ch5])
+    result = scheme.retrieve_full("张三的部门比李雪的部门哪个人多", top_k=2)
+    assert verifier.calls == 2, "首轮不足应升级一轮后复验"
+    assert result.answerability["answerable"] is True
+    joined = "\n".join(h.get("text", "") for h in result.hits)
+    assert "在职人数" in joined, "升级轮应命中第五章部门规模表（修复前此轮缺失会误报需追问澄清）"
 
 
 def test_execute_plan_multihop_insufficient_maps_to_clarify(settings):
