@@ -154,7 +154,7 @@ RAG 的最终回答**不额外调用「RAG 生成模型」**，而是把检索�
 | 通用设计 | 本项目做法 |
 |---------|-----------|
 | 方案隔离 | 同一语料、每方案独立集合（`knowledge_{scheme_id}`） |
-| 向量化 + 索引 | DashScope `text-embedding-v3` 稠密 + `text-sparse-embedding-v1` 稀疏（Qdrant 命名向量 / ES `dense_vector`） |
+| 向量化 + 索引 | DashScope `text-embedding-v3` 稠密 + 本地 n-gram 稀疏（不调用云端稀疏模型；Qdrant 命名向量 / ES `dense_vector`） |
 | 混合检索 | advanced 跨后端：Qdrant 稠密+稀疏 `Fusion.RRF` 与 ES BM25 并行召回 → 按文本去重 → qwen3-rerank 精排 |
 | 存储解耦 | 存储后端抽象接口，Qdrant / Elasticsearch 双实现（配置切换） |
 | 生成 | 拼装检索上下文 + 用户问题，交给 LLM 作答 |

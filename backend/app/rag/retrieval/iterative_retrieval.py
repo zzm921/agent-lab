@@ -22,6 +22,7 @@ import asyncio
 import json
 import re
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -186,16 +187,18 @@ class MultiHopRetriever(ABC):
         top_k: int,
         max_hops: int,
         recall_k: int,
+        seed_hits: list[dict[str, Any]] | None = None,
     ):
         """异步逐跳迭代检索：每完成一跳立即 yield 该跳记录（HopRecord），供前端逐跳流式展示。
 
         阻塞调用（双路召回、下一跳判断）放线程池执行，逐跳产出而不是一次性把全部跳返回；
         各跳命中由调用方按 RRF 合并后，再做重排/压缩等后处理。
         下一跳决策携带「累积证据」（此前所有跳的命中），参考已有内容推进而非重复查询。
+        seed_hits：既有证据（升级前的首轮命中），作为第 0 路参与累积证据与最终合并（增量补缺）。
         """
         current = query
         limit = self._hop_limit(max_hops)
-        all_hits: list[list[dict[str, Any]]] = []
+        all_hits: list[list[dict[str, Any]]] = [seed_hits] if seed_hits else []
         for hop_index in range(1, limit + 1):
             hits = await asyncio.to_thread(_multi_recall, store, current, recall_k)
             all_hits.append(hits)
@@ -227,10 +230,14 @@ def _multi_recall(store, query: str, recall_k: int) -> list[dict[str, Any]]:
 
     混合路（含稀疏/BM25）对人数/规模意图查询追加规模表规范词（见 expand_scale_query），
     弥补口语「多少人」与规模表表头「在职人数」的词汇鸿沟，让部门规模表可被命中。
+    两路召回互不依赖，放线程池并发执行——单跳延迟从两路耗时之和降为最慢一路。
     """
-    return reciprocal_rank_fusion(
-        [store.search(query, recall_k), store.hybrid_search(expand_scale_query(query), recall_k)]
-    )
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        dense_future = ex.submit(store.search, query, recall_k)
+        hybrid_future = ex.submit(store.hybrid_search, expand_scale_query(query), recall_k)
+        dense = dense_future.result()
+        hybrid = hybrid_future.result()
+    return reciprocal_rank_fusion([dense, hybrid])
 
 
 def _merge_hits(results: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -271,9 +278,10 @@ class LLMMultiHopRetriever(MultiHopRetriever):
         top_k: int,
         max_hops: int,
         recall_k: int,
+        seed_hits: list[dict[str, Any]] | None = None,
     ) -> MultiHopResult:
         hops: list[HopRecord] = []
-        all_hits: list[list[dict[str, Any]]] = []
+        all_hits: list[list[dict[str, Any]]] = [seed_hits] if seed_hits else []
         current = query
         for hop_index in range(1, max(1, int(max_hops)) + 1):
             hits = _multi_recall(store, current, recall_k)
@@ -357,9 +365,10 @@ class RuleMultiHopRetriever(MultiHopRetriever):
         top_k: int,
         max_hops: int,
         recall_k: int,
+        seed_hits: list[dict[str, Any]] | None = None,
     ) -> MultiHopResult:
         hops: list[HopRecord] = []
-        all_hits: list[list[dict[str, Any]]] = []
+        all_hits: list[list[dict[str, Any]]] = [seed_hits] if seed_hits else []
         current = query
         limit = min(max(1, int(max_hops)), _RULE_MAX_HOPS)
         for hop_index in range(1, limit + 1):
@@ -443,12 +452,22 @@ class PlanExecuteRetriever(MultiHopRetriever):
         return step.target in verification.covered
 
     def _execute(
-        self, query: str, store, budget: int, recall_k: int
+        self,
+        query: str,
+        store,
+        budget: int,
+        recall_k: int,
+        seed_hits: list[dict[str, Any]] | None = None,
     ) -> tuple[HopPlan, list[HopRecord], list[list[dict[str, Any]]], VerifyResult]:
-        """同步执行计划：规划 → 覆盖检测逐跳执行 → 验证闸门 + 局部修正 → 二次对表。"""
+        """同步执行计划：规划 → 覆盖检测逐跳执行 → 验证闸门 + 局部修正 → 二次对表。
+
+        seed_hits：调用方已有证据（如充分性验证升级前的首轮命中），作为覆盖检测与
+        合并命中的既有基础——已覆盖的步骤复用跳过、不重复检索，实现「增量补缺」而非整轮重跑。
+        """
         plan = self.planner.plan(query)
         hops: list[HopRecord] = []
-        all_hits: list[list[dict[str, Any]]] = []
+        # 首轮种子证据作为第 0 路（跳过标记由逐跳覆盖检测决定，seed 本身不计入 hops）
+        all_hits: list[list[dict[str, Any]]] = [seed_hits] if seed_hits else []
         retrieved = 0
         for step in plan.steps:
             if retrieved >= budget:
@@ -483,8 +502,11 @@ class PlanExecuteRetriever(MultiHopRetriever):
         top_k: int,
         max_hops: int,
         recall_k: int,
+        seed_hits: list[dict[str, Any]] | None = None,
     ) -> MultiHopResult:
-        plan, hops, all_hits, verification = self._execute(query, store, self._hop_limit(max_hops), recall_k)
+        plan, hops, all_hits, verification = self._execute(
+            query, store, self._hop_limit(max_hops), recall_k, seed_hits
+        )
         return MultiHopResult(
             hops=hops,
             hits=_merge_hits(all_hits),
@@ -499,15 +521,22 @@ class PlanExecuteRetriever(MultiHopRetriever):
         top_k: int,
         max_hops: int,
         recall_k: int,
+        seed_hits: list[dict[str, Any]] | None = None,
     ):
-        """异步流式：先产出 plan_running（规划中占位）→ plan 事件，再逐跳产出 hop 事件（覆盖跳过带标记），最后产出 verify 事件。"""
+        """异步流式：先产出 plan_running（规划中占位）→ plan 事件，再逐跳产出 hop 事件（覆盖跳过带标记），最后产出 verify 事件。
+
+        seed_hits：既有证据（如充分性验证升级前的首轮命中）作为第 0 路参与覆盖检测
+        与合并——已覆盖的步骤复用跳过、不重复检索（增量补缺）。
+        """
         # 规划是纯 LLM 阻塞调用：先发「规划中」占位，让前端立即展示多跳规划卡片，规划完成后再填充计划
+        # （放线程池执行，避免阻塞事件循环导致占位事件与 plan 事件攒在一起刷出）
         yield MultiHopEvent(kind="plan_running")
-        plan = self.planner.plan(query)
+        plan = await asyncio.to_thread(self.planner.plan, query)
         yield MultiHopEvent(kind="plan", plan=plan)
         budget = self._hop_limit(max_hops)
         hops: list[HopRecord] = []
-        all_hits: list[list[dict[str, Any]]] = []
+        # 首轮种子证据作为第 0 路（seed 本身不计入 hops，仅参与覆盖检测与最终合并）
+        all_hits: list[list[dict[str, Any]]] = [seed_hits] if seed_hits else []
         retrieved = 0
         idx = 0
         for step in plan.steps:

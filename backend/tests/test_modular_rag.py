@@ -4,7 +4,10 @@
 与测试桩 StubClassifier（替代已移除的规则路由，保证路由确定性）、RuleQueryDecomposer
 等确定性规则实现，不联网、不依赖 Key。
 """
+import asyncio
 import re
+import threading
+import time
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -51,7 +54,7 @@ from app.rag.routing.classifier import (
 from app.rag.routing.deictic_resolver import LLMDeicticResolver, RuleDeicticResolver
 from app.rag.routing.query_decompose import RuleQueryDecomposer
 from app.rag.routing.query_rewrite import RuleQueryRewriter
-from app.rag.schemes.modular import ExecutionPlan, ModularRagScheme
+from app.rag.schemes.modular import ExecutionPlan, ModuleCall, ModularRagScheme
 
 
 class StubClassifier:
@@ -825,6 +828,47 @@ async def test_astream_classify_before_retrieve(settings):
     assert kinds.index("classify") < kinds.index("retrieve")
 
 
+async def test_astream_slow_router_does_not_block_event_loop(settings):
+    """流式回归：路由等同步 LLM 调用必须放线程池——慢路由阻塞期间事件循环保持畅通，
+    「路由中」占位事件先行下发，而不是整条链路卡死到路由完成才一起刷出。"""
+    import time
+
+    class SlowClassifier:
+        def classify(self, query):
+            time.sleep(0.15)  # 模拟慢速 LLM 路由
+            return StubClassifier().classify(query)
+
+    scheme = make_modular(settings, classifier=SlowClassifier())
+    scheme.ingest(["公司要求出差结束后15天内提交报销材料。"])
+
+    ticks = 0
+
+    async def probe():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0)
+            ticks += 1
+
+    task = asyncio.create_task(probe())
+    await asyncio.sleep(0)
+
+    ticks_running = ticks_done = -1
+    try:
+        async for ev in scheme.astream("出差和报销有什么区别", 2):
+            if ev["type"] == "classify":
+                if ev.get("status") == "running":
+                    ticks_running = ticks
+                else:
+                    ticks_done = ticks
+    finally:
+        task.cancel()
+
+    assert ticks_running >= 0 and ticks_done >= 0, "应先产出「路由中」占位与「路由完成」事件"
+    assert ticks_done - ticks_running > 100, (
+        "慢速路由阻塞了事件循环：running 与 done 之间未让出，事件被攒到同一次刷出"
+    )
+
+
 async def test_astream_simple_no_hits(settings):
     """寒暄：classify（retrieval_need=False）后不产出检索事件（不检索不注入上下文）。"""
     scheme = make_modular(settings)
@@ -1193,6 +1237,48 @@ async def test_astream_insufficient_escalates_and_final_verdict(settings):
     )
 
 
+async def test_astream_plan_escalation_keeps_seed_evidence(settings):
+    """升级多跳的流式路径：种子证据必须并入最终命中（回归：曾只合并已执行跳的命中，
+    覆盖复用的跳不带命中，首轮证据——如「张三→研发部、李雪→产品部」的映射——在升级
+    重跑后被丢弃，答案充分性只见人数、不见归属，误判「无法回答」）。"""
+    class AllCoveredVerifier:
+        """全覆盖验证桩：让所有计划步骤都被判定已覆盖而复用跳过，仅剩种子证据参与合并。"""
+
+        def verify(self, query, plan, evidence_hits):  # noqa: ARG002
+            return VerifyResult(
+                covered=[s.target for s in plan.steps], missing=[], patched=[]
+            )
+
+    class TwoStepPlanner:
+        def plan(self, query):  # noqa: ARG002
+            return HopPlan(
+                steps=[
+                    PlanStep(target="基础流程", query="报销发票的流程是什么"),
+                    PlanStep(target="审批环节", query="报销审批的流程是什么", depends_on=["基础流程"]),
+                ]
+            )
+
+    scheme = make_modular(
+        settings,
+        multi_hop=PlanExecuteRetriever(TwoStepPlanner(), AllCoveredVerifier()),
+    )
+    plan = ExecutionPlan(
+        need_retrieval=True,
+        retrieval=[ModuleCall("multi_hop", params={"max_hops": 3})],
+        post_retrieval=[ModuleCall("rerank")],
+        generation_strategy=CITATION,
+    )
+    seed = [{"text": "报销单据需附发票，经部门审批通过后方可打款报销。", "score": 0.9}]
+    retrieve_hits = None
+    async for ev in scheme._astream_plan("报销发票的流程是什么", plan, 2, seed_hits=seed):
+        if ev["type"] == "retrieve":
+            retrieve_hits = ev["hits"]
+    assert retrieve_hits, "升级多跳应产出最终命中"
+    assert any("打款报销" in (h.get("text") or "") for h in retrieve_hits), (
+        "种子证据应并入升级重跑后的最终命中（增量补缺，首轮证据不得丢失）"
+    )
+
+
 async def test_astream_clarify_recommendation_does_not_escalate(settings):
     """流式：验证建议澄清（如缺指代/信息确实缺失）→ 不再升级检索，直接如实上报
     （回归：astream 曾无视 clarify 建议盲目升级，二次验证后可能越权作答）。"""
@@ -1269,3 +1355,297 @@ async def test_runner_insufficient_injects_clarify_directive(settings, sessions)
     assert injected, "应有注入检索结果的用户消息"
     latest = injected[-1]
     assert "追问" in latest and "不要编造" in latest, "不足时注入的指令应强制追问澄清、不编造"
+
+
+# ---- 生成控制：generation_mode 定制注入指令 ----
+
+def test_augment_query_citation_numbered_and_sources():
+    """citation：上下文块编号 [1]/[2]，附来源清单（卷/章/节/文件），要求句末标注来源。"""
+    rag_context = {
+        "name": "模块化 RAG",
+        "hits": [
+            {"text": "员工年假按工龄计算，满一年5天起。", "score": 0.9,
+             "metadata": {"volume": "卷九 差旅报销管理制度", "chapter": "第五章 年假", "section": "第一节 年假标准",
+                          "source": "云帆科技有限公司行政管理制度汇编.md"}},
+            {"text": "王刚作为部门主管年假按标准执行。", "score": 0.8,
+             "metadata": {"source": "云帆科技有限公司行政管理制度汇编.md"}},
+        ],
+    }
+    out = AgentRunner._augment_query("王刚有多少天年假", rag_context, generation_mode="citation")
+    assert "[1]" in out and "[2]" in out
+    assert "引用来源" in out
+    assert "卷九 差旅报销管理制度 / 第五章 年假 / 第一节 年假标准" in out
+    assert "云帆科技有限公司行政管理制度汇编.md" in out
+    assert "[相关度" not in out, "不应再使用旧的 [相关度 x] 前缀"
+
+
+def test_augment_query_comparison():
+    """comparison：要求 Markdown 对比表格 + 编号来源 + 引用清单。"""
+    rag_context = {
+        "name": "模块化 RAG",
+        "hits": [
+            {"text": "出差报销须附发票与行程单。", "score": 0.9, "metadata": {"source": "汇编.md"}},
+            {"text": "日常报销仅需发票。", "score": 0.8, "metadata": {"source": "汇编.md"}},
+        ],
+    }
+    out = AgentRunner._augment_query("出差和报销有什么区别", rag_context, generation_mode="comparison")
+    assert "Markdown 对比表格" in out
+    assert "[1]" in out and "[2]" in out
+    assert "引用来源" in out
+
+
+def test_augment_query_direct_no_numbering():
+    """direct：直接作答，不编号、不附来源清单。"""
+    rag_context = {
+        "name": "模块化 RAG",
+        "hits": [{"text": "员工年假满一年5天起。", "score": 0.9, "metadata": {"source": "汇编.md"}}],
+    }
+    out = AgentRunner._augment_query("今天星期几", rag_context, generation_mode="direct")
+    assert "无需标注引用来源" in out
+    assert "[1]" not in out
+    assert "来源：" not in out
+
+
+def test_augment_query_insufficient_overrides_mode():
+    """检索不足（追问澄清）指令优先级最高，覆盖 comparison 等生成模式。"""
+    rag_context = {
+        "name": "模块化 RAG",
+        "hits": [{"text": "王刚是研发部部门主管。", "score": 0.3, "metadata": {"source": "汇编.md"}}],
+    }
+    out = AgentRunner._augment_query(
+        "王刚的年假有多少天", rag_context, insufficient=True, generation_mode="comparison"
+    )
+    assert "追问补充" in out and "不要编造" in out
+    assert "Markdown" not in out
+
+
+# ---- HyDE：假想文档稠密召回并入 RRF 融合 ----
+
+class StubHyde:
+    """测试桩：固定假想文档（与查询不同），模拟 LLM HyDE 输出。"""
+
+    def __init__(self, doc: str = "发票报销提交时限规定"):
+        self.doc = doc
+
+    def expand(self, query: str) -> str:  # noqa: ARG002
+        return self.doc
+
+
+class RecordingStore(MemoryStore):
+    """记录 search 调用的 MemoryStore，供 HyDE 稠密路断言。"""
+
+    def __init__(self, collection="knowledge_modular"):
+        super().__init__(FakeEmbeddings(), collection=collection)
+        self.search_calls: list[str] = []
+
+    def search(self, query: str, top_k: int = 3):
+        self.search_calls.append(query)
+        return super().search(query, top_k)
+
+
+def test_modular_collect_includes_hyde_doc(settings):
+    """modular _collect：HyDE 假想文档应作为一路稠密检索并入 RRF 融合。"""
+    store = RecordingStore()
+    store.add("发票须在出差结束后10天内提交报销。")
+    store.add("员工年假满一年5天起。")
+    scheme = make_modular(settings, store=store, hyde=StubHyde(doc="发票报销提交时限规定"))
+    hits = scheme._collect("发票什么时候交", ["发票什么时候交"], [ModuleCall("search")], 3)
+    assert hits, "HyDE 并入后仍应有命中"
+    assert "发票报销提交时限规定" in store.search_calls, "HyDE 文档应被稠密检索"
+
+
+# ---- 多路召回并行化：多路检索并发执行而非串行累加 ----
+
+class ConcurrentStore(MemoryStore):
+    """记录并发调用峰值的 MemoryStore：多路召回并行时 max_active>1（串行恒为 1）。"""
+
+    def __init__(self, collection="knowledge_modular"):
+        super().__init__(FakeEmbeddings(), collection=collection)
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def _enter(self):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        time.sleep(0.05)  # 让各线程在临界区内重叠（sleep 释放 GIL，保证并发可被观测）
+        with self._lock:
+            self.active -= 1
+
+    def search(self, query: str, top_k: int = 3):
+        self._enter()
+        return super().search(query, top_k)
+
+    def hybrid_search(self, query: str, top_k: int = 3):
+        self._enter()
+        return super().hybrid_search(query, top_k)
+
+
+def test_multi_recall_runs_routes_concurrently():
+    """_multi_recall：向量 + 混合两路召回并发执行（回归：曾串行依次调用，延迟=两路之和）。"""
+    from app.rag.retrieval.iterative_retrieval import _multi_recall
+
+    store = ConcurrentStore()
+    store.add("发票须在出差结束后10天内提交报销。")
+    hits = _multi_recall(store, "发票什么时候交", 9)
+    assert hits, "并发双路召回后 RRF 融合非空"
+    assert store.max_active >= 2, f"两路应并发执行（重叠≥2），实际峰值 {store.max_active}"
+
+
+def test_modular_collect_runs_recalls_concurrently(settings):
+    """modular _collect：多子查询 × 多路召回并发执行（峰值重叠≥2），融合结果非空。"""
+    store = ConcurrentStore()
+    store.add("发票须在出差结束后10天内提交报销。")
+    store.add("员工年假满一年5天起。")
+    scheme = make_modular(settings, store=store, hyde=StubHyde(doc="发票报销提交时限规定"))
+    hits = scheme._collect(
+        "发票什么时候交",
+        ["发票什么时候交", "发票报销提交时限"],
+        [ModuleCall("multi_recall")],
+        3,
+    )
+    assert hits, "并发多路召回后 RRF 融合非空"
+    assert store.max_active >= 2, f"多路应并发执行（重叠≥2），实际峰值 {store.max_active}"
+
+
+# ---- 跨轮 seed 复用（保守方案）：候选证据 + 分数/相关性闸门 ----
+
+def test_cross_turn_seed_filters_by_score_and_relevance(settings):
+    """_cross_turn_seed：只保留高置信（≥0.5）且与当前查询共现实体/主题的上轮命中；
+    弱命中与跨主题命中（无共现 2 字词）一律丢弃（防「上次不准」传导伤害）。"""
+    scheme = make_modular(settings)
+    prev = [
+        {"text": "张三 研发部/算法工程师 2022-06-10 3年 7天", "score": 0.7},
+        {"text": "张三 研发部 部门主管 2018-03-01 7年", "score": 0.3},  # 分数过低 → 丢弃
+        {"text": "考勤月度迟到5次书面警告计入负面台账", "score": 0.8},  # 跨主题无共现 → 丢弃
+    ]
+    seed = scheme._cross_turn_seed("张三的部门有多少人", prev)
+    assert len(seed) == 1, f"应只保留 1 条高置信相关命中，实际 {seed}"
+    assert "研发部/算法工程师" in seed[0]["text"]
+    assert all("迟到5次" not in (h.get("text") or "") for h in seed)
+
+
+def test_cross_turn_seed_empty_when_no_prev(settings):
+    """_cross_turn_seed：无上一轮命中/空列表 → 返回空（照常全新检索）。"""
+    scheme = make_modular(settings)
+    assert scheme._cross_turn_seed("张三的部门有多少人", None) == []
+    assert scheme._cross_turn_seed("张三的部门有多少人", []) == []
+
+
+def test_collect_merges_seed_as_extra_route(settings):
+    """modular _collect：seed 作为额外一路候选参与 RRF 融合——不丢、也不挤占当前轮召回。"""
+    store = RecordingStore()
+    store.add("发票须在出差结束后10天内提交报销。")
+    scheme = make_modular(settings, store=store, hyde=StubHyde())
+    seed = [{"text": "员工年假满一年5天起。", "score": 0.9}]
+    hits = scheme._collect(
+        "发票什么时候交", ["发票什么时候交"], [ModuleCall("search")], 3, seed_hits=seed
+    )
+    texts = [h.get("text") or "" for h in hits]
+    assert any("年假满一年" in t for t in texts), "seed 应并入最终命中"
+    assert any("发票须在出差" in t for t in texts), "当前轮召回仍应照常返回"
+
+
+async def test_astream_uses_cross_turn_seed_in_first_plan(settings):
+    """modular astream：跨轮 seed 经 _cross_turn_seed 过滤后并入首轮召回，并下发 seed_reuse 事件。"""
+    store = RecordingStore()
+    store.add("员工年假满一年5天起。")
+    scheme = make_modular(settings, store=store, hyde=StubHyde(doc="年假满一年5天起"))
+    seed = [{"text": "员工年假满一年5天起。", "score": 0.9}]
+    events = [ev async for ev in scheme.astream("年假怎么算", 3, seed_hits=seed)]
+    seed_events = [ev for ev in events if ev["type"] == "seed_reuse"]
+    assert seed_events and seed_events[0]["count"] == 1, "应下发 seed_reuse 事件（可观测）"
+    final = next(ev for ev in reversed(events) if ev["type"] == "retrieve")
+    assert any("年假满一年" in (h.get("text") or "") for h in final["hits"]), (
+        "seed 应并入首轮最终命中"
+    )
+
+
+async def test_runner_reuses_last_hits_as_next_seed(settings, sessions):
+    """runner 跨轮：上一轮最终命中存入 _last_hits，下一轮作为 seed_hits 传入 modular 方案。"""
+    class CrossTurnScheme:
+        id = "modular"
+        name = "模块化 RAG"
+
+        def __init__(self):
+            self.received: list = []
+
+        async def astream(self, query, top_k=None, context=None, seed_hits=None):  # noqa: ARG002
+            self.received.append(list(seed_hits) if seed_hits else None)
+            yield {
+                "type": "retrieve",
+                "query": query,
+                "scheme": "modular",
+                "hits": [{"text": "张三 研发部 算法工程师", "score": 0.9}],
+            }
+
+    scheme = CrossTurnScheme()
+
+    class FakeRagManager:
+        def resolve(self, rag_scheme):  # noqa: ARG002
+            return scheme
+
+    class FakeRegistry:
+        def __init__(self):
+            self.rag_manager = FakeRagManager()
+
+    llm = FakeChatModel(
+        script=[
+            AIMessage(content="张三在研发部。"),
+            AIMessage(content="研发部130人。"),
+        ]
+    )
+    runner = AgentRunner(settings, llm, FakeRegistry(), sessions)
+    # 第 1 轮：无既有 seed
+    async for _ in runner.stream(
+        "s1", "张三是什么部门的", "react", [], "standard", "never",
+        rag_scheme="modular", rag_enabled=True,
+    ):
+        pass
+    # 第 2 轮：应把上一轮命中作为 seed_hits 传入（供方案内过滤后复用）
+    async for _ in runner.stream(
+        "s1", "他的部门有多少人", "react", [], "standard", "never",
+        rag_scheme="modular", rag_enabled=True,
+    ):
+        pass
+    assert scheme.received[0] is None, "首轮不应有 seed"
+    assert scheme.received[1] == [{"text": "张三 研发部 算法工程师", "score": 0.9}], (
+        "次轮应收到上一轮命中作为 seed_hits"
+    )
+
+
+# ---- 上下文压缩：语义去重 ----
+
+class DictEmbeddings:
+    """确定性桩：文本 → 预置向量，便于精确控制语义相似度（同义复述给同一向量）。"""
+
+    def __init__(self, vectors: dict):
+        self.vectors = vectors
+
+    def embed_query(self, text: str):
+        return self.vectors[text]
+
+
+def test_context_compress_semantic_dedup():
+    """语义去重：与已保留块高相似（同向量）的同义复述只留最高分；语义不同块保留；
+    未提供 embeddings 时仅精确去重，不触发语义去重。"""
+    near = [1.0, 0.0, 0.0]
+    other = [0.0, 1.0, 0.0]
+    hits = [
+        {"text": "公司规定员工每日按时打卡考勤。", "score": 0.9},
+        {"text": "公司规定员工每日按时打卡考勤", "score": 0.85},  # 同义复述（同向量）→ 语义去重
+        {"text": "加班需要提前向部门主管申请审批。", "score": 0.7},
+    ]
+    emb = DictEmbeddings(
+        {"公司规定员工每日按时打卡考勤。": near, "公司规定员工每日按时打卡考勤": near,
+         "加班需要提前向部门主管申请审批。": other}
+    )
+    compressor = ExtractiveContextCompressor(embeddings=emb, semantic_threshold=0.95)
+    kept, metrics = compressor.compress("考勤", hits, top_k=5)
+    assert metrics["original"] == 3
+    assert metrics["kept"] == 2, "同义复述应被语义去重"
+    assert kept[0]["text"] == "公司规定员工每日按时打卡考勤。"
+    plain = ExtractiveContextCompressor()
+    _, m2 = plain.compress("考勤", hits, top_k=5)
+    assert m2["kept"] == 3, "未提供 embeddings 时仅精确去重，不触发语义去重"

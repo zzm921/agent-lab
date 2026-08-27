@@ -16,6 +16,7 @@ from typing import Any
 from app.memory.stores.base import StoreBackend
 from app.rag.base import RagScheme, RetrieveResult
 from app.rag.retrieval.reranker import Reranker, build_reranker
+from app.rag.routing.query_hyde import HydeExpander, build_hyde
 from app.rag.routing.query_rewrite import QueryRewriter, build_rewriter
 
 # 语义分块参数
@@ -56,6 +57,7 @@ class AdvancedRagScheme(RagScheme):
         rerank_model: str = "qwen3-rerank",
         rewriter: QueryRewriter | None = None,
         reranker: Reranker | None = None,
+        hyde: HydeExpander | None = None,
     ):
         super().__init__(embeddings, store, top_k)
         self.rewriter = (
@@ -64,6 +66,7 @@ class AdvancedRagScheme(RagScheme):
         self.reranker = (
             reranker if reranker is not None else build_reranker(embeddings, model=rerank_model)
         )
+        self.hyde = hyde if hyde is not None else build_hyde()
 
     # ---- 入库拆分优化：结构感知 + 父子分层分块 ----
 
@@ -324,6 +327,11 @@ class AdvancedRagScheme(RagScheme):
             for hit in self.store.search(variant, recall_k):        # 稠密语义路
                 candidates.setdefault(hit.get("text", ""), hit)
             for hit in self.store.hybrid_search(variant, recall_k):  # 混合路（稠密+稀疏/关键词）
+                candidates.setdefault(hit.get("text", ""), hit)
+        # HyDE：用 LLM 生成的假想答案文档做一次稠密 doc-space 召回（规则回退时为原查询，跳过）
+        hyde_doc = self.hyde.expand(query)
+        if hyde_doc and hyde_doc != query:
+            for hit in self.store.search(hyde_doc, recall_k):
                 candidates.setdefault(hit.get("text", ""), hit)
         hits = list(candidates.values())
         # 检索后精排：交叉编码器重排（失败回退词法），取 Top-K

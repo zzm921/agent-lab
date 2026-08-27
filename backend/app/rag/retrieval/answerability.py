@@ -93,8 +93,35 @@ class LLMAnswerabilityVerifier(AnswerabilityVerifier):
     # 复用多跳验证场景（qwen3.5-flash / temp=0.2 / max_tokens=400 / thinking=False，见 service.DEFAULT_PROFILES）
     scenario = "rag_verify"
 
+    # 高置信快通道（免 LLM）护栏：检索命中置信度与证据充分性的最低要求。
+    # 企业级动机：多数查询是库内直接事实（制度/人事），高分命中即可答；验证 LLM 调用是
+    # 链路延迟大头，快通道把最常见场景的验证调用归零。
+    # 防误判护栏：① top1 分数 ≥ 阈值；② 证据文本足够长；③ 查询领域关键词均已出现于证据中。
+    _FAST_LANE_MIN_SCORE = 0.75
+    _FAST_LANE_MIN_EVIDENCE = 120
+
     def __init__(self):
         self._fallback = RuleAnswerabilityVerifier()
+
+    @staticmethod
+    def _fast_lane(query: str, hits: list[dict[str, Any]]) -> bool:
+        """高置信快通道判定：命中置信度高 + 证据充分 + 领域关键词全覆盖 → 免 LLM 直判可答。
+
+        纯分数前置有误判风险（高分命中但缺关键子事实，如部门人数对比缺规模表——
+        该场景已由 _needs_dept_scale_escalate 确定性短路，先于本快通道判定）。
+        """
+        if not hits:
+            return False
+        top = max((h.get("score") or 0.0) for h in hits)
+        if top < LLMAnswerabilityVerifier._FAST_LANE_MIN_SCORE:
+            return False
+        evidence = "\n".join(h.get("text", "") or "" for h in hits)
+        if len(evidence) < LLMAnswerabilityVerifier._FAST_LANE_MIN_EVIDENCE:
+            return False
+        query_kws = [kw for kw in _KEYWORDS if kw in query]
+        if query_kws and any(kw not in evidence for kw in query_kws):
+            return False
+        return True
 
     def verify(self, query: str, hits: list[dict[str, Any]]) -> AnswerabilityVerdict:
         # 确定性兜底优先：部门规模对比类查询缺规模表 → 直接升级检索（不依赖 LLM 判定）。
@@ -106,6 +133,21 @@ class LLMAnswerabilityVerifier(AnswerabilityVerifier):
                 missing_facts=["部门规模/在职人数（需部门编制规模表）"],
                 recommendation=ESCALATE,
                 escalate_to="multihop",
+            )
+        # 闸门前置（免 LLM 白跑）：空命中 → 直接升级多路召回
+        if not hits:
+            return AnswerabilityVerdict(
+                answerable=False,
+                missing_facts=["未检索到任何相关内容"],
+                recommendation=ESCALATE,
+                escalate_to="multi_recall",
+            )
+        # 高置信快通道（免 LLM）：分数/证据/关键词三重护栏满足 → 直接可答
+        if self._fast_lane(query, hits):
+            return AnswerabilityVerdict(
+                answerable=True,
+                missing_facts=[],
+                recommendation=ANSWER,
             )
         llm = get_chat_model(self.scenario)
         if llm is None:

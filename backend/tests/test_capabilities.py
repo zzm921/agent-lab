@@ -1,4 +1,4 @@
-"""能力注册表：内置能力可用性判断（未配 Embedding → rag/memory 不适配）。"""
+"""能力注册表：内置能力可用性判断。rag/memory 已不在内置能力目录（见各测试注释）。"""
 from app.capabilities.mcp import McpManager
 from app.capabilities.registry import CapabilityRegistry
 from app.memory.session_store import SessionStore
@@ -9,17 +9,19 @@ def test_builtin_available(settings, sessions, rag_manager, embeddings):
     caps = {c["id"]: c for c in registry.list()}
     assert caps["calculator"]["availability"] == "available"
     assert caps["time_now"]["availability"] == "available"
-    assert caps["rag"]["availability"] == "available"
-    assert caps["memory"]["availability"] == "available"
+    assert caps["web_search"]["availability"] == "available"
+    assert caps["run_command"]["availability"] == "available"
 
 
-def test_rag_memory_unavailable_without_embedding(settings, sessions):
+def test_rag_memory_not_in_directory(settings, sessions):
+    """rag/memory 已从内置能力目录移除（重构 RAG 为独立检索阶段后）：
+    rag 由 runner 前置检索 + 方案目录（rag_schemes）承接，memory 未作为能力卡片暴露，
+    因此不再以「未配 Embedding → 不适配」的形式出现在目录中。"""
     registry = CapabilityRegistry(settings, sessions, McpManager("{}"), None, None)
     caps = {c["id"]: c for c in registry.list()}
     assert caps["calculator"]["availability"] == "available"
-    assert caps["rag"]["availability"] == "unavailable"
-    assert caps["memory"]["availability"] == "unavailable"
-    assert "Embedding" in caps["rag"]["unavailable_reason"]
+    assert "rag" not in caps
+    assert "memory" not in caps
 
 
 def test_tool_for_unavailable_returns_none(settings, sessions):

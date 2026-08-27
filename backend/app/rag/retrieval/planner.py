@@ -38,7 +38,7 @@ class MultiHopPlanner(ABC):
 class LLMMultiHopPlanner(MultiHopPlanner):
     """LLM 规划：按场景懒取模型，一次调用输出结构化计划 JSON；异常回退规则规划器。"""
 
-    # 本阶段使用的模型/参数场景（qwen3.5-flash / temp=0.2 / max_tokens=500 / thinking=True，见 service.DEFAULT_PROFILES）
+    # 本阶段使用的模型/参数场景（qwen3.5-flash / temp=0.2 / max_tokens=300 / thinking=False，见 service.DEFAULT_PROFILES）
     scenario = "rag_plan"
 
     def __init__(self):

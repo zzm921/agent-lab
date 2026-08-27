@@ -39,14 +39,31 @@ def test_embed_documents(monkeypatch):
     assert emb.embed_documents([]) == []
 
 
-def test_embed_sparse(monkeypatch):
+def test_embed_sparse_uses_local_without_cloud_call(monkeypatch):
+    """稀疏向量不再调用云端模型：embed_sparse_query 直接用本地 n-gram，不触达 TextEmbedding.call。"""
     def fake_call(**kwargs):
-        assert kwargs["model"] == "text-sparse-embedding-v1"
-        return _resp(200, [{"token_ids": [3, 7], "embeddings": [0.6, 0.4]}])
+        raise AssertionError("稀疏向量不应调用云端 Embedding 模型")
 
     monkeypatch.setattr("app.llm.dashscope_embeddings.TextEmbedding.call", staticmethod(fake_call))
     emb = DashScopeEmbeddings("test-key")
-    assert emb.embed_sparse_query("关键词") == {"indices": [3, 7], "values": [0.6, 0.4]}
+    sparse = emb.embed_sparse_query("发票 报销 时限")
+    assert set(sparse) == {"indices", "values"}
+    assert len(sparse["indices"]) > 0
+    assert len(sparse["indices"]) == len(sparse["values"])
+    # 本地确定性：相同文本产出一致向量
+    assert emb.embed_sparse_query("发票 报销 时限") == sparse
+
+
+def test_embed_sparse_documents_local(monkeypatch):
+    def fake_call(**kwargs):
+        raise AssertionError("稀疏向量不应调用云端 Embedding 模型")
+
+    monkeypatch.setattr("app.llm.dashscope_embeddings.TextEmbedding.call", staticmethod(fake_call))
+    emb = DashScopeEmbeddings("test-key")
+    docs = emb.embed_sparse_documents(["公司规定", "报销流程"])
+    assert len(docs) == 2
+    assert all(set(d) == {"indices", "values"} for d in docs)
+    assert emb.embed_sparse_documents([]) == []
 
 
 def test_api_error_raises_config_error(monkeypatch):
@@ -57,19 +74,6 @@ def test_api_error_raises_config_error(monkeypatch):
     emb = DashScopeEmbeddings("test-key")
     with pytest.raises(ConfigError):
         emb.embed_query("触发错误")
-
-
-def test_sparse_falls_back_to_local_when_model_unavailable(monkeypatch):
-    """稀疏模型不可用（400）时不抛错，回退本地 n-gram 稀疏向量，保证混合检索可用。"""
-    def fake_call(**kwargs):
-        return _resp(400, [])
-
-    monkeypatch.setattr("app.llm.dashscope_embeddings.TextEmbedding.call", staticmethod(fake_call))
-    emb = DashScopeEmbeddings("test-key")
-    sparse = emb.embed_sparse_query("ReAct 模式调用工具")
-    assert set(sparse) == {"indices", "values"}
-    assert len(sparse["indices"]) > 0
-    assert len(sparse["indices"]) == len(sparse["values"])
 
 
 def test_local_sparse_is_deterministic():

@@ -77,10 +77,10 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
     },
     {
-        "scenario": "rag_plan",  # 多跳子查询规划：输出结构化计划 JSON（推理型，开启思考）
+        "scenario": "rag_plan",  # 多跳子查询规划：输出结构化计划 JSON（轻量决策，关闭思考以加速）
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": True},
+        "params": {"temperature": 0.2, "max_tokens": 300, "enable_thinking": False},
     },
     {
         "scenario": "rag_verify",  # 多跳验证对表：输出结构化 JSON（轻量决策，关闭思考）
@@ -90,6 +90,12 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "scenario": "rag_next_step",  # 多跳下一跳决策：输出结构化 JSON（轻量决策，关闭思考）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_hyde",  # HyDE 假想答案文档生成：输出一段连贯说明文字
         "provider": "dashscope",
         "model": "qwen3.5-flash",
         "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},

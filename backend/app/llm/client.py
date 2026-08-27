@@ -43,5 +43,4 @@ def create_embeddings(fake: bool = False):
     return DashScopeEmbeddings(
         api_key=settings.embedding_api_key,
         model=settings.embedding_model,
-        sparse_model=settings.sparse_embedding_model,
     )

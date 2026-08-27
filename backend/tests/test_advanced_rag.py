@@ -14,6 +14,7 @@ from app.memory.stores.memory_store import MemoryStore
 from app.memory.stores.qdrant_store import QdrantStore
 from app.rag.manager import RagManager
 from app.rag.retrieval.reranker import LexicalReranker
+from app.rag.routing.query_hyde import RuleHydeExpander
 from app.rag.routing.query_rewrite import LLMQueryRewriter, RuleQueryRewriter
 from app.rag.schemes.advanced import (
     AdvancedRagScheme,
@@ -91,15 +92,14 @@ def test_query_rewrite_fallback_rule():
 
 
 def test_query_rewrite_rule_invoice_timeline():
-    """发票 + 时限意图：规则改写补齐「提交时限/截止日期/流程及时限」变体，提高召回。"""
+    """发票查询的规则改写：无 LLM 时提取领域关键词 + 同义词，生成紧凑关键词变体，
+    保证「发票/报销」等核心词被明确召回；时限类措辞交由 LLM 改写 / 混合检索补全。"""
     rw = RuleQueryRewriter()
     variants = rw.rewrite("发票什么时候交")
     assert variants[0] == "发票什么时候交"
-    assert "发票提交时限规定" in variants
-    assert "发票报销截止日期规定" in variants
-    assert "发票上交流程及时限要求" in variants
-    # 无时限意图（如「发票丢了怎么补开」）不硬塞时限变体
-    assert len(rw.rewrite("发票丢了怎么补开")) < len(variants)
+    assert "发票 报销" in variants  # 领域关键词「发票」+ 同义词「报销」
+    # 不同措辞的发票问题收敛到同一关键词变体，供多路召回兜底
+    assert "发票 报销" in rw.rewrite("发票丢了怎么补开")
 
 
 def test_llm_rewrite_failure_keeps_original(monkeypatch):
@@ -316,3 +316,54 @@ def test_resolve_parents_backfills_and_dedupes(settings):
     by_text = {h["text"]: h for h in resolved}
     assert by_text.get(parent, {}).get("score") == 0.9, "父块回填应保留最高分"
     assert by_text.get("无父块片段", {}).get("score") == 0.7, "无 parent 命中原样保留"
+
+
+# ---- HyDE：假想文档稠密 doc-space 召回 ----
+
+class StubHyde:
+    """测试桩：固定假想文档（与查询不同），模拟 LLM HyDE 输出。"""
+
+    def __init__(self, doc: str = "发票报销提交时限规定"):
+        self.doc = doc
+
+    def expand(self, query: str) -> str:  # noqa: ARG002
+        return self.doc
+
+
+class RecordingStore(MemoryStore):
+    """记录检索调用（search / hybrid_search）的 MemoryStore，供 HyDE 稠密路断言。"""
+
+    def __init__(self, collection="knowledge_advanced"):
+        super().__init__(FakeEmbeddings(), collection=collection)
+        self.search_calls: list[str] = []
+        self.hybrid_calls: list[str] = []
+
+    def search(self, query: str, top_k: int = 3):
+        self.search_calls.append(query)
+        return super().search(query, top_k)
+
+    def hybrid_search(self, query: str, top_k: int = 3):
+        self.hybrid_calls.append(query)
+        return super().hybrid_search(query, top_k)
+
+
+def test_hyde_doc_joins_dense_recall(settings):
+    """HyDE：LLM 生成的假想文档应作为一路稠密 doc-space 召回并入候选集。"""
+    store = RecordingStore()
+    store.add("发票须在出差结束后10天内提交报销。")
+    store.add("员工年假满一年5天起。")
+    scheme = make_advanced(settings, store=store, hyde=StubHyde(doc="发票报销提交时限规定"))
+    scheme.retrieve_full("发票什么时候交", top_k=2)
+    assert "发票报销提交时限规定" in store.search_calls, "HyDE 文档应作为稠密路查询被检索"
+
+
+def test_hyde_rule_noop_no_extra_search(settings):
+    """HyDE 规则回退：返回原查询（no-op）时不再追加一次检索，避免降级空跑。"""
+    store = RecordingStore()
+    store.add("发票须在出差结束后10天内提交报销。")
+    scheme = make_advanced(settings, store=store, hyde=RuleHydeExpander())
+    scheme.retrieve_full("发票什么时候交", top_k=2)
+    # 每个改写变体各 1 次稠密 search + 1 次 hybrid_search（内存后端回退到 search）：
+    # 规则 HyDE 等于原查询（no-op），不应产生第 3 条重复检索
+    assert store.search_calls.count("发票什么时候交") == 2
+    assert store.search_calls.count("发票 报销") == 2

@@ -16,8 +16,6 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_model: str = "text-embedding-v3"
-    # 稀疏向量模型（为后续 advanced 混合检索预留；账号未开通时回退本地 n-gram）
-    sparse_embedding_model: str = "text-sparse-embedding-v1"
 
     # 检索后端选型：qdrant（默认）| elasticsearch | memory（强制内存，离线/测试）
     rag_store_backend: str = "qdrant"

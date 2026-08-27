@@ -30,10 +30,16 @@ class ContextCompressor(ABC):
 
 
 class ExtractiveContextCompressor(ContextCompressor):
-    """提取式压缩：去重 + top_k 截断 + 超长块句边界截断（纯本地，确定性）。"""
+    """提取式压缩：去重（精确 + 语义）+ top_k 截断 + 超长块句边界截断（纯本地，确定性）。
 
-    def __init__(self, max_chars: int = 200):
+    embeddings：提供时追加语义去重——与已保留块向量相似度超过 semantic_threshold 的
+    重复表达只保留分数最高的一条（真 Embedding 下生效；未提供则仅精确去重）。
+    """
+
+    def __init__(self, max_chars: int = 200, embeddings=None, semantic_threshold: float = 0.95):
         self.max_chars = max_chars
+        self.embeddings = embeddings
+        self.semantic_threshold = semantic_threshold
 
     def compress(
         self, query: str, hits: list[dict[str, Any]], top_k: int
@@ -41,7 +47,7 @@ class ExtractiveContextCompressor(ContextCompressor):
         original = len(hits)
         truncated = 0
 
-        # 1) 去重（保留最高分）
+        # 1) 精确去重（保留最高分）
         deduped: dict[str, dict[str, Any]] = {}
         for h in hits:
             text = h.get("text", "")
@@ -49,7 +55,14 @@ class ExtractiveContextCompressor(ContextCompressor):
                 deduped[text] = h
         unique = sorted(deduped.values(), key=self._score, reverse=True)
 
-        # 2) top_k 截断 + 超长截断
+        # 2) 语义去重：跨路召回的同义重复表达（换词复述）按向量相似度滤除，只留最高分
+        if self.embeddings is not None:
+            try:
+                unique = self._semantic_dedup(unique)
+            except Exception:  # noqa: BLE001 — 语义去重为增强项，Embedding 失败时回退精确去重结果
+                pass
+
+        # 3) top_k 截断 + 超长截断
         kept = []
         for h in unique[: max(1, top_k)]:
             text = h.get("text", "") or ""
@@ -60,6 +73,29 @@ class ExtractiveContextCompressor(ContextCompressor):
 
         metrics = {"original": original, "kept": len(kept), "truncated": truncated}
         return kept, metrics
+
+    def _semantic_dedup(self, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """按分数降序贪心去重：与已保留块余弦相似度超阈值即丢弃（保留更高分）。"""
+        kept: list[dict[str, Any]] = []
+        kept_vecs: list[list[float]] = []
+        for h in hits:
+            vec = self.embeddings.embed_query(h.get("text", "") or "")
+            if any(self._cosine(vec, kept_vec) > self.semantic_threshold for kept_vec in kept_vecs):
+                continue
+            kept.append(h)
+            kept_vecs.append(vec)
+        return kept
+
+    @staticmethod
+    def _cosine(a: list[float], b: list[float]) -> float:
+        if len(a) != len(b) or not a:
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        na = sum(x * x for x in a) ** 0.5
+        nb = sum(y * y for y in b) ** 0.5
+        if na == 0 or nb == 0:
+            return 0.0
+        return dot / (na * nb)
 
     @staticmethod
     def _score(h: dict[str, Any]) -> float:
@@ -82,6 +118,8 @@ class ExtractiveContextCompressor(ContextCompressor):
         return head
 
 
-def build_compressor(max_chars: int = 200) -> ContextCompressor:
-    """构造提取式上下文压缩器（纯本地，无外部依赖）。"""
-    return ExtractiveContextCompressor(max_chars=max_chars)
+def build_compressor(max_chars: int = 200, embeddings=None, semantic_threshold: float = 0.95) -> ContextCompressor:
+    """构造提取式上下文压缩器（纯本地，无外部依赖；embeddings 提供时启用语义去重）。"""
+    return ExtractiveContextCompressor(
+        max_chars=max_chars, embeddings=embeddings, semantic_threshold=semantic_threshold
+    )

@@ -88,7 +88,7 @@ Naive RAG ──→ Advanced RAG ──→ Modular RAG ──→ Graph RAG ─�
 本框架把 RAG 做成**多方案可选框架**：同一份内置语料（虚构「科创公司员工行政、考勤、福利与差旅全管理制度」）按方案写入各自独立的集合（`knowledge_{scheme_id}`），侧边栏可随时切换方案，直观对比检索与回答差异。当前已落地 **naive / advanced / modular** 三方案，graph / agentic 在同一框架上规划扩展。
 
 - **naive（朴素 RAG）**：固定切块 + 纯稠密向量语义检索（DashScope `text-embedding-v3`），最简基线——详见 [naive-rag.md](naive-rag.md)；
-- **advanced（高级 RAG）**：语义分块 + Query 重写（Multi-Query）+ 混合检索（稠密 + 稀疏 `text-sparse-embedding-v1`，Qdrant 内置 RRF 融合）+ Rerank 精排，补足关键词盲区——详见 [advanced-rag.md](advanced-rag.md)；
+- **advanced（高级 RAG）**：语义分块 + Query 重写（Multi-Query）+ 混合检索（稠密 + 本地 n-gram 稀疏，Qdrant 内置 RRF 融合）+ Rerank 精排，补足关键词盲区——详见 [advanced-rag.md](advanced-rag.md)；
 - **modular（模块化 RAG）**：前置语义路由（结构化路由决策）→ 执行计划 → 动态编排模块执行；含查询分解、上下文压缩与多跳（规划-执行-验证）迭代检索——详见 [modular-rag.md](modular-rag.md)。
 
 存储层以「存储后端」抽象解耦，Qdrant 与 Elasticsearch 均已实现（advanced / modular 默认跨后端多路召回）；未配置后端或连接失败时回退内存检索，离线/测试可跑通。

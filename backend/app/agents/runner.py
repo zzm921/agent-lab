@@ -51,6 +51,9 @@ class AgentRunner:
         self.sessions = session_store
         self._configs: dict[str, dict] = {}
         self._specs: dict[str, tuple] = {}
+        # 跨轮 seed 复用：按会话记录上一轮最终检索命中（已含重排/压缩），
+        # 供 modular 下一轮作为「候选证据」复用（经 _cross_turn_seed 分数/相关性闸门过滤）。
+        self._last_hits: dict[str, list[dict]] = {}
 
     def _scenario_llm(self, scenario: str):
         """取指定场景的模型：有 LLMService 走场景配置，否则回退单模型。"""
@@ -80,7 +83,7 @@ class AgentRunner:
             "recursion_limit": self.harness.recursion_limit(),
         }
 
-    async def _make_inputs(self, graph, config, message, strategy, rag_context=None, insufficient=False):
+    async def _make_inputs(self, graph, config, message, strategy, rag_context=None, insufficient=False, generation_mode=None):
         snap = await graph.aget_state(config)
         msgs = []
         if snap is not None and snap.values:
@@ -88,34 +91,77 @@ class AgentRunner:
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
             msgs.append(SystemMessage(content=f"{base}\n\n{TOOL_RETRY_HINT}"))
-        msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient)))
+        msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient, generation_mode)))
         return {"messages": msgs}
 
     @staticmethod
-    def _augment_query(message: str, rag_context: dict | None, insufficient: bool = False) -> str:
+    def _build_sources(hits: list[dict]) -> list[str]:
+        """从命中元数据生成来源清单：卷/章/节 → 文件 → 兜底「知识库」。"""
+        sources = []
+        for i, h in enumerate(hits, start=1):
+            meta = h.get("metadata") or {}
+            parts = [x for x in (meta.get("volume"), meta.get("chapter"), meta.get("section")) if x]
+            if parts:
+                label = " / ".join(parts)
+            else:
+                src = meta.get("source")
+                label = src if src and src != "builtin" else "知识库"
+            sources.append(f"[{i}] {label}")
+        return sources
+
+    @staticmethod
+    def _augment_query(
+        message: str,
+        rag_context: dict | None,
+        insufficient: bool = False,
+        generation_mode: str | None = None,
+    ) -> str:
         """把检索命中注入用户消息：RAG 是独立检索阶段，不依赖模型主动调用工具。
 
         注入到用户消息而非 system prompt，因为各推理模式内部各自构造 system prompt，
         只有用户消息能保证被所有模式的首次模型调用看到。
 
-        insufficient：答案充分性验证判定检索结果不足（知识库缺关键事实）→ 强制模型
-        如实说明缺失信息并向用户追问澄清，不依赖自身知识编造内部人事数据。
+        generation_mode：语义路由产出的生成策略（direct / citation / comparison）；
+        无路由事件（naive / advanced）时默认 citation；检索结果不足（insufficient）时
+        强制模型如实说明缺失信息并向用户追问澄清（指令优先级最高，不依赖自身知识编造）。
         """
         if not rag_context or not rag_context.get("hits"):
             return message
-        blocks = "\n".join(f"[相关度 {h['score']}] {h['text']}" for h in rag_context["hits"])
+        hits = rag_context["hits"]
+        name = rag_context["name"]
         if insufficient:
-            instruction = (
-                "请严格基于以上检索内容如实回答；若检索内容不足以回答用户问题，"
+            return (
+                f"{message}\n\n"
+                f"【知识库检索结果（{name}）】\n"
+                + "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
+                + "\n请严格基于以上检索内容如实回答；若检索内容不足以回答用户问题，"
                 "请明确说明缺失的关键信息，并礼貌地向用户追问补充，不要编造、"
                 "不要依赖自身知识臆测内部人事数据。"
             )
-        else:
-            instruction = "请优先基于以上检索内容回答；若内容不足以回答，再结合自身知识补充。"
+        mode = generation_mode or "citation"
+        if mode == "direct":
+            blocks = "\n".join(h["text"] for h in hits)
+            instruction = "请直接回答用户问题，无需标注引用来源。"
+        elif mode == "comparison":
+            blocks = "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
+            instruction = (
+                "请基于以上检索内容，用 Markdown 对比表格结构化回答：每一行一个对比维度，"
+                "每一列一个对比对象；表格内关键结论在句末标注上方编号 [1]/[2] 的来源。"
+                "表格之后用一段话总结差异，末尾附「引用来源」清单（编号 → 出处）。"
+            )
+        else:  # citation
+            blocks = "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
+            instruction = (
+                "请优先基于以上检索内容回答；每个关键事实在句末标注上方编号 [1]/[2] 的来源。"
+                "回答末尾附「引用来源」清单（编号 → 出处）。"
+                "若检索内容不足以回答，再结合自身知识补充，并注明哪些属于推测。"
+            )
+        sources = "\n".join(AgentRunner._build_sources(hits)) if mode != "direct" else ""
         return (
             f"{message}\n\n"
-            f"【知识库检索结果（{rag_context['name']}）】\n{blocks}\n"
-            f"{instruction}"
+            f"【知识库检索结果（{name}）】\n{blocks}\n"
+            + (f"来源：\n{sources}\n" if sources else "")
+            + instruction
         )
 
     @staticmethod
@@ -175,6 +221,7 @@ class AgentRunner:
         # 最后一条 retrieve 事件里的 hits 用于上下文注入。
         rag_context = None
         insufficient = False
+        generation_mode = None  # 语义路由产出的生成策略（citation/comparison/direct），注入主 LLM 时使用
         # 注入给主 LLM 的用户消息：默认原消息；modular 指代消解后用它产出的消解 query 替换，
         # 避免主 LLM 对「他/这…」二次解析（把指代词误指回上轮问题主语）导致答非所问。
         effective_message = message
@@ -183,10 +230,18 @@ class AgentRunner:
             # 最近会话上下文（用户/助手回合）：RAG 是独立检索阶段，只有当前消息；
             # 传入上下文供 modular 前置「指代消解」把「他/这…」替换为具体实体。
             context = await self._recent_context(graph, config)
-            async for ev in scheme.astream(message, self.settings.rag_top_k, context=context):
+            # 跨轮 seed 复用：仅 modular 方案支持；传入上一轮最终命中，由方案内
+            # _cross_turn_seed 按分数/相关性过滤后作候选证据（省重复检索、不注入查询文本）。
+            prev_hits = self._last_hits.get(session_id)
+            stream_kwargs = {"context": context}
+            if getattr(scheme, "id", None) == "modular" and prev_hits:
+                stream_kwargs["seed_hits"] = prev_hits
+            async for ev in scheme.astream(message, self.settings.rag_top_k, **stream_kwargs):
                 yield ev
                 if ev["type"] == "rewrite" and ev.get("reason") == "指代消解" and ev.get("rewrites"):
                     effective_message = ev["rewrites"][0]
+                elif ev["type"] == "classify":
+                    generation_mode = ev.get("generation_mode") or generation_mode
                 elif ev["type"] == "retrieve":
                     # retrieve 事件携带实际用于检索的 query（modular 已含指代消解结果），
                     # 作为无 rewrite 事件场景的兜底（如未消解但有查询改写时保持原文）。
@@ -198,8 +253,19 @@ class AgentRunner:
                     # 检索结果不足以回答 → 强制模型追问澄清，不编造内部数据。
                     if ev.get("verdict", {}).get("answerable") is False:
                         insufficient = True
+            # 更新跨轮 seed 缓存：本轮检索到命中则记录（供下一轮复用），否则清空
+            if rag_context and rag_context.get("hits"):
+                self._last_hits[session_id] = rag_context["hits"]
+            else:
+                self._last_hits.pop(session_id, None)
         inputs = await self._make_inputs(
-            graph, config, effective_message, prompt_strategy, rag_context=rag_context, insufficient=insufficient
+            graph,
+            config,
+            effective_message,
+            prompt_strategy,
+            rag_context=rag_context,
+            insufficient=insufficient,
+            generation_mode=generation_mode,
         )
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
             yield ev
