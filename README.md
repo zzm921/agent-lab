@@ -1,6 +1,6 @@
-# Agent Lab — 个人 AI Agent 技术展示与实验平台
+# Agent Lab — AI Agent 技术实验场
 
-基于 **阿里云百炼（DashScope）Qwen + LangChain + LangGraph + MCP** 的个人 AI Agent 技术展示与实验平台：真实调用大模型，实验室可按技术路径点选切换体验，支持多种推理模式、RAG 多方案检索、函数调用、审批与容错，所有过程经 SSE 实时流式可视化。
+基于 **LangChain + LangGraph + MCP** 的 AI Agent 技术实验场：真实调用大模型，实验室可按技术路径点选切换体验，支持多种推理模式、RAG 多方案检索、函数调用、审批与容错，所有过程经 SSE 实时流式可视化。
 
 > 前端 Vue 3 + TypeScript + Vite + Tailwind；后端 FastAPI + LangGraph；SSE 流式输出。
 
