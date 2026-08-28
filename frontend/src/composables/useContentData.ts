@@ -23,7 +23,8 @@ interface TagManifest {
   id: string
   title: string
   description: string
-  cards: string[]
+  cards?: string[]
+  groups?: { title: string; cards?: string[] }[]
 }
 
 /** 后端解析出的卡片元数据 + 正文 */
@@ -125,10 +126,20 @@ export function useContentData() {
       const allCards: LandingCapability[] = []
       const contents: Record<string, string> = {}
       for (const tag of tagsList) {
-        const cards = (tag.cards ?? [])
+        const flatIds: string[] = [...(tag.cards ?? [])]
+        for (const group of tag.groups ?? []) {
+          flatIds.push(...(group.cards ?? []))
+        }
+        const cards = flatIds
           .map((id) => cardMap.get(id))
           .filter((card): card is LandingCapability => Boolean(card))
-        knowledgeTags.push({ id: tag.id, title: tag.title, description: tag.description ?? '', cards })
+        const groups = (tag.groups ?? []).map((g) => ({
+          title: g.title,
+          cards: (g.cards ?? [])
+            .map((id) => cardMap.get(id))
+            .filter((card): card is LandingCapability => Boolean(card)),
+        }))
+        knowledgeTags.push({ id: tag.id, title: tag.title, description: tag.description ?? '', cards, groups })
         allCards.push(...cards)
       }
       for (const card of allCards) {

@@ -27,6 +27,15 @@ const visibleCards = computed(() => {
   return tag ? tag.cards : []
 })
 
+/** 卡片区段：有二级分组的标签按组渲染，无分组整体平铺；全部能力时平铺全部卡片 */
+const cardSections = computed(() => {
+  if (activeTag.value === 'all') return [{ title: null, cards: caps.value }]
+  const tag = tags.value.find((t) => t.id === activeTag.value)
+  if (!tag) return []
+  if (tag.groups && tag.groups.length) return tag.groups.map((g) => ({ title: g.title, cards: g.cards }))
+  return [{ title: null, cards: tag.cards }]
+})
+
 /** 卡片对应的智能体名称（仅真实 Agent 卡有 mode；知识/工具卡返回 null 不显示） */
 function agentOf(cap: LandingCapability) {
   return cap.mode ? MODE_AGENT_LABELS[cap.mode] : null
@@ -204,7 +213,7 @@ function iconPath(name: string) {
         <div class="mb-8">
           <h2 class="text-2xl font-semibold text-white">能力地图</h2>
           <p class="mt-1 text-sm text-slate-400">
-            共 {{ visibleCards.length }} 项能力 · 六大技术域 · 点击查看详情，或直接进入实验室体验
+            共 {{ visibleCards.length }} 项能力 · {{ tags.length }} 个标签 · 点击查看详情，或直接进入实验室体验
           </p>
         </div>
       </section>
@@ -256,9 +265,14 @@ function iconPath(name: string) {
           内容加载失败：{{ error }}。请确认 public/content/ 下的 md 文件存在且可访问。
         </div>
 
-        <div v-else class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <template v-else>
+          <template v-for="section in cardSections" :key="section.title ?? '__all__'">
+            <h4 v-if="section.title" class="mb-3 mt-8 text-sm font-medium text-slate-400">
+              {{ section.title }}
+            </h4>
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div
-            v-for="cap in visibleCards"
+            v-for="cap in section.cards"
             :key="cap.id"
             class="group flex cursor-pointer flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-white/20 hover:bg-white/[0.05]"
             @click="openDetail(cap)"
@@ -320,7 +334,9 @@ function iconPath(name: string) {
               </button>
             </div>
           </div>
-        </div>
+            </div>
+          </template>
+        </template>
       </section>
 
       <!-- 架构总览 -->

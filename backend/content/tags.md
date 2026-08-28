@@ -1,27 +1,27 @@
 ---
 tags:
-  - id: prompt-engineering
-    title: 提示词工程
-    description: 不改模型，用输入格式 / 示例 / 推理引导把模型能力引出来。
-    cards: [prompt-strategy, structured-output]
-  - id: context-engineering
-    title: 上下文工程
-    description: 管理"模型当前看到什么"——窗口规划、信息压缩、缓存与渐进式披露；RAG 是其核心手段之一（见 RAG 标签）。
-    cards: [context-mgmt, context-caching]
-  - id: rag
-    title: RAG · 检索增强生成
-    description: 把外部知识接进生成，让回答有据可查；总表导航 + 五代范式演进（naive → advanced → modular → 图谱 → 智能体）+ 离线/在线工程策略 + 专项增强技术。
-    cards: [rag, naive-rag, advanced-rag, modular-rag, graph-rag, agentic-rag, rag-variants, offline-processing, online-hybrid-retrieval]
+  - id: agent-engineering
+    title: Agent 工程演进
+    description: 定义轴——从"怎么说"到"谁运行"的 Prompt → Context → Harness → Loop → Graph 五层瓶颈外移地图；含输出侧与推理增强。
+    groups:
+      - title: 总览地图
+        cards: [agent-engineering]
+      - title: Harness 层（环境）
+        cards: [cost-governance, llm-gateway, sandbox, fault-injection, hitl, observability-eval, security]
+      - title: Context 层（喂什么）
+        cards: [context-mgmt, context-caching, memory]
+      - title: Prompt 层（怎么说）
+        cards: [prompt-strategy, structured-output]
   - id: agent
-    title: Agent · 智能体
-    description: 让模型会想、会做、会协作、会操作——从单 Agent 推理到多 Agent 编排与计算机操作。
-    cards: [react, plan-execute, reflection, multi-agent, computer-use]
-  - id: harness
-    title: Harness · 强化工程
-    description: Agent = Model + Harness；记忆 / 沙箱 / 容错 / 审批 / 观测 / 安全交给外部环境。
-    cards: [memory, sandbox, fault-injection, hitl, observability-eval, security]
+    title: Agent 范式
+    description: ReAct / 计划执行 / 反思修订 / 多智能体 / 计算机操作——四种范式 + 环境操作，回答"怎么跑"；与"Agent 工程演进"（定义轴）标签互补。
+    cards: [multimodal-agent, memgpt, task-driven-agent, llm-compiler, rewoo, react, plan-execute, reflection, multi-agent, computer-use]
+  - id: rag
+    title: RAG 范式与工程
+    description: 五代 RAG 范式演进（naive → advanced → modular → 图谱 → 智能体，总表导航打头），叠加离线处理 / 在线混合检索 / 专项增强（Self-RAG / CRAG / HyDE / RAPTOR）等工程策略与插件。
+    cards: [rag, text-to-sql, kb-routing, rag-online-eval, naive-rag, advanced-rag, modular-rag, graph-rag, agentic-rag, rag-variants, offline-processing, online-hybrid-retrieval]
   - id: protocol
     title: 协议 · Protocol
     description: Agent ↔ 工具、Agent ↔ Agent 的互操作标准；函数调用 → MCP → A2A 的演进。
-    cards: [function-calling, mcp, a2a]
+    cards: [agent-skills, function-calling, mcp, a2a]
 ---

@@ -37,11 +37,19 @@ export interface LandingCapability {
   content: string
 }
 
+export interface KnowledgeGroup {
+  title: string
+  cards: LandingCapability[]
+}
+
 export interface KnowledgeTag {
   id: string
   title: string
   description: string
+  /** 标签内全部卡片（含 groups 内的卡片）的扁平列表，用于筛选 */
   cards: LandingCapability[]
+  /** 可选二级分组（如工程演进标签内的 Prompt 层 / Context 层 / Harness 层），仅影响展示分段 */
+  groups?: KnowledgeGroup[]
 }
 
 export interface TechStackItem {

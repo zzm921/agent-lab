@@ -40,10 +40,13 @@ def _read_tags() -> list[dict]:
 
 
 def _read_cards() -> list[dict]:
-    """按 tags.md 中的卡片顺序，逐个读取并解析卡片 md。"""
+    """按 tags.md 中的卡片顺序，逐个读取并解析卡片 md（含标签内 groups 的卡片）。"""
     cards: list[dict] = []
     for tag in _read_tags():
-        for card_id in tag.get("cards") or []:
+        card_ids: list[str] = list(tag.get("cards") or [])
+        for group in tag.get("groups") or []:
+            card_ids.extend(group.get("cards") or [])
+        for card_id in card_ids:
             path = CONTENT_DIR / f"{card_id}.md"
             if not path.exists():
                 continue
