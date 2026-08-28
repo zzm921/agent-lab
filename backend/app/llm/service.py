@@ -101,6 +101,12 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
     },
     {
+        "scenario": "rag_judge",  # L2 语义评测 judge（LLM-as-a-Judge）：输出结构化评分，低随机 + 关闭思考
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.1, "max_tokens": 300, "enable_thinking": False},
+    },
+    {
         "scenario": "fake",  # 测试 / 无 Key 回退
         "provider": "fake",
         "model": "fake-chat",

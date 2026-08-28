@@ -1,0 +1,541 @@
+{
+  "meta": {
+    "generated_at": "2026-08-27T17:16:16+00:00",
+    "top_k": 3,
+    "mode": "fake 冒烟（无评测意义）",
+    "retrieval": "bm25-bigram (确定性，非生产向量检索)",
+    "corpus_size": 42,
+    "eval_cases": 26
+  },
+  "avg_faithfulness": 3.0,
+  "avg_answer_relevance": 3.0,
+  "out_of_kb_grounded_rate": 1.0,
+  "scored_cases": 24,
+  "cases": [
+    {
+      "id": "n01",
+      "branch": "no_retrieval",
+      "query": "你好",
+      "skipped": true
+    },
+    {
+      "id": "n02",
+      "branch": "no_retrieval",
+      "query": "谢谢你的解答",
+      "skipped": true
+    },
+    {
+      "id": "s01",
+      "branch": "simple",
+      "query": "标准工作时间是几点到几点",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c01",
+        "c09",
+        "c14"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.7,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 109.5
+    },
+    {
+      "id": "s02",
+      "branch": "simple",
+      "query": "迟到超过16分钟怎么处理",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c03",
+        "c05",
+        "c40"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.7,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s03",
+      "branch": "simple",
+      "query": "连续旷工几天会被解除合同",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c04",
+        "c05",
+        "c28"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.4,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s04",
+      "branch": "simple",
+      "query": "工龄3年的员工年假有几天",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c06",
+        "c12",
+        "c32"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.5,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s05",
+      "branch": "simple",
+      "query": "事假需要提前多久申请，有工资吗",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c08",
+        "c09",
+        "c42"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.4,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s06",
+      "branch": "simple",
+      "query": "病假工资按什么标准发放",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c09",
+        "c22",
+        "c34"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.3,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s07",
+      "branch": "simple",
+      "query": "婚假能休几天",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c01",
+        "c02",
+        "c10"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.2,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s08",
+      "branch": "simple",
+      "query": "产假和陪产假分别是多少天",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c01",
+        "c02",
+        "c11"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.6,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.4
+    },
+    {
+      "id": "s09",
+      "branch": "simple",
+      "query": "一线城市差旅住宿一晚能报多少",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c14",
+        "c16",
+        "c38"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.6,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s10",
+      "branch": "simple",
+      "query": "差旅餐补每天多少",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c16",
+        "c21",
+        "c38"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.2,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.4
+    },
+    {
+      "id": "s11",
+      "branch": "simple",
+      "query": "工作日加班费按几倍算",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c08",
+        "c22",
+        "c31"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.4,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "s12",
+      "branch": "simple",
+      "query": "公积金缴存比例是多少",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c12",
+        "c23",
+        "c33"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.6,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "r01",
+      "branch": "rewrite",
+      "query": "它的报销时限是多久",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c19",
+        "c26",
+        "c39"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.8,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "r02",
+      "branch": "rewrite",
+      "query": "他负责什么审批",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c24",
+        "c25",
+        "c37"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 2.1,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.6
+    },
+    {
+      "id": "r03",
+      "branch": "rewrite",
+      "query": "她负责什么审批",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c24",
+        "c25",
+        "c37"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 2.1,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.4
+    },
+    {
+      "id": "r04",
+      "branch": "rewrite",
+      "query": "它要提前几天申请",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c08",
+        "c36",
+        "c42"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 2.2,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.4
+    },
+    {
+      "id": "d01",
+      "branch": "decompose",
+      "query": "出差报销和日常报销有什么区别",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c17",
+        "c18",
+        "c21"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 3.4,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "d02",
+      "branch": "decompose",
+      "query": "研发部和产品部哪个部门人多",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c23",
+        "c30",
+        "c37"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 2.0,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.4
+    },
+    {
+      "id": "d03",
+      "branch": "decompose",
+      "query": "年假和事假有什么区别",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c08",
+        "c36",
+        "c42"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 3.2,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.4
+    },
+    {
+      "id": "m01",
+      "branch": "multihop",
+      "query": "报销发票的完整流程是什么",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c18",
+        "c19",
+        "c21",
+        "c26",
+        "c39",
+        "c41"
+      ],
+      "retrieved_count": 6,
+      "answerable": true,
+      "elapsed_ms": 3.1,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.4
+    },
+    {
+      "id": "m02",
+      "branch": "multihop",
+      "query": "李四的领导的审批范围是什么",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c13",
+        "c21",
+        "c24",
+        "c29",
+        "c30",
+        "c37"
+      ],
+      "retrieved_count": 6,
+      "answerable": true,
+      "elapsed_ms": 2.9,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "m03",
+      "branch": "multihop",
+      "query": "员工出差从申请到报销需要什么",
+      "out_of_kb": false,
+      "retrieved_ids": [
+        "c13",
+        "c15",
+        "c17",
+        "c21",
+        "c22",
+        "c32"
+      ],
+      "retrieved_count": 6,
+      "answerable": true,
+      "elapsed_ms": 2.9,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "o01",
+      "branch": "out_of_kb",
+      "query": "公积金贷款最高能贷多少",
+      "out_of_kb": true,
+      "retrieved_ids": [
+        "c01",
+        "c02",
+        "c33"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.3,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    },
+    {
+      "id": "o02",
+      "branch": "out_of_kb",
+      "query": "竞业限制的补偿金标准是多少",
+      "out_of_kb": true,
+      "retrieved_ids": [
+        "c01",
+        "c09",
+        "c14"
+      ],
+      "retrieved_count": 3,
+      "answerable": true,
+      "elapsed_ms": 1.4,
+      "answer": "（fake 生成占位：依据资料作答）",
+      "faithfulness": 3.0,
+      "answer_relevance": 3.0,
+      "grounded": true,
+      "judge_reason": "fake 冒烟占位",
+      "error": null,
+      "gen_elapsed_ms": 0.3
+    }
+  ]
+}
