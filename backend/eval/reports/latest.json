@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generated_at": "2026-08-27T17:12:44+00:00",
+    "generated_at": "2026-08-28T01:41:23+00:00",
     "top_k": 3,
     "real_router": false,
     "modules": "rule + expected-router",
@@ -19,7 +19,7 @@
       "keyword_coverage": 1.0,
       "answerable_rate": 1.0,
       "clarify_rate": 0.0,
-      "avg_elapsed_ms": 2.7
+      "avg_elapsed_ms": 2.9
     },
     "multihop": {
       "cases": 3,
@@ -30,7 +30,7 @@
       "keyword_coverage": 1.0,
       "answerable_rate": 1.0,
       "clarify_rate": 0.0,
-      "avg_elapsed_ms": 2.9
+      "avg_elapsed_ms": 3.5
     },
     "no_retrieval": {
       "cases": 2,
@@ -52,7 +52,7 @@
       "keyword_coverage": null,
       "answerable_rate": 1.0,
       "clarify_rate": 0.0,
-      "avg_elapsed_ms": 1.4
+      "avg_elapsed_ms": 1.6
     },
     "rewrite": {
       "cases": 4,
@@ -63,7 +63,7 @@
       "keyword_coverage": 1.0,
       "answerable_rate": 1.0,
       "clarify_rate": 0.0,
-      "avg_elapsed_ms": 1.8
+      "avg_elapsed_ms": 2.3
     },
     "simple": {
       "cases": 12,
@@ -74,7 +74,7 @@
       "keyword_coverage": 1.0,
       "answerable_rate": 1.0,
       "clarify_rate": 0.0,
-      "avg_elapsed_ms": 1.3
+      "avg_elapsed_ms": 1.6
     }
   },
   "overall": {
@@ -86,7 +86,7 @@
     "keyword_coverage": 1.0,
     "answerable_rate": 1.0,
     "clarify_rate": 0.0,
-    "avg_elapsed_ms": 1.6
+    "avg_elapsed_ms": 2.0
   },
   "cases": [
     {
@@ -175,7 +175,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.7,
+      "elapsed_ms": 2.0,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -213,7 +213,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.4,
+      "elapsed_ms": 1.8,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -251,7 +251,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.3,
+      "elapsed_ms": 1.5,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -289,7 +289,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.3,
+      "elapsed_ms": 1.4,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -327,7 +327,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.4,
+      "elapsed_ms": 1.5,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -365,7 +365,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.3,
+      "elapsed_ms": 1.5,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -403,7 +403,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.1,
+      "elapsed_ms": 1.3,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -441,7 +441,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.3,
+      "elapsed_ms": 1.9,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -479,7 +479,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.4,
+      "elapsed_ms": 1.8,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -517,7 +517,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.2,
+      "elapsed_ms": 1.5,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -555,7 +555,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.3,
+      "elapsed_ms": 1.4,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -593,7 +593,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.5,
+      "elapsed_ms": 1.8,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -634,7 +634,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.7,
+      "elapsed_ms": 2.2,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -675,7 +675,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.8,
+      "elapsed_ms": 2.5,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -716,7 +716,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.8,
+      "elapsed_ms": 2.0,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -757,7 +757,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 2.0,
+      "elapsed_ms": 2.4,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -800,7 +800,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 3.3,
+      "elapsed_ms": 3.7,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "multi_recall",
@@ -883,7 +883,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 2.7,
+      "elapsed_ms": 2.9,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "multi_recall",
@@ -926,7 +926,7 @@
         "kept": 6,
         "truncated": 0
       },
-      "elapsed_ms": 2.7,
+      "elapsed_ms": 3.1,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "multi_recall",
@@ -968,7 +968,7 @@
         "kept": 6,
         "truncated": 0
       },
-      "elapsed_ms": 3.1,
+      "elapsed_ms": 3.3,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "multi_recall",
@@ -1010,7 +1010,7 @@
         "kept": 6,
         "truncated": 0
       },
-      "elapsed_ms": 2.8,
+      "elapsed_ms": 4.2,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "multi_recall",
@@ -1046,7 +1046,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.3,
+      "elapsed_ms": 1.7,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
@@ -1082,7 +1082,7 @@
         "kept": 3,
         "truncated": 0
       },
-      "elapsed_ms": 1.4,
+      "elapsed_ms": 1.5,
       "route_used": {
         "retrieval_need": true,
         "retrieval_mode": "hybrid",
