@@ -65,7 +65,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ### Harness 强化工程
 
-> 技术说明：把 Agent 从「能跑」做到「可靠」：审批（人机协作）、容错（重试/熔断）、隔离（沙箱）、防滥用（限流），保证真实生产环境的可控与鲁棒。
+> 技术说明：把 Agent 从「能跑」做到「可靠」：审批（人机协作）、容错（重试/熔断）、隔离（沙箱），保证真实生产环境的可控与鲁棒。
 
 - **审批门（HITL）**（90%）— 相关技术：LangGraph `interrupt` 暂停 + `Command(resume=...)` 恢复；同 superstep 多 interrupt 合并批量审批
   - 未完成：策略仅 always / never 两档，无「仅危险操作」条件策略与 per-tool 独立策略；无审批超时自动拒绝（可无限期悬挂）；批量审批只能对所有工具统一决策，无法逐工具分别批/拒/改；无审批审计日志
@@ -73,8 +73,6 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
   - 未完成：熔断键含完整参数，换参即视为新键，本质「同参短路」而非工具整体熔断；无 QPS / 并发维度熔断；重试 / 退避参数仅全局、无 per-tool 覆盖；工具层重试会重复执行有副作用工具（无幂等）；熔断 / 重试状态仅内存、重启即失
 - **沙箱**（70%）— 相关技术：OpenSandbox（Docker 服务端）或 local 子进程执行，危险命令黑名单 + 强制 HITL + 超时 / 输出截断
   - 未完成：无网络隔离（compose 注明需自补策略）；local 兜底后端在宿主 `shell=True` 执行、无文件系统 / 网络 / 资源隔离；黑名单为 20 条静态子串、无命令结构解析 / 白名单扩展；沙箱池全局持锁串行执行；`allowed_host_paths` 硬编码需人工对齐
-- **每日配额限流**（70%）— 相关技术：`DailyQuota` 固定窗口（自然日 + 客户端维度）+ JSON 文件持久化
-  - 未完成：仅单级每日总额，无 QPS / 并发 / 滑动窗口；多 uvicorn worker 各自计数、无分布式限流；`X-Client-Id` / `X-Forwarded-For` 可伪造绕过；无配额分级 / 封禁冷却 / 告警
 - **可观测性与评估** — RAGAS 语义评测（L3）与语义回归（L2）**部分实现**（`backend/eval/` + `scripts/eval_*`）；Trace 全链路追踪、指标监控完整接入 → **待实现**
 - **安全**（提示词注入防护 / 数据隔离 / 权限管控）→ **待实现**
 
@@ -113,7 +111,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ## 总结
 
-**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、每日配额限流 70%、多后端向量存储 80%、SSE 85%、技术路径点选 100%、源码展示 100%。
+**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、SSE 85%、技术路径点选 100%、源码展示 100%。
 
 **待实现**：
 - 未正式启动（有雏形）：multi_agent、跨轮长期记忆
@@ -190,8 +188,7 @@ python scripts/ingest_modular.py   # modular 方案（复用 advanced 索引 + m
 | GET | `/api/faults/types` | 故障类型目录（瞬时 / 参数业务两类） |
 | POST | `/api/fault` | 注入 / 清除工具故障（13 种类型，演示两层重试） |
 | GET | `/api/source/{module}` | 后端真实源码（代码展示用） |
-| GET | `/api/quota` | 配额 / 限额状态 |
-| GET | `/api/content` | 落地页能力卡内容（后端实时解析 `backend/content/` 下的 md） |
+| GET | `/api/content` | 能力卡内容（后端解析 `backend/content/` 下的 md） |
 | GET | `/api/sandbox/files` | 沙箱文件列表 |
 | GET | `/api/sandbox/files/download` | 下载沙箱文件 |
 | GET | `/api/health` | 健康检查 |
@@ -216,10 +213,9 @@ my-agent/
 │   │   │   ├── builtin.py
 │   │   │   ├── mcp.py
 │   │   │   └── registry.py
-│   │   ├── core/                # 事件协议 / 错误 / 每日配额限流
+│   │   ├── core/                # 事件协议 / 错误
 │   │   │   ├── events.py
-│   │   │   ├── errors.py
-│   │   │   └── rate_limit.py
+│   │   │   └── errors.py
 │   │   ├── llm/                 # DashScope 适配（Chat + Embedding）+ Fake
 │   │   │   ├── client.py
 │   │   │   ├── dashscope_chat.py
@@ -287,12 +283,3 @@ my-agent/
 ├── .gitignore
 └── README.md
 ```
-
-## 文档
-
-- [docs/architecture.md](docs/architecture.md) — 架构、SSE 事件协议、四种模式（create_agent + middleware）、能力与 MCP 设计
-- [docs/deployment.md](docs/deployment.md) — 部署与配置指南
-- [docs/testing.md](docs/testing.md) — 测试用例与测试报告
-- [docs/AI Agent 技术演变路径与实现方案.md](docs/AI%20Agent%20技术演变路径与实现方案.md) — Agent 技术演进脉络与实现对照
-- [docs/AI Agent 知识体系细化（6标签21卡片）.md](docs/AI%20Agent%20知识体系细化（6标签21卡片）.md) — 21 张能力卡的知识体系细化
-- 各能力卡正文（`backend/content/*.md`）在落地页内实时渲染

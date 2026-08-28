@@ -26,7 +26,7 @@
 │  agents/harness.py：护栏层（审批策略/资源上限/止损/统计）           │
 │  agents/modes/*.py：create_agent 构建四种模式                       │
 │  agents/middleware/*：事件流/HITL/计划/反思/多代理 中间件           │
-│  tools/（calculator/time_now/web_search/rag_tool/memory_tool）    │
+│  tools/（calculator/time_now/web_search/run_command/memory_tool）   │
 │  memory/（session_store + vector_store + corpus）                 │
 │  llm/dashscope_chat.py：DashScope 原生 SDK 适配（reason/output 分离 + 流式） │
 │  llm/client.py（工厂：DashScope Chat + Embedding，可注入 Fake）           │
@@ -38,7 +38,7 @@
 ### 2.1 能力池（Capabilities）与热插拔
 
 - 每个能力是 `{id, name, desc, source, server?, availability, reason?, example, code_key}`。
-- `GET /api/capabilities` 返回完整目录：内置能力按配置判断可用性（如 RAG/记忆依赖 `EMBEDDING_API_KEY`，缺失→`unavailable`）；MCP 能力在启动后首次访问时发现。
+- `GET /api/capabilities` 返回完整目录：内置能力均可用（不依赖外部 Key）；MCP 能力在启动后首次访问时发现。RAG/长期记忆已不再作为能力卡暴露（见下），RAG 走独立检索阶段 + 方案目录，memory 工具在 Embedding 可用时由 `tools_builder` 注入。
 - **热插拔**：前端点击能力开关 → `POST /api/stream` 携带 `enabled_capabilities` → 后端 `tools_builder.build_tools()` 按 id 从注册表解析为 LangChain `StructuredTool` 注入模式 Agent；未启用或不可用的能力不注入。
 - **示例一键填入**：能力卡片的「示例」按钮 → 前端启用该能力 + 把 `example` 填入输入框 → 直接发送体验。
 
@@ -49,8 +49,9 @@
 | `calculator` | 安全计算 | 始终 | 计算 (137×0.85−20)÷3 |
 | `time_now` | 当前时间 | 始终 | 现在几点 |
 | `web_search` | 网页搜索 | 始终（失败降级） | 搜索 Qwen3 发布时间 |
-| `rag` | 知识库向量检索 | 需 Embedding Key | LangGraph StateGraph 如何定义状态 |
-| `memory` | 跨轮长期记忆 | 需 Embedding Key | 记住我叫小明… |
+| `run_command` | 命令执行（沙箱） | 始终（执行前强制 HITL） | 在沙箱里查看当前目录有哪些文件 |
+
+RAG（`rag`）与长期记忆（`memory`）**已移出内置能力目录**：RAG 重构为独立检索阶段（runner 前置检索 + 上下文注入），方案经 `GET /api/rag/schemes` 目录（naive / advanced / modular）在实验室点选；memory 工具仅在 Embedding 可用时经 `tools_builder` 注入，不作为能力卡展示。
 
 ### 2.2 MCP 集成
 
@@ -136,12 +137,20 @@
 - 实时倒计时进度条（`X.Xs 后第 n+1 次重试` + 抖动后实际等待）；
 - 指数退避阶梯条（`1.5s → 3s → 6s → …` 逐次翻倍、封顶，当前尝试高亮），直观展示指数退避曲线。
 
-### 2.8 记忆与检索
+### 2.8 检索（RAG）与记忆
 
+**RAG（独立检索阶段，不再作为能力卡/工具）**
+- `rag/manager.py`：按 `RAG_SCHEMES` 构建 naive / advanced / modular 三方案，每方案独立向量库（`{prefix}_{scheme}`），启动只加载、不现场入库。
+- `rag/schemes/`：naive（固定切块 + 纯稠密）/ advanced（语义分块 + 混合检索 + 改写/重排/父块回填）/ modular（前置语义路由 + 执行计划动态编排）。
+- `rag/routing/`（路由/改写/指代消解/分解/HyDE）+ `rag/retrieval/`（RRF 融合/重排/压缩/多跳规划-执行-验证/充分性闸门）算子。
+- `rag/corpus/`：云帆制度语料（`memory/corpus.py` 解析入库）。
+- runner 在模型调用前按前端开关执行前置检索，命中注入上下文并下发 `retrieve` 事件；RAG 不映射为 LangChain 工具。
+
+**记忆**
 - `memory/vector_store.py`：`OpenAIEmbeddings` + 内存余弦相似度 top-k 检索。
-- `memory/corpus.py`：内置知识库（LangGraph/LangChain 等条目）。
-- `memory/session_store.py`：`MemorySaver` 检查点（多轮/恢复）+ 每会话长期记忆 `VectorStore`。
-- 工具：`rag_tool`（知识库检索回答）、`memory_tool`（写/读长期记忆）。
+- `memory/stores/`：Qdrant / Elasticsearch / 内存多后端可替换，`MultiBackendStore` 多路融合。
+- `memory/session_store.py`：`MemorySaver` 检查点（多轮/恢复）+ 每会话长期记忆。
+- 工具：`memory_tool`（写/读长期记忆，Embedding 可用时注入）。
 
 ## 3. 前端结构
 

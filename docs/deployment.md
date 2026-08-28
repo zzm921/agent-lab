@@ -74,7 +74,7 @@ npm run dev        # 开发模式 http://localhost:5173（需后端 8000 端口�
 
 ```bash
 cd backend
-python scripts/ingest_naive.py && python scripts/ingest_advanced.py  # 线上前建库
+python scripts/ingest_naive.py && python scripts/ingest_advanced.py && python scripts/ingest_modular.py  # 线上前建库
 cd ../frontend && npm run build                                      # 产物输出到 frontend/dist
 cd ../backend && uvicorn app.main:app --port 8000
 ```
