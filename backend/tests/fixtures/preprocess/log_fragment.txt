@@ -1,0 +1,10 @@
+[2024-01-15 10:23:01] INFO service started
+[2024-01-15 10:23:02] WARN connection timeout retry 1
+[2024-01-15 10:23:03] ERROR db pool exhausted
+[2024-01-15 10:23:04] INFO request served
+[2024-01-15 10:23:05] WARN connection timeout retry 2
+[2024-01-15 10:23:06] ERROR db pool exhausted
+[2024-01-15 10:23:07] INFO request served
+[2024-01-15 10:23:08] DEBUG health check ok
+[2024-01-15 10:23:09] INFO request served
+[2024-01-15 10:23:10] WARN queue backlog 120

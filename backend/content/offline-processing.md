@@ -92,15 +92,33 @@ accent: '#10b981'
 
 ### 更新与维护
 
-- 增量入库、版本化、去重（哈希 / 语义去重）；
+- 去重：本项目已实现**归一化文本 SHA256 精确去重 + bottom-k sketch 近似去重**（Jaccard ≥ 0.85 判重，保留 mtime 最新版，旧版标 `superseded` 可追溯）；
+- 版本化 / 增量入库（内容 hash 台账，只重算变更文档）为规划项，触发条件与方案见《后续规划》；
 - 文档变更触发重解析、重向量化，保证知识库不过期。
 
 ## 本项目的做法
 
-- **解析层**：接入各类文档加载器，复杂文档（表格/扫描件）走结构化提取与 OCR；
+前置处理管线已落地于 `app/rag/preprocess/`（入口 `scripts/ingest_documents.py --input data/docs`），单文档四态状态（`ok` / `superseded` / `quarantined` / `dlq`），任何单档异常不阻塞整批：
+
+```
+扫描（按 mtime 旧→新）→ sniff 格式识别（magic bytes + 加密/损坏前置拦截）
+  → complexity 复杂度路由（扫描页占比 > 50% 或图片 → OCR；否则快路径）
+  → 解析：md/html/txt、docx（标题层级+表格扁平化）、文本 PDF（块坐标排序）、扫描件 OCR（qwen3.5-flash 多模态，200 DPI 逐页渲染）
+  → 清洗五阶段：归一化（NFKC/零宽/断行合并）→ 页眉页脚移除（跨页重复度 > 60%）→ 乱码拦截（� > 3% / mojibake > 5%）→ 质量评分（≥70 入库 / 50-69 隔离 / <50 DLQ）
+  → 跨文档去重（SHA256 精确 + bottom-k 近似）
+  → 报告 data/ingest/report.json + DLQ 归档 data/ingest/dlq/ → RagManager.ingest_all() 各方案幂等入库
+```
+
+- **解析层**：sniffer 以字节头嗅探优先于扩展名（防 `.txt` 伪装 PDF）；复杂文档（扫描件/图片）走 qwen3.5-flash 多模态 OCR，DashScope 非 200 转可操作中文报错并重试；
+- **清洗层**：normalizer / boilerplate / garble / quality / dedup 五模块独立纯函数，阈值均为模块级常量可调；
 - **分块**：父子分层切分——小 chunk 精确定位 + 父 chunk 补全上下文；
 - **存储**：Qdrant 向量库（默认，向量索引）+ BM25 倒排（关键词），混合检索在在线阶段融合；后端经「存储后端」抽象可切换到 Elasticsearch（`dense_vector` kNN + `text` BM25），详见 [advanced-rag.md](advanced-rag.md) §3——内置语料规模小，切换后端几乎无感知，属扩展性储备；
 - **元数据**：保留来源信息，支撑答案可溯源到原文。
+
+**配套文档**（长期维护，改代码必须同步更新）：
+
+- [复杂情况应对手册](../app/rag/docs/RAG建库文档处理-复杂情况应对手册.md)——13 类复杂情况逐条应对 + 阈值速查表；
+- [后续规划](../app/rag/docs/RAG建库文档处理-后续规划.md)——压缩包递归、五级复杂度评分、多栏版面分析、增量更新等 9 项扩展的挂点与验收标准。
 
 ## 收益与边界
 

@@ -1,0 +1,1063 @@
+{
+  "meta": {
+    "generated_at": "2026-08-31T02:24:06+00:00",
+    "top_k": 3,
+    "mode": "real（Qdrant+ES 双后端 + chat 生成 + RAGAS）",
+    "metrics": [
+      "faithfulness",
+      "answer_relevancy",
+      "answer_correctness",
+      "context_precision",
+      "out_of_kb_grounded"
+    ],
+    "scheme": "modular（语义路由 + 执行计划 + 多路召回 + 重排/多跳）",
+    "ir_metric_semantics": "evidence 覆盖口径：金标依据条款原文被任一命中覆盖（norm 包含）",
+    "builtin_filtered": 18,
+    "reference_source": "real_eval_set.jsonl#reference",
+    "eval_cases": 30
+  },
+  "retrieval": {
+    "overall": {
+      "cases": 28,
+      "avg_recall": 0.821,
+      "avg_precision": 0.393,
+      "avg_mrr": 0.774,
+      "gate_answerable_rate": 1.0,
+      "avg_retrieve_ms": 6584.9
+    },
+    "by_difficulty": {
+      "basic": {
+        "cases": 8,
+        "avg_recall": 1.0,
+        "avg_mrr": 0.771
+      },
+      "advanced": {
+        "cases": 10,
+        "avg_recall": 0.9,
+        "avg_mrr": 0.85
+      },
+      "challenge": {
+        "cases": 10,
+        "avg_recall": 0.6,
+        "avg_mrr": 0.7
+      }
+    },
+    "by_branch": {
+      "single_point": {
+        "cases": 18,
+        "avg_recall": 0.944
+      },
+      "compare": {
+        "cases": 4,
+        "avg_recall": 0.75
+      },
+      "multi_hop": {
+        "cases": 6,
+        "avg_recall": 0.5
+      }
+    }
+  },
+  "behavior": {
+    "rewrite_rate": 0.0,
+    "decompose_rate": 0.286,
+    "multi_hop_rate": 0.107,
+    "compress_rate": 1.0
+  },
+  "generation": {
+    "avg_faithfulness": 0.915,
+    "avg_answer_relevancy": 0.702,
+    "avg_answer_correctness": 0.749,
+    "avg_context_precision": 0.799,
+    "scored_cases": 28
+  },
+  "out_of_kb": {
+    "grounded_rate": 1.0,
+    "cases": 2
+  },
+  "cases": [
+    {
+      "id": "r01",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "公司工作日标准上下班时间是怎么安排的？",
+      "out_of_kb": false,
+      "reference": "工作日上午09:00-12:00、下午13:30-18:00，每日标准工作时长8小时、每周40小时，午休12:00-13:30不计入工作时间。",
+      "evidence": [
+        "第六条（标准工时） 公司实行标准双休工作制"
+      ],
+      "answer": "根据资料，公司工作日统一上下班时间安排如下：\n\n*   **上午**：09:00 至 12:00\n*   **下午**：13:30 至 18:00\n\n其中，午休时间（12:00 至 13:30）不计入工作时间。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.786,
+      "answer_correctness": 0.797,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7280.4,
+      "gen_elapsed_ms": 14633.0,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.5,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r02",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "每月有几次免费补卡机会，用完了再补会怎么样？",
+      "out_of_kb": false,
+      "reference": "每月允许2次免费补卡（2026版调整为1次），仅限网络卡顿、设备故障、外勤紧急办公等客观特殊情况；超出免费次数后每次补卡需部门主管签字审批的书面申请，并扣除当月绩效50元/次（2026版80元/次）。",
+      "evidence": [
+        "第十二条（补卡机制） 公司每月允许员工2次免费补卡机会"
+      ],
+      "answer": "根据提供的资料，相关规定如下：\n\n1.  **免费补卡次数**：每月有**2次**免费补卡机会。\n2.  **适用条件**：仅适用于网络卡顿、设备故障、外勤紧急办公等客观特殊情况，个人遗忘打卡等主观原因不支持免费补卡。\n3.  **超出次数后的处理**：超出2次后，每次补卡需提交部门主管签字审批的书面补卡申请，并扣除当月绩效**50元**。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.666,
+      "answer_correctness": 0.768,
+      "context_precision": 0.333,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7238.0,
+      "gen_elapsed_ms": 20376.9,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 0.333,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r03",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "工龄满6年的员工一年有几天年假？",
+      "out_of_kb": false,
+      "reference": "年假设置最高上限10天，工龄满6年及以上员工年假统一固定为10天，不再逐年递增。",
+      "evidence": [
+        "第七条（年假阶梯） 工龄每递增1个完整自然年"
+      ],
+      "answer": "根据资料[1]第14条及资料[3]第七条、第八条规定，工龄满6年的员工一年有10天年假。",
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.941,
+      "answer_correctness": 0.78,
+      "context_precision": 0.833,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6772.8,
+      "gen_elapsed_ms": 25582.5,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 0.333,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r04",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "病假期间工资是怎么发放的？",
+      "out_of_kb": false,
+      "reference": "病假期间全额保留基础工资、不扣基础薪资，仅扣除当月全勤奖金；病假工资按薪酬制度另行核算，但不得低于当地最低工资标准的80%。",
+      "evidence": [
+        "第二十条（病假待遇） 病假期间全额保留基础工资"
+      ],
+      "answer": "根据资料，病假期间工资发放标准如下：\n\n1.  **基础工资**：全额保留，不扣除基础薪资。\n2.  **全勤奖金**：仅扣除当月全勤奖金。\n3.  **核算标准**：病假工资按公司薪酬制度另行核算，但不得低于当地最低工资标准的80%。",
+      "faithfulness": 0.833,
+      "answer_relevancy": 0.809,
+      "answer_correctness": 0.989,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6617.1,
+      "gen_elapsed_ms": 12787.5,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.5,
+      "mrr": 0.5,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r05",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "出差去北京，住宿费每天最多能报多少？",
+      "out_of_kb": false,
+      "reference": "北京属一线城市，单日住宿报销上限450元。",
+      "evidence": [
+        "（一）一线城市：北京、上海、广州、深圳，单日住宿报销上限450元"
+      ],
+      "answer": "根据资料[1]第二章第五条规定，公司根据国内城市经济发展水平将出差目的地划分为三个等级，其中**北京属于一线城市**，**单日住宿报销上限为450元**。\n\n此外，根据资料[1]第七条规定，若确因旺季、重大活动等客观原因导致房价超标且无法选择标准内酒店的，经事前部门总监审批，可凭审批记录按实际费用报销。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.842,
+      "answer_correctness": 0.65,
+      "context_precision": 0.833,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7094.6,
+      "gen_elapsed_ms": 28542.3,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r06",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "出差连续多少天才有餐补？标准是多少钱一天？",
+      "out_of_kb": false,
+      "reference": "常规出差无固定餐补；出差连续超过5个自然日的长期外勤任务可享100元/天专项餐补，按实际出差有效天数核算随月度报销发放，单日拆分、间断出差不累计。",
+      "evidence": [
+        "第十五条（餐补规则） 常规出差无固定餐补"
+      ],
+      "answer": "根据资料，出差连续时长超过**5个自然日**的长期外勤任务，可享受**100元/天**的专项餐补。常规出差无固定餐补，且单日拆分或间断出差不累计计算时长。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.769,
+      "answer_correctness": 0.802,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6825.9,
+      "gen_elapsed_ms": 14197.5,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r07",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "公司每个月什么时候发工资？",
+      "out_of_kb": false,
+      "reference": "每月15日发放上月工资，遇法定节假日顺延至最近工作日，通过银行代发，可在OA系统查询工资明细。",
+      "evidence": [
+        "第四条（发薪日） 公司每月15日发放上月工资"
+      ],
+      "answer": "根据资料第四条规定，公司每月15日发放上月工资，遇法定节假日顺延至最近工作日。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.934,
+      "answer_correctness": 0.706,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6808.9,
+      "gen_elapsed_ms": 7518.3,
+      "error": null,
+      "builtin_hits": 2,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 1.0,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r08",
+      "branch": "single_point",
+      "difficulty": "basic",
+      "query": "夜班津贴是什么标准，哪些部门有？",
+      "out_of_kb": false,
+      "reference": "客服部、信息技术部夜班（22:00至次日6:00）值班人员按每小时15元标准发放夜班津贴。",
+      "evidence": [
+        "第二十九条（夜班津贴） 客服部、信息技术部夜班"
+      ],
+      "answer": "根据资料第二十九条规定：\n1. **津贴标准**：按每小时15元标准发放。\n2. **适用部门**：客服部、信息技术部（仅限夜班值班人员）。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.707,
+      "answer_correctness": 0.724,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6676.2,
+      "gen_elapsed_ms": 9061.0,
+      "error": null,
+      "builtin_hits": 2,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 3,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 1.0,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r09",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "一个月迟到5次会被怎么处理？",
+      "out_of_kb": false,
+      "reference": "月度累计迟到早退5次及以上，由人力资源部出具书面警告通知单，计入年度绩效考核负面台账，并取消当年评优评先资格；达到3次及以上时部门主管会发起一对一谈话并纳入行为考核档案。",
+      "evidence": [
+        "第十六条（累计处理） 月度累计迟到早退3次及以上"
+      ],
+      "answer": "资料中未找到关于一个月迟到5次的具体处理信息。\n\n资料中仅提供了累计迟到6次时的处理示例（单次根据时长扣绩效，累计达6次时部门主管发起一对一谈话并记入行为档案），未明确说明累计迟到5次对应的具体处理流程或标准。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.722,
+      "context_precision": 0.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7690.0,
+      "gen_elapsed_ms": 38892.5,
+      "error": null,
+      "builtin_hits": 2,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 0.0,
+      "precision": 0.0,
+      "mrr": 0.0,
+      "covered_evidence": 0,
+      "gate_answerable": true
+    },
+    {
+      "id": "r10",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "当年事假请太多天会不会影响年假？",
+      "out_of_kb": false,
+      "reference": "会。当年累计无薪事假超过20天的，当年可享受年假天数直接减半计算，与年假附加约束条款联动执行。",
+      "evidence": [
+        "第十七条（事假对年假的影响） 当年累计申请无薪事假时长超过20天"
+      ],
+      "answer": "会的。根据资料第三章第十七条（事假对年假的影响）规定：**当年累计申请无薪事假时长超过20天的，当年可享受年假天数直接减半计算**。\n\n此外，卷十员工常见问题问答库中关于年假的规则也补充说明：当年无薪事假累计超过20天，年假会受减半或拆分限制。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.654,
+      "answer_correctness": 0.987,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6802.7,
+      "gen_elapsed_ms": 17815.7,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r11",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "哪些部门的员工出差时有夜间交通报销权益？",
+      "out_of_kb": false,
+      "reference": "研发部、销售部、信息技术部、测试部正式员工前往一线城市出差，夜间（22:00至次日6:00）加班产生的出租车、网约车费用可全额实报实销、无金额上限；产品部、市场部等其余部门员工无此权益，夜间个人出行费用自行承担。",
+      "evidence": [
+        "第十二条（特殊岗位夜间交通福利） 针对特殊岗位专属交通福利"
+      ],
+      "answer": "根据资料第十二条规定，以下部门的员工出差时有夜间交通报销权益：\n**研发部、销售部、信息技术部、测试部**。\n\n具体条件为：上述部门正式员工前往一线城市出差，夜间（22:00至次日6:00）加班产生的出租车、网约车费用可全额实报实销。其他部门员工无夜间交通报销权益。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.904,
+      "answer_correctness": null,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 5043.0,
+      "gen_elapsed_ms": 16250.9,
+      "error": null,
+      "builtin_hits": 2,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 2,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 1.0,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r12",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "海外出差的住宿报销标准分几档，各是多少？",
+      "out_of_kb": false,
+      "reference": "分三档：北美、西欧、北欧及日本、新加坡等一线城市每日上限1200元（或等值当地货币）；亚太其他发达城市每日上限900元；东南亚、南亚、拉美及非洲等发展中地区每日上限600元。",
+      "evidence": [
+        "第二十条（海外住宿标准） 海外出差住宿标准按目的地城市划分为三档"
+      ],
+      "answer": "根据资料[1]第五章第二十条规定，海外出差住宿标准按目的地城市划分为**三档**，具体如下：\n\n1.  **第一档**：北美、西欧、北欧及日本、新加坡等一线城市，每日住宿上限**1200元**（或等值当地货币）。\n2.  **第二档**：亚太其他发达城市，每日上限**900元**。\n3.  **第三档**：东南亚、南亚、拉美及非洲等发展中地区，每日上限**600元**。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.703,
+      "answer_correctness": 0.953,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7037.0,
+      "gen_elapsed_ms": 11520.9,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.5,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r13",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "公司辞退员工的经济补偿金是怎么计算的？",
+      "out_of_kb": false,
+      "reference": "按员工在本单位工作年限每满1年支付1个月工资；六个月以上不满一年的按1年计算；不满六个月的支付半个月工资。",
+      "evidence": [
+        "第三十条（经济补偿） 公司依法解除或终止劳动合同需支付经济补偿的"
+      ],
+      "answer": "根据资料 [1] 第六章第三十条（经济补偿）的规定，公司依法解除或终止劳动合同需支付经济补偿时，计算标准如下：\n\n1.  **年限折算**：按员工在本单位工作年限每满 1 年支付 1 个月工资的标准执行。\n2.  **六个月以上不满一年**：按 1 年计算。\n3.  **不满六个月**：支付半个月工资。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.83,
+      "answer_correctness": 0.837,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 5843.9,
+      "gen_elapsed_ms": 12089.4,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r14",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "竞业限制的期限和补偿金标准是什么？",
+      "out_of_kb": false,
+      "reference": "签订《竞业限制协议》的核心岗位员工，离职后24个月内不得从事与公司有竞争关系的业务；竞业限制期内公司按月支付补偿金，标准为离职前12个月平均工资的30%。",
+      "evidence": [
+        "第十五条（竞业限制） 签订《竞业限制协议》的核心岗位员工"
+      ],
+      "answer": "根据提供的资料，竞业限制的期限和补偿金标准如下：\n\n1.  **竞业限制期限**：离职后24个月内（资料[1]第十五条规定“最长为离职后24个月”，资料[2]第十五条明确为“离职后24个月内”）。\n2.  **补偿金标准**：离职前12个月平均工资的30%（资料[2]第十五条、资料[3]第57项）。\n    *注：资料[3]第57项在定义中备注了\"2026版40%\"。*",
+      "faithfulness": 0.286,
+      "answer_relevancy": 0.77,
+      "answer_correctness": 0.681,
+      "context_precision": 0.583,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6754.7,
+      "gen_elapsed_ms": 38489.8,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 0.5,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r15",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "月度绩效系数分哪几档，各对应多少倍？",
+      "out_of_kb": false,
+      "reference": "分五档：S档1.5、A档1.2、B档1.0、C档0.8、D档0.5；月度考核S档占比不超过部门人数的10%，D档占比不低于5%。",
+      "evidence": [
+        "第七条（绩效系数） 月度绩效系数分为五档"
+      ],
+      "answer": "根据资料[1]第七条及资料[2]相关内容，月度绩效系数分为五档，各对应倍数如下：\n\n*   **S档**：1.5倍\n*   **A档**：1.2倍\n*   **B档**：1.0倍\n*   **C档**：0.8倍\n*   **D档**：0.5倍",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.826,
+      "answer_correctness": 0.853,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6452.1,
+      "gen_elapsed_ms": 25107.6,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r16",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "采购金额超过5万元需要走什么审批流程？",
+      "out_of_kb": false,
+      "reference": "5万元以上须经分管副总裁、总经理审批，并纳入招标采购流程（5000元以下部门主管审批，5000元至5万元由部门总监与财务部主管审批）。",
+      "evidence": [
+        "第十五条（采购分级） 采购金额分级审批"
+      ],
+      "answer": "根据提供的资料，采购金额超过5万元的审批及相关流程要求如下：\n\n1.  **审批权限**：须经分管副总裁、总经理审批（资料[1]第十五条、资料[2]）。\n2.  **采购流程**：纳入招标采购流程（资料[1]第十五条、资料[2]）。\n3.  **询价/招标要求**：须公开询价或招标（资料[1]第十七条、资料[2]）。\n4.  **合同审核**：采购合同由法务部审核（资料[1]第十八条）。\n5.  **通用流程节点**（参考资料[3]）：包含提交采购需求与预算、按金额分级审批、采购部执行、到货验收后付款等步骤。",
+      "faithfulness": 0.9,
+      "answer_relevancy": 0.818,
+      "answer_correctness": 0.54,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6374.3,
+      "gen_elapsed_ms": 30153.6,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r17",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "试用期一般多长时间？转正考核不合格怎么办？",
+      "out_of_kb": false,
+      "reference": "试用期一般为3至6个月，首次合同期限3年的试用期不超过6个月，试用期包含在劳动合同期内；转正考核不合格的，可延长试用期（总时长不超过法定上限、须经员工书面同意）或解除劳动关系。",
+      "evidence": [
+        "第十七条（试用期时长） 试用期一般为3至6个月",
+        "第十九条（转正处理） 转正考核不合格的"
+      ],
+      "answer": "根据提供的资料，回答如下：\n\n1.  **试用期时长**：\n    试用期一般为3至6个月。首次合同期限3年的，试用期不超过6个月。\n\n2.  **转正考核不合格处理**：\n    可延长试用期（总时长不超过法定上限）或解除劳动关系；延长试用期须经员工书面同意。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.75,
+      "answer_correctness": 0.933,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 4614.2,
+      "gen_elapsed_ms": 12018.3,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 3,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 2,
+      "gate_answerable": true
+    },
+    {
+      "id": "r18",
+      "branch": "single_point",
+      "difficulty": "advanced",
+      "query": "客服的响应时效有哪些硬性要求？",
+      "out_of_kb": false,
+      "reference": "首响5分钟内；普通问题24小时内解决；复杂问题48小时内给出方案；投诉类问题48小时内升级。",
+      "evidence": [
+        "第六条（响应时效） 客服响应时效"
+      ],
+      "answer": "根据资料「[1](-) 第二章 客户服务」第六条（响应时效），客服响应时效的硬性要求如下：\n\n1.  **首响**：5分钟内；\n2.  **普通问题**：24小时内解决；\n3.  **复杂问题**：48小时内给出方案；\n4.  **投诉类问题**：48小时内升级。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.784,
+      "answer_correctness": 0.967,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7869.2,
+      "gen_elapsed_ms": 10059.6,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.5,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r19",
+      "branch": "multi_hop",
+      "difficulty": "challenge",
+      "query": "张三一年有几天年假，这个天数是怎么来的？",
+      "out_of_kb": false,
+      "reference": "张三年假7天。其档案显示张三为研发部算法工程师、2022年6月10日入职、截至2026年工龄3年；按年假阶梯，入职满1整年基础5天、工龄每递增1个完整自然年增加1天、上限10天，3年工龄对应5+2=7天。",
+      "evidence": [
+        "| 张三 | 研发部/算法工程师 | 2022-06-10 | 3年 | 7天",
+        "第七条（年假阶梯） 工龄每递增1个完整自然年"
+      ],
+      "answer": "根据提供的资料，关于张三的年假情况如下：\n\n**1. 年假天数**\n张三一年的年假为 **7天**。\n（依据：资料 [1]《关键人员权益明细》及资料 [3]《全员信息总表》均记载张三的年假为 7 天。）\n\n**2. 天数来源及依据**\n资料中记录了与年假天数相关联的员工档案信息，但**未明确说明具体的计算公式或政策规则**。依据现有资料显示的信息关联如下：\n*   **资料 [1]** 显示，张三的“工龄 (截至2026)\"为 **3年**，对应的“年假”列示为 **7天**。\n*   **资料 [3]** 显示，张三的“入职日期”为 **2022-06-10**，对应的“年假 (天)\"列示为 **7**。\n\n综上，系统档案中该天数是基于其工龄或入职日期记录的，但资料中未找到关于年假天数具体如何计算（如每年递增规则等）的详细制度说明。",
+      "faithfulness": 0.909,
+      "answer_relevancy": 0.649,
+      "answer_correctness": 0.415,
+      "context_precision": 0.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7234.2,
+      "gen_elapsed_ms": 51532.7,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 2,
+        "compressed": true
+      },
+      "recall": 0.5,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r20",
+      "branch": "multi_hop",
+      "difficulty": "challenge",
+      "query": "张三去上海出差，晚上加班后打车回酒店，车费能报销吗？",
+      "out_of_kb": false,
+      "reference": "能。张三所属研发部享有夜间交通报销权益：研发部正式员工前往一线城市出差，夜间（22:00至次日6:00）加班产生的出租车、网约车费用可全额实报实销、无金额上限。",
+      "evidence": [
+        "| 张三 | 研发部/算法工程师 | 2022-06-10 | 3年 | 7天",
+        "第十二条（特殊岗位夜间交通福利） 针对特殊岗位专属交通福利"
+      ],
+      "answer": "资料中未找到相关信息。\n\n依据现有资料：\n1. **部门限制**：资料 [1] 及案例 [2]-罗辰均明确该报销政策适用于**研发部**员工，且指出同行**市场部**员工需自行承担费用。资料未提及张三所属的部门。\n2. **城市定义**：资料 [1] 规定报销条件为\"**一线城市**出差”，虽然资料 [2] 中有员工在**上海**出差的案例，但文中未明确将上海界定为“一线城市”。\n\n因缺少张三的部门信息及上海的城市属性认定，无法依据资料确定其车费能否报销。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.615,
+      "answer_correctness": null,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6515.7,
+      "gen_elapsed_ms": 54818.8,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 0.0,
+      "precision": 0.0,
+      "mrr": 0.0,
+      "covered_evidence": 0,
+      "gate_answerable": true
+    },
+    {
+      "id": "r21",
+      "branch": "multi_hop",
+      "difficulty": "challenge",
+      "query": "李雪可以申请远程办公吗？",
+      "out_of_kb": false,
+      "reference": "可以。李雪是产品部产品经理，产品部属于可申请远程办公的部门；需获直属主管与人力资源部双审批，单月远程办公原则上不超过5个工作日，期间保持OA在线并按时提交工作日报。",
+      "evidence": [
+        "| 李雪 | 产品部/产品经理 | 2023-03-05 | 2年 | 6天",
+        "第二十二条（远程办公） 研发部、产品部、市场部"
+      ],
+      "answer": "资料中未找到相关信息。提供的资料中仅规定了不同部门（如研发部、法务部等）是否适用远程办公的政策，但未提及员工“李雪”的具体所属部门，因此无法依据现有资料判断其是否可以申请远程办公。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.208,
+      "context_precision": 0.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 7892.2,
+      "gen_elapsed_ms": 31849.0,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 0.0,
+      "precision": 0.0,
+      "mrr": 0.0,
+      "covered_evidence": 0,
+      "gate_answerable": true
+    },
+    {
+      "id": "r22",
+      "branch": "multi_hop",
+      "difficulty": "challenge",
+      "query": "刘芳在报销审批上有什么特殊权限？",
+      "out_of_kb": false,
+      "reference": "刘芳（财务部主管）在报销上有2000元以上的大额报销二次复核终审权限。",
+      "evidence": [
+        "| 刘芳 | 财务部/主管 | 2017-08-22 | 8年 | 10天"
+      ],
+      "answer": "根据提供的资料，刘芳在报销审批上的特殊权限如下：\n\n1.  **身份确认**：根据资料 [5]「第二章 部门负责人」，刘芳担任**财务部/主管**（职级 M1）。\n2.  **特殊审批权限**：根据资料 [1]「第四章 关键人员权益明细」，在“大额报销终审”一栏中，刘芳的特殊权限规定为：**2000元以上二次复核**。\n3.  **一般审批参与**：根据资料 [2]「第三章 报销流程」第十三条，作为财务部主管，在单笔**5000元至5万元**的报销审批中，需由**部门总监与财务部主管（刘芳）共同审批**。",
+      "faithfulness": null,
+      "answer_relevancy": 0.647,
+      "answer_correctness": 0.591,
+      "context_precision": null,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6631.3,
+      "gen_elapsed_ms": 38810.7,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 2,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.167,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r23",
+      "branch": "multi_hop",
+      "difficulty": "challenge",
+      "query": "陈丽的年假为什么是10天？",
+      "out_of_kb": false,
+      "reference": "陈丽2016年1月15日入职，截至2026年工龄9年，已满6年；按年假阶梯规则，工龄满6年及以上员工年假统一固定为10天（上限），不再逐年递增。",
+      "evidence": [
+        "| 陈丽 | 人力资源部/经理 | 2016-01-15 | 9年 | 10天",
+        "第七条（年假阶梯） 工龄每递增1个完整自然年"
+      ],
+      "answer": "资料中仅记录了陈丽的年假天数为10天（见资料[1]、[2]）及其工龄为9年（见资料[1]），但提供的资料中并未包含关于年假天数如何根据工龄、职级或其他条件进行计算的规则或标准，因此资料中未找到相关信息。",
+      "faithfulness": 0.875,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.417,
+      "context_precision": 0.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 4745.3,
+      "gen_elapsed_ms": 48060.5,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 1,
+        "compressed": true
+      },
+      "recall": 0.5,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r24",
+      "branch": "compare",
+      "difficulty": "challenge",
+      "query": "2026版和2024版在免费补卡上有什么区别？",
+      "out_of_kb": false,
+      "reference": "2024版：每月2次免费补卡，超次每次扣50元；2026版：每月免费补卡调整为1次，超次每次扣80元，且客观特殊情况可申请部门主管特批免除。",
+      "evidence": [
+        "2024版：每月2次免费补卡，超次每次扣50元；2025版：保持不变；2026版：每月免费补卡调整为1次"
+      ],
+      "answer": "根据资料，2026版与2024版在免费补卡上的区别如下：\n\n1.  **免费次数**：2024版为每月2次，2026版调整为每月1次。\n2.  **超次扣款标准**：2024版超次每次扣50元，2026版调整为每次扣80元。\n3.  **特殊情形处理**：2026版明确规定客观特殊情况可申请部门主管特批免除，2024版资料中未提及该特批免除条款。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.92,
+      "answer_correctness": null,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 5908.6,
+      "gen_elapsed_ms": 25141.2,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 3,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.5,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r25",
+      "branch": "compare",
+      "difficulty": "challenge",
+      "query": "2026版的差旅餐补和以前相比有什么变化？",
+      "out_of_kb": false,
+      "reference": "2026版制度年度修订（版本3.0，2026-01-01生效）将餐补触发调整为连续7天、120元/日；此前为出差连续超过5个自然日、100元/天。",
+      "evidence": [
+        "2025-12-12",
+        "第十五条（餐补规则） 常规出差无固定餐补"
+      ],
+      "answer": "根据资料第22条「专项餐补」的规定，2026版相比之前的变化如下：\n\n1. **享受条件**：由“出差连续超5个自然日”调整为“连续超7个自然日”。\n2. **补贴标准**：由“100元/日”调整为“120元/日”。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.825,
+      "answer_correctness": 0.726,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 9403.8,
+      "gen_elapsed_ms": 14549.7,
+      "error": null,
+      "builtin_hits": 2,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 4,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 0.0,
+      "precision": 0.0,
+      "mrr": 0.0,
+      "covered_evidence": 0,
+      "gate_answerable": true
+    },
+    {
+      "id": "r26",
+      "branch": "compare",
+      "difficulty": "challenge",
+      "query": "研发部和产品部哪个部门人数更多，各有多少人？",
+      "out_of_kb": false,
+      "reference": "研发部130人，产品部120人，研发部更多。",
+      "evidence": [
+        "| 研发部 | 130 | 含架构师/算法/前后端 | 核心研发团队 |",
+        "| 产品部 | 120 | 产品经理/运营/交互 | 产品体系 |"
+      ],
+      "answer": "根据资料[1]《各部门人员规模与编制》：\n\n*   **研发部**：在职人数为 **130** 人。\n*   **产品部**：在职人数为 **120** 人。\n\n因此，**研发部**人数更多。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.816,
+      "answer_correctness": 0.972,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 4893.6,
+      "gen_elapsed_ms": 11694.9,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 3,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.333,
+      "mrr": 1.0,
+      "covered_evidence": 2,
+      "gate_answerable": true
+    },
+    {
+      "id": "r27",
+      "branch": "compare",
+      "difficulty": "challenge",
+      "query": "申请机密数据和绝密数据的权限，审批层级有什么不同？",
+      "out_of_kb": false,
+      "reference": "机密数据权限须经部门负责人与信息技术部审批；绝密数据权限须经分管副总裁审批。数据权限申请统一通过OA系统提交。",
+      "evidence": [
+        "第六条（权限申请） 数据权限申请通过OA系统提交"
+      ],
+      "answer": "根据资料，申请机密数据和绝密数据的权限，审批层级的不同如下：\n\n1.  **机密数据权限**：须经**部门负责人与信息技术部**审批。\n2.  **绝密数据权限**：须经**分管副总裁**审批。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.862,
+      "answer_correctness": 0.82,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 4718.8,
+      "gen_elapsed_ms": 11456.7,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 3,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.5,
+      "mrr": 1.0,
+      "covered_evidence": 1,
+      "gate_answerable": true
+    },
+    {
+      "id": "r28",
+      "branch": "multi_hop",
+      "difficulty": "challenge",
+      "query": "王刚和赵凯谁的年假多？分别多少天，为什么？",
+      "out_of_kb": false,
+      "reference": "王刚年假10天，赵凯5天，王刚更多。王刚2018年3月入职、工龄7年，工龄满6年及以上按上限统一10天；赵凯2024年2月入职、工龄1年，刚满1整年享基础年假5天。",
+      "evidence": [
+        "| 王刚 | 研发部/部门主管 | 2018-03-01 | 7年 | 10天",
+        "| 赵凯 | 市场部/市场专员 | 2024-02-20 | 1年 | 5天"
+      ],
+      "answer": "根据提供的资料，**王刚**的年假更多。具体情况如下：\n\n1.  **年假天数：**\n    *   **王刚：10天**。\n    *   **赵凯：5天**。\n    （数据来源：资料 [1] 第四章关键人员权益明细表格中“年假”一栏）\n\n2.  **原因：**\n    *   根据资料 [1]，王刚的工龄（截至2026）为**7年**，赵凯的工龄（截至2026）为**1年**。\n    *   根据资料 [2] 第二章第八条规定，工龄**满6年及以上**员工，年假统一固定为**10天**；**满1年**可享受基础带薪年假**5天**。\n    *   因此，王刚因工龄达到7年享有10天年假，赵凯因工龄满1年享有5天年假。",
+      "faithfulness": 0.9,
+      "answer_relevancy": 0.818,
+      "answer_correctness": 0.876,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "retrieve_elapsed_ms": 6638.7,
+      "gen_elapsed_ms": 19716.3,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 4,
+        "hops": 0,
+        "compressed": true
+      },
+      "recall": 1.0,
+      "precision": 0.5,
+      "mrr": 1.0,
+      "covered_evidence": 2,
+      "gate_answerable": true
+    },
+    {
+      "id": "r29",
+      "branch": "out_of_kb",
+      "difficulty": "out_of_kb",
+      "query": "公积金贷款最高能贷多少钱？",
+      "out_of_kb": true,
+      "reference": "该问题超出《行政管理制度汇编》知识库范围，应拒答并提示咨询当地公积金中心。",
+      "evidence": [],
+      "answer": "资料中未找到相关信息",
+      "faithfulness": null,
+      "answer_relevancy": null,
+      "answer_correctness": null,
+      "context_precision": null,
+      "grounded": true,
+      "judge_reason": "资料中未提及公积金贷款额度相关信息，回答正确说明资料不足。",
+      "retrieve_elapsed_ms": 7639.3,
+      "gen_elapsed_ms": 6522.1,
+      "error": null,
+      "builtin_hits": 1,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": true
+      }
+    },
+    {
+      "id": "r30",
+      "branch": "out_of_kb",
+      "difficulty": "out_of_kb",
+      "query": "公司今年的竞争对手有哪些？",
+      "out_of_kb": true,
+      "reference": "该问题超出知识库范围，制度汇编不涉及市场竞争信息，应拒答。",
+      "evidence": [],
+      "answer": "资料中未找到相关信息",
+      "faithfulness": null,
+      "answer_relevancy": null,
+      "answer_correctness": null,
+      "context_precision": null,
+      "grounded": true,
+      "judge_reason": "模型明确说明资料中未找到相关信息，符合拒绝回答的要求。",
+      "retrieve_elapsed_ms": 939.5,
+      "gen_elapsed_ms": 3782.5,
+      "error": null,
+      "builtin_hits": 0,
+      "behavior": {
+        "rewrites": 0,
+        "decomposed": 0,
+        "hops": 0,
+        "compressed": false
+      }
+    }
+  ]
+}

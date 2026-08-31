@@ -107,6 +107,12 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.1, "max_tokens": 300, "enable_thinking": False},
     },
     {
+        "scenario": "rag_ragas",  # RAGAS 内部 LLM（全面评测语义评分）：高频小 JSON 提取，关闭思考加速
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.1, "max_tokens": 1500, "enable_thinking": False},
+    },
+    {
         "scenario": "fake",  # 测试 / 无 Key 回退
         "provider": "fake",
         "model": "fake-chat",

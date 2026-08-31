@@ -19,6 +19,10 @@ ragas>=0.4.3
 # ragas 0.4.x 硬导入 langchain_community.chat_models.vertexai，0.4 起该模块被移除；
 # App 本身不依赖 langchain-community，锁 <0.4 无副作用
 langchain-community<0.4
+# RAG 建库前置处理（app/rag/preprocess/）：PDF 解析/渲染、DOCX 解析、文本编码检测
+pymupdf>=1.24.0
+python-docx>=1.1.0
+charset-normalizer>=3.3.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
 anyio>=4.4.0

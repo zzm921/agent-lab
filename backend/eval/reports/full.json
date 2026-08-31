@@ -1,0 +1,870 @@
+{
+  "meta": {
+    "generated_at": "2026-08-31T01:15:10+00:00",
+    "top_k": 3,
+    "mode": "real LLM (chat 生成 + rag_judge 拒答判定 + RAGAS 评分)",
+    "metrics": [
+      "faithfulness",
+      "answer_relevancy",
+      "answer_correctness",
+      "context_precision",
+      "out_of_kb_grounded"
+    ],
+    "retrieval": "bm25-bigram (确定性，非生产向量检索)",
+    "reference_source": "eval_set.jsonl#reference",
+    "corpus_size": 42,
+    "eval_cases": 26
+  },
+  "routing": {
+    "routing_accuracy": 1.0
+  },
+  "retrieval": {
+    "overall": {
+      "cases": 26,
+      "retrieval_cases": 24,
+      "avg_recall": 0.939,
+      "avg_precision": 0.341,
+      "avg_mrr": 0.811,
+      "keyword_coverage": 1.0,
+      "answerable_rate": 1.0,
+      "clarify_rate": 0.0,
+      "avg_elapsed_ms": 2.2
+    },
+    "branches": {
+      "decompose": {
+        "cases": 3,
+        "retrieval_cases": 3,
+        "avg_recall": 0.833,
+        "avg_precision": 0.444,
+        "avg_mrr": 0.778,
+        "keyword_coverage": 1.0,
+        "answerable_rate": 1.0,
+        "clarify_rate": 0.0,
+        "avg_elapsed_ms": 3.3
+      },
+      "multihop": {
+        "cases": 3,
+        "retrieval_cases": 3,
+        "avg_recall": 0.722,
+        "avg_precision": 0.278,
+        "avg_mrr": 0.778,
+        "keyword_coverage": 1.0,
+        "answerable_rate": 1.0,
+        "clarify_rate": 0.0,
+        "avg_elapsed_ms": 3.6
+      },
+      "no_retrieval": {
+        "cases": 2,
+        "retrieval_cases": 0,
+        "avg_recall": null,
+        "avg_precision": null,
+        "avg_mrr": null,
+        "keyword_coverage": null,
+        "answerable_rate": null,
+        "clarify_rate": null,
+        "avg_elapsed_ms": 0.0
+      },
+      "out_of_kb": {
+        "cases": 2,
+        "retrieval_cases": 2,
+        "avg_recall": null,
+        "avg_precision": null,
+        "avg_mrr": null,
+        "keyword_coverage": null,
+        "answerable_rate": 1.0,
+        "clarify_rate": 0.0,
+        "avg_elapsed_ms": 1.6
+      },
+      "rewrite": {
+        "cases": 4,
+        "retrieval_cases": 4,
+        "avg_recall": 1.0,
+        "avg_precision": 0.333,
+        "avg_mrr": 0.666,
+        "keyword_coverage": 1.0,
+        "answerable_rate": 1.0,
+        "clarify_rate": 0.0,
+        "avg_elapsed_ms": 2.9
+      },
+      "simple": {
+        "cases": 12,
+        "retrieval_cases": 12,
+        "avg_recall": 1.0,
+        "avg_precision": 0.333,
+        "avg_mrr": 0.875,
+        "keyword_coverage": 1.0,
+        "answerable_rate": 1.0,
+        "clarify_rate": 0.0,
+        "avg_elapsed_ms": 1.8
+      }
+    }
+  },
+  "generation": {
+    "avg_faithfulness": 0.891,
+    "avg_answer_relevancy": 0.795,
+    "avg_answer_correctness": 0.672,
+    "avg_context_precision": 0.773,
+    "scored_cases": 22
+  },
+  "out_of_kb": {
+    "grounded_rate": 1.0,
+    "cases": 2
+  },
+  "cases": [
+    {
+      "id": "n01",
+      "branch": "no_retrieval",
+      "query": "你好",
+      "out_of_kb": false,
+      "reference": "你好！请问有什么可以帮您？",
+      "answer": null,
+      "faithfulness": null,
+      "answer_relevancy": null,
+      "answer_correctness": null,
+      "context_precision": null,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": null,
+      "error": null,
+      "skipped": true,
+      "retrieval": {
+        "recall": null,
+        "precision": null,
+        "mrr": null,
+        "keyword_hit": null,
+        "answerable": null,
+        "elapsed_ms": 0.0
+      }
+    },
+    {
+      "id": "n02",
+      "branch": "no_retrieval",
+      "query": "谢谢你的解答",
+      "out_of_kb": false,
+      "reference": "不客气，有问题随时问我。",
+      "answer": null,
+      "faithfulness": null,
+      "answer_relevancy": null,
+      "answer_correctness": null,
+      "context_precision": null,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": null,
+      "error": null,
+      "skipped": true,
+      "retrieval": {
+        "recall": null,
+        "precision": null,
+        "mrr": null,
+        "keyword_hit": null,
+        "answerable": null,
+        "elapsed_ms": 0.0
+      }
+    },
+    {
+      "id": "s01",
+      "branch": "simple",
+      "query": "标准工作时间是几点到几点",
+      "out_of_kb": false,
+      "reference": "公司实行弹性工作制，标准工作时间为 9:00 至 18:00，员工可在前后各 30 分钟内弹性打卡。",
+      "answer": "根据资料 [1]，标准工作时间为 9:00 至 18:00。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.864,
+      "answer_correctness": 0.573,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 13901.4,
+      "error": null,
+      "retrieved_ids": [
+        "c01",
+        "c09",
+        "c14"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.0
+      }
+    },
+    {
+      "id": "s02",
+      "branch": "simple",
+      "query": "迟到超过16分钟怎么处理",
+      "out_of_kb": false,
+      "reference": "迟到 16 至 60 分钟按事假半天折算（迟到 1 至 15 分钟则为每次扣减绩效分 0.5 分）。",
+      "answer": "根据资料，迟到 16 至 60 分钟按事假半天折算。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.775,
+      "answer_correctness": 0.731,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 29810.6,
+      "error": null,
+      "retrieved_ids": [
+        "c03",
+        "c05",
+        "c40"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 0.5,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 1.6
+      }
+    },
+    {
+      "id": "s03",
+      "branch": "simple",
+      "query": "连续旷工几天会被解除合同",
+      "out_of_kb": false,
+      "reference": "连续旷工 3 天或全年累计旷工 5 天，公司可解除劳动合同。",
+      "answer": "根据资料 [1](c04)，连续旷工 3 天，公司可解除劳动合同。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.941,
+      "answer_correctness": 0.73,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 13496.5,
+      "error": null,
+      "retrieved_ids": [
+        "c04",
+        "c05",
+        "c28"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 1.5
+      }
+    },
+    {
+      "id": "s04",
+      "branch": "simple",
+      "query": "工龄3年的员工年假有几天",
+      "out_of_kb": false,
+      "reference": "工龄满 1 年不满 5 年的年假为 5 天，工龄 3 年的员工年假为 5 天。",
+      "answer": "根据资料 [2]，工龄满 1 年不满 5 年的员工年假为 5 天。工龄 3 年属于该范围，因此年假有 5 天。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.875,
+      "answer_correctness": null,
+      "context_precision": 0.5,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 11400.9,
+      "error": null,
+      "retrieved_ids": [
+        "c06",
+        "c12",
+        "c32"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 0.5,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 1.6
+      }
+    },
+    {
+      "id": "s05",
+      "branch": "simple",
+      "query": "事假需要提前多久申请，有工资吗",
+      "out_of_kb": false,
+      "reference": "事假需提前 1 个工作日申请，年累计不得超过 20 天，事假期间不计薪。",
+      "answer": "根据资料 [1] 和 [2]：\n\n1.  **申请时间**：事假需提前 1 个工作日申请。\n2.  **薪资情况**：事假期间不计薪。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.714,
+      "answer_correctness": 0.827,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 11820.6,
+      "error": null,
+      "retrieved_ids": [
+        "c08",
+        "c09",
+        "c42"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 1.6
+      }
+    },
+    {
+      "id": "s06",
+      "branch": "simple",
+      "query": "病假工资按什么标准发放",
+      "out_of_kb": false,
+      "reference": "病假需提供二级及以上医院证明，病假期间工资按当地最低工资标准的 80% 发放。",
+      "answer": "病假期间工资按当地最低工资标准的 80% 发放。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.783,
+      "answer_correctness": 0.602,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 7551.1,
+      "error": null,
+      "retrieved_ids": [
+        "c09",
+        "c22",
+        "c34"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 1.5
+      }
+    },
+    {
+      "id": "s07",
+      "branch": "simple",
+      "query": "婚假能休几天",
+      "out_of_kb": false,
+      "reference": "婚假 10 天（含周末），需入职满 6 个月，须一次性休完。",
+      "answer": "根据资料 [1]，婚假为 10 天（含周末），需入职满 6 个月，须一次性休完。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.802,
+      "answer_correctness": 0.991,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 11780.1,
+      "error": null,
+      "retrieved_ids": [
+        "c01",
+        "c02",
+        "c10"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.0
+      }
+    },
+    {
+      "id": "s08",
+      "branch": "simple",
+      "query": "产假和陪产假分别是多少天",
+      "out_of_kb": false,
+      "reference": "产假 98 天，难产增加 15 天，多胞胎每多一胎增加 15 天；男员工陪产假 15 天。",
+      "answer": "根据资料 [1](c11)，产假为 98 天（难产增加 15 天，多胞胎每多一胎增加 15 天），男员工陪产假为 15 天。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.775,
+      "answer_correctness": 0.991,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 8533.6,
+      "error": null,
+      "retrieved_ids": [
+        "c01",
+        "c02",
+        "c11"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.2
+      }
+    },
+    {
+      "id": "s09",
+      "branch": "simple",
+      "query": "一线城市差旅住宿一晚能报多少",
+      "out_of_kb": false,
+      "reference": "一线城市差旅住宿标准为每晚 500 元，超支部分自理（二线城市为每晚 350 元）。",
+      "answer": "根据资料 [1] 和 [2]，一线城市差旅住宿标准为每晚 500 元。",
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.906,
+      "answer_correctness": 0.613,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 15799.6,
+      "error": null,
+      "retrieved_ids": [
+        "c14",
+        "c16",
+        "c38"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 0.5,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.0
+      }
+    },
+    {
+      "id": "s10",
+      "branch": "simple",
+      "query": "差旅餐补每天多少",
+      "out_of_kb": false,
+      "reference": "差旅餐补一线城市每天 100 元、二线城市每天 80 元，按出差自然日计算。",
+      "answer": "根据资料，一线城市差旅餐补每天 100 元，二线城市每天 80 元。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.692,
+      "answer_correctness": 0.845,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 16639.4,
+      "error": null,
+      "retrieved_ids": [
+        "c16",
+        "c21",
+        "c38"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 1.9
+      }
+    },
+    {
+      "id": "s11",
+      "branch": "simple",
+      "query": "工作日加班费按几倍算",
+      "out_of_kb": false,
+      "reference": "工作日加班费按 1.5 倍计算（休息日 2 倍、法定节假日 3 倍）。",
+      "answer": "根据资料 [1]，工作日加班费按 1.5 倍计算。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.877,
+      "answer_correctness": 0.613,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 11237.0,
+      "error": null,
+      "retrieved_ids": [
+        "c08",
+        "c22",
+        "c31"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 1.8
+      }
+    },
+    {
+      "id": "s12",
+      "branch": "simple",
+      "query": "公积金缴存比例是多少",
+      "out_of_kb": false,
+      "reference": "公积金按 12% 缴存，自入职次月起开始缴存。",
+      "answer": "根据资料 [1]，公积金按 12% 缴存。",
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.972,
+      "answer_correctness": 0.727,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 9176.8,
+      "error": null,
+      "retrieved_ids": [
+        "c12",
+        "c23",
+        "c33"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.1
+      }
+    },
+    {
+      "id": "r01",
+      "branch": "rewrite",
+      "query": "它的报销时限是多久",
+      "out_of_kb": false,
+      "reference": "发票须在消费发生后 30 天内报销，须一次性上传，逾期或拆分上传均不予受理。",
+      "answer": "根据资料，报销时限分为三种情况：\n1. **发票报销时限**：30 天（须在消费发生后 30 天内报销）；\n2. **差旅报销提交时限**：15 天；\n3. **报销打款时限**：7 个工作日。\n\n资料明确指出上述三时限各不相同。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.737,
+      "answer_correctness": 0.479,
+      "context_precision": 0.833,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 31749.5,
+      "error": null,
+      "retrieved_ids": [
+        "c19",
+        "c26",
+        "c39"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 0.333,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.3
+      }
+    },
+    {
+      "id": "r02",
+      "branch": "rewrite",
+      "query": "他负责什么审批",
+      "out_of_kb": false,
+      "reference": "研发部主管王刚负责年假审批与大额报销审批。",
+      "answer": "根据资料，研发部主管王刚负责年假审批与大额报销审批。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.579,
+      "answer_correctness": 0.997,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 46521.2,
+      "error": null,
+      "retrieved_ids": [
+        "c24",
+        "c25",
+        "c37"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 3.2
+      }
+    },
+    {
+      "id": "r03",
+      "branch": "rewrite",
+      "query": "她负责什么审批",
+      "out_of_kb": false,
+      "reference": "产品部主管李雪负责项目奖金分配与调休审批。",
+      "answer": "根据提供的资料，文中虽未明确指明“她”的具体身份，但提到了**产品部主管李雪**。依据资料 [2] 和 [3]，李雪负责以下审批：\n\n1.  **项目奖金分配与审批**（资料 [2]、[3]）；\n2.  **调休审批**（资料 [2]、[3]）。\n\n此外，资料 [3] 指出上述事项的最终审核由分管副总裁完成。",
+      "faithfulness": 0.8,
+      "answer_relevancy": 0.812,
+      "answer_correctness": 0.648,
+      "context_precision": 0.583,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 40660.5,
+      "error": null,
+      "retrieved_ids": [
+        "c24",
+        "c25",
+        "c37"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 0.333,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 3.1
+      }
+    },
+    {
+      "id": "r04",
+      "branch": "rewrite",
+      "query": "它要提前几天申请",
+      "out_of_kb": false,
+      "reference": "事假需提前 1 个工作日申请。",
+      "answer": "根据资料，不同假期的提前申请时间规定如下：\n1. **事假**：需提前 1 个工作日申请。\n2. **年假**：5 天及以上需提前 15 天申请。\n3. **病假**：资料中未明确具体提前申请天数，仅要求提供医院证明。",
+      "faithfulness": 0.8,
+      "answer_relevancy": 0.715,
+      "answer_correctness": 0.461,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 46391.6,
+      "error": null,
+      "retrieved_ids": [
+        "c08",
+        "c36",
+        "c42"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.9
+      }
+    },
+    {
+      "id": "d01",
+      "branch": "decompose",
+      "query": "出差报销和日常报销有什么区别",
+      "out_of_kb": false,
+      "reference": "日常报销须附正规发票与费用明细单，经部门主管审批后 7 个工作日内打款；差旅报销须附行程凭证与出差审批单，住宿超标部分不予报销。",
+      "answer": "根据提供的资料，出差报销和日常报销的区别如下：\n\n1.  **所需附件不同**：\n    *   日常报销须附正规发票与费用明细单。\n    *   差旅报销须附行程凭证与出差审批单。\n2.  **提交时限不同**：\n    *   出差报销须在出差结束后 15 个自然日内提交，逾期不予受理。\n    *   资料中未提及日常报销的具体提交时限要求。\n3.  **费用限制不同**：\n    *   差旅报销中住宿超标部分不予报销。\n    *   资料中未提及日常报销有住宿或费用标准限制。\n4.  **打款时间规定不同**：\n    *   日常报销经部门主管审批后 7 个工作日内打款。\n    *   资料中未明确差旅报销的打款时间。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.82,
+      "answer_correctness": 0.557,
+      "context_precision": 0.5,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 25852.7,
+      "error": null,
+      "retrieved_ids": [
+        "c17",
+        "c18",
+        "c21"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.667,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 4.1
+      }
+    },
+    {
+      "id": "d02",
+      "branch": "decompose",
+      "query": "研发部和产品部哪个部门人多",
+      "out_of_kb": false,
+      "reference": "研发部 130 人，产品部 120 人，研发部人多。",
+      "answer": "根据资料 [1](c23)，研发部有 130 人，产品部有 120 人，因此研发部人数更多。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.981,
+      "answer_correctness": 0.988,
+      "context_precision": 1.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 7119.5,
+      "error": null,
+      "retrieved_ids": [
+        "c23",
+        "c30",
+        "c37"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 2.2
+      }
+    },
+    {
+      "id": "d03",
+      "branch": "decompose",
+      "query": "年假和事假有什么区别",
+      "out_of_kb": false,
+      "reference": "年假按工龄梯度核定天数（满 1 年不满 5 年 5 天、满 5 年不满 10 年 10 天、满 10 年及以上 15 天）；事假需提前 1 个工作日申请，年累计不得超过 20 天，且期间不计薪。",
+      "answer": "根据提供的资料，年假和事假的区别如下：\n\n1.  **申请时间不同**：\n    *   **年假**：5 天及以上需提前 15 天申请（资料[2]）。\n    *   **事假**：需提前 1 个工作日申请（资料[2]、[3]）。\n\n2.  **天数及累计限制不同**：\n    *   **年假**：依据工龄设定具体天数，例如满 5 年不满 10 年为 10 天（资料[1]）。\n    *   **事假**：年累计不得超过 20 天（资料[1]、[3]）。\n\n3.  **薪资待遇不同**：\n    *   **事假**：期间不计薪（资料[1]、[3]）。\n    *   **年假**：资料中指出两者口径不同，但未明确说明年假是否计薪（资料[1]）。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.75,
+      "answer_correctness": 0.571,
+      "context_precision": 0.333,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 34578.4,
+      "error": null,
+      "retrieved_ids": [
+        "c08",
+        "c36",
+        "c42"
+      ],
+      "retrieval": {
+        "recall": 0.5,
+        "precision": 0.333,
+        "mrr": 0.333,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 3.7
+      }
+    },
+    {
+      "id": "m01",
+      "branch": "multihop",
+      "query": "报销发票的完整流程是什么",
+      "out_of_kb": false,
+      "reference": "发票须在消费发生后 30 天内一次性上传报销，附正规发票与费用明细单，经部门主管审批后 7 个工作日内打款至工资卡（法定节假日顺延）。",
+      "answer": "根据提供的资料，报销发票的流程及相关规定如下：\n\n**1. 资料准备与提交要求**\n*   **票据要求**：\n    *   日常报销须附正规发票与费用明细单（[4]）。\n    *   差旅报销须附行程凭证与出差审批单（[5]）。\n    *   发票须在消费发生后 30 天内报销，须一次性上传，逾期或拆分上传均不予受理（[3]）。\n*   **提交时限**：\n    *   发票报销时限为消费发生后 30 天内（[1]、[3]）。\n    *   差旅报销提交时限为 15 天（[1]）。\n\n**2. 审批流程**\n*   **普通报销**：仅需部门主管审批（[6]）。\n*   **大额报销**：单笔超过 5000 元的，需财务部复核并财务总监（陈立）签字（[2]、[6]）。\n*   日常报销须经部门主管审批后方可进入打款环节（[4]）。\n\n**3. 财务审核与打款**\n*   **职责分工**：财务部负责报销审核、发票校验与打款执行（[2]）。\n*   **打款时限**：报销打款时限为 7 个工作日（日常报销经部门主管审批后 7 个工作日内打款）（[1]、[4]）。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.654,
+      "answer_correctness": 0.473,
+      "context_precision": 0.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 39271.3,
+      "error": null,
+      "retrieved_ids": [
+        "c18",
+        "c19",
+        "c21",
+        "c26",
+        "c39",
+        "c41"
+      ],
+      "retrieval": {
+        "recall": 0.667,
+        "precision": 0.333,
+        "mrr": 0.333,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 3.8
+      }
+    },
+    {
+      "id": "m02",
+      "branch": "multihop",
+      "query": "李四的领导的审批范围是什么",
+      "out_of_kb": false,
+      "reference": "李四直属领导为产品部主管李雪，李雪负责项目奖金分配与调休审批。",
+      "answer": "根据资料 [1]，李四的直属领导为产品部主管李雪。\n\n关于李雪的审批范围，依据资料如下：\n1.  **项目奖金与调休**：资料 [4] 明确指出“李雪（产品部主管）审批项目奖金与调休”。\n2.  **出差申请**：资料 [5] 规定“出差前须提交出差申请单，经部门主管审批通过后方可出差”，李雪作为部门主管，负责此项审批。\n\n综上，李四的领导（李雪）的审批范围主要包括项目奖金、调休及出差申请。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.635,
+      "answer_correctness": 0.721,
+      "context_precision": 0.25,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 44977.9,
+      "error": null,
+      "retrieved_ids": [
+        "c13",
+        "c21",
+        "c24",
+        "c29",
+        "c30",
+        "c37"
+      ],
+      "retrieval": {
+        "recall": 0.5,
+        "precision": 0.167,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 3.7
+      }
+    },
+    {
+      "id": "m03",
+      "branch": "multihop",
+      "query": "员工出差从申请到报销需要什么",
+      "out_of_kb": false,
+      "reference": "出差前须提交出差申请单经部门主管审批；报销时须附行程凭证与出差审批单，住宿超标部分不予报销。",
+      "answer": "根据提供的资料，员工出差从申请到报销需满足以下要求：\n\n1.  **出差申请**：出差前须提交出差申请单，经部门主管审批通过后方可出差（[1]）。\n2.  **费用标准**：\n    *   **交通**：短途优先高铁二等座，单程超过 1500 公里可申请民航经济舱，商务舱与头等舱不予报销（[6]）。\n    *   **住宿**：住宿超标部分不予报销（[3]）。\n3.  **报销提交**：\n    *   **时效**：须在出差结束后 15 个自然日内提交，逾期不予受理（[2]）。\n    *   **凭证**：报销须附行程凭证与出差审批单（[3]）。\n4.  **款项发放**：报销审批通过后，财务部于 7 个工作日内打款至员工工资卡（[4]）。",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.836,
+      "answer_correctness": 0.656,
+      "context_precision": 0.0,
+      "grounded": null,
+      "judge_reason": null,
+      "gen_elapsed_ms": 18917.1,
+      "error": null,
+      "retrieved_ids": [
+        "c13",
+        "c15",
+        "c17",
+        "c21",
+        "c22",
+        "c32"
+      ],
+      "retrieval": {
+        "recall": 1.0,
+        "precision": 0.333,
+        "mrr": 1.0,
+        "keyword_hit": true,
+        "answerable": true,
+        "elapsed_ms": 3.3
+      }
+    },
+    {
+      "id": "o01",
+      "branch": "out_of_kb",
+      "query": "公积金贷款最高能贷多少",
+      "out_of_kb": true,
+      "reference": "资料中未找到公积金贷款额度的相关信息，无法回答该问题。",
+      "answer": "资料中未找到相关信息",
+      "faithfulness": null,
+      "answer_relevancy": null,
+      "answer_correctness": null,
+      "context_precision": null,
+      "grounded": true,
+      "judge_reason": "回答明确说明资料中未找到相关信息，符合知识库外问题应拒绝回答的要求。",
+      "gen_elapsed_ms": 7237.0,
+      "error": null,
+      "retrieved_ids": [
+        "c01",
+        "c02",
+        "c33"
+      ],
+      "retrieval": {
+        "recall": null,
+        "precision": null,
+        "mrr": null,
+        "keyword_hit": null,
+        "answerable": true,
+        "elapsed_ms": 1.5
+      }
+    },
+    {
+      "id": "o02",
+      "branch": "out_of_kb",
+      "query": "竞业限制的补偿金标准是多少",
+      "out_of_kb": true,
+      "reference": "资料中未找到竞业限制补偿金标准的相关信息，无法回答该问题。",
+      "answer": "资料中未找到相关信息",
+      "faithfulness": null,
+      "answer_relevancy": null,
+      "answer_correctness": null,
+      "context_precision": null,
+      "grounded": true,
+      "judge_reason": "回答明确说明资料中未找到竞业限制补偿金的相关信息，符合拒绝编造的要求。",
+      "gen_elapsed_ms": 6945.6,
+      "error": null,
+      "retrieved_ids": [
+        "c01",
+        "c09",
+        "c14"
+      ],
+      "retrieval": {
+        "recall": null,
+        "precision": null,
+        "mrr": null,
+        "keyword_hit": null,
+        "answerable": true,
+        "elapsed_ms": 1.7
+      }
+    }
+  ]
+}
