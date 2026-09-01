@@ -32,6 +32,10 @@ class NaiveRagScheme(RagScheme):
         ]
         self._rebuild_if_changed(expected)
 
+    def _doc_chunks(self, text: str, source: str) -> list[tuple[str, dict]]:
+        """增量入库分块：与整批相同的固定切块，块来源为文档真实路径。"""
+        return [(chunk, {"source": source}) for chunk in self._fixed_chunks(text)]
+
     @staticmethod
     def _fixed_chunks(text: str) -> list[str]:
         """固定滑动窗口切块：按字符数硬切，无语义感知、无结构感知。"""

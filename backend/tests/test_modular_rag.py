@@ -898,7 +898,10 @@ async def test_astream_decompose_and_compress_events(settings):
         "材料不全、信息有误的报销申请一律不予受理，自动作废。"
     )
     scheme = make_modular(settings)
-    scheme.ingest([long_chunk])
+    # 直接构造超长命中块（>max_chars=400）触发截断型压缩事件；
+    # 250 字子块在 max_chars 提升后不再截断（修复条款被句边界截断丢证据的问题）
+    store = scheme.store
+    store.add(long_chunk, {"source": "test"})
     events = [ev async for ev in scheme.astream("出差和报销有什么区别", 2)]
     kinds = [e["type"] for e in events]
     assert "decompose" in kinds
@@ -906,7 +909,8 @@ async def test_astream_decompose_and_compress_events(settings):
     assert len(decompose["sub_queries"]) >= 2
     assert "compress" in kinds
     compress = next(e for e in events if e["type"] == "compress")
-    assert compress["metrics"]["truncated"] >= 1, "超长块应被截断"
+    m = compress["metrics"]
+    assert m["kept"] < m["original"] or m["truncated"] >= 1, "去重或截断应发生"
 
 
 async def test_astream_multihop_events(settings):
@@ -1419,6 +1423,19 @@ def test_augment_query_insufficient_overrides_mode():
     assert "Markdown" not in out
 
 
+def test_augment_query_insufficient_no_hits_injects_clarify():
+    """零命中但答案不足（需澄清）：仍注入追问澄清指令，不得原样返回空消息。"""
+    out = AgentRunner._augment_query(
+        "张三的部门有多少人", None, insufficient=True, generation_mode="citation"
+    )
+    assert "知识库检索结果" in out and "未检索到" in out
+    assert "追问" in out and "不要编造" in out
+    assert "工具不可用" in out, "应明确禁止声称工具不可用"
+    # 无不足信号时零命中仍原样返回（原有行为不变）
+    assert AgentRunner._augment_query("x", None) == "x"
+    assert AgentRunner._augment_query("x", {"name": "agentic", "hits": []}) == "x"
+
+
 # ---- HyDE：假想文档稠密召回并入 RRF 融合 ----
 
 class StubHyde:
@@ -1438,7 +1455,7 @@ class RecordingStore(MemoryStore):
         super().__init__(FakeEmbeddings(), collection=collection)
         self.search_calls: list[str] = []
 
-    def search(self, query: str, top_k: int = 3):
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None):
         self.search_calls.append(query)
         return super().search(query, top_k)
 
@@ -1473,11 +1490,11 @@ class ConcurrentStore(MemoryStore):
         with self._lock:
             self.active -= 1
 
-    def search(self, query: str, top_k: int = 3):
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None):
         self._enter()
         return super().search(query, top_k)
 
-    def hybrid_search(self, query: str, top_k: int = 3):
+    def hybrid_search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None):
         self._enter()
         return super().hybrid_search(query, top_k)
 

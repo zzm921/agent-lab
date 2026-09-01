@@ -6,11 +6,12 @@
 - CleanDocument：清洗后的可入库文本（附质量分与处理统计）；
 - DocReport / PipelineReport：逐文档处理报告与批次汇总（status 四态）。
 
-status 四态含义：
+status 四态 + 容器标记含义：
 - ok          正常清洗完成，进入入库候选；
 - superseded  近似/精确重复，保留最新一份，旧版仅标记不删除（合规可追溯）；
 - quarantined 质量分 50-69 的低质量文档：不入主索引，原文件保留在输入目录；
-- dlq         死信队列：解析/OCR/乱码/极低质量等原因彻底失败，原文件复制到 DLQ 目录。
+- dlq         死信队列：解析/OCR/乱码/极低质量等原因彻底失败，原文件复制到 DLQ 目录；
+- container   容器文档（ZIP/EML）：本身不入库，已展开为子文件递归处理（子文件有独立报告）。
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ STATUS_OK = "ok"
 STATUS_SUPERSEDED = "superseded"
 STATUS_QUARANTINED = "quarantined"
 STATUS_DLQ = "dlq"
+STATUS_CONTAINER = "container"  # 容器文档：已展开为子文件，本身不入库
 
 # 解析路由
 ROUTE_LIGHT = "light"  # 快路径：文本/MD/DOCX/文本型 PDF 直接解析
@@ -95,6 +97,7 @@ class PipelineReport:
             "superseded": counts.get(STATUS_SUPERSEDED, 0),
             "quarantined": counts.get(STATUS_QUARANTINED, 0),
             "dlq": counts.get(STATUS_DLQ, 0),
+            "container": counts.get(STATUS_CONTAINER, 0),
         }
 
     def to_dict(self) -> dict:

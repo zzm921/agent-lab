@@ -120,8 +120,21 @@ class QdrantStore(StoreBackend):
             for hit in hits
         ]
 
-    def search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
-        """稠密向量检索。"""
+    @staticmethod
+    def _volume_filter(volume_filter: tuple[str, ...] | None) -> models.Filter | None:
+        """metadata.volume 精确卷名白名单过滤条件；None=不过滤。"""
+        if not volume_filter:
+            return None
+        return models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="metadata.volume", match=models.MatchAny(any=list(volume_filter))
+                )
+            ]
+        )
+
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        """稠密向量检索；volume_filter 提供时仅在白名单卷内召回（定向补召回用）。"""
         qv = self.embeddings.embed_query(query)
         resp = self.client.query_points(
             collection_name=self._collection,
@@ -129,6 +142,7 @@ class QdrantStore(StoreBackend):
             using="dense",
             limit=top_k,
             with_payload=True,
+            query_filter=self._volume_filter(volume_filter),
         )
         return self._map_hits(resp.points)
 
@@ -157,10 +171,27 @@ class QdrantStore(StoreBackend):
             points_selector=models.FilterSelector(filter=models.Filter()),
         )
 
-    def hybrid_search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
+    def delete_source(self, source: str) -> int:
+        """按 payload 中 metadata.source 过滤删除（增量更新：文档变更先删旧块）。"""
+        before = self.client.count(self._collection).count
+        self.client.delete(
+            collection_name=self._collection,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="metadata.source", match=models.MatchValue(value=source)
+                        )
+                    ]
+                )
+            ),
+        )
+        return before - self.client.count(self._collection).count
+
+    def hybrid_search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
         """混合检索：稠密 + 稀疏双路召回，Qdrant 内置 RRF 融合。"""
         if not self.sparse:
-            return self.search(query, top_k)
+            return self.search(query, top_k, volume_filter=volume_filter)
         dense = self.embeddings.embed_query(query)
         sparse = _sparse_vec(self.embeddings.embed_sparse_query(query))
         # 各路放宽召回（top_k×4）避免早期截断，再经 RRF 融合取 top_k
@@ -175,6 +206,7 @@ class QdrantStore(StoreBackend):
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=top_k,
             with_payload=True,
+            query_filter=self._volume_filter(volume_filter),
         )
         return self._map_hits(resp.points)
 

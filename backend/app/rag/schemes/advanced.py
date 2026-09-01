@@ -84,15 +84,33 @@ class AdvancedRagScheme(RagScheme):
                 )
         self._rebuild_if_changed(expected)
 
-    def _structure_chunks(self, text: str) -> list[tuple[str, dict]]:
+    def _doc_chunks(self, text: str, source: str) -> list[tuple[str, dict]]:
+        """增量入库分块：与整批相同的分块策略，块来源为文档真实路径。"""
+        structured = self._structure_chunks(text, source)
+        if structured:
+            return structured
+        return [(chunk, {"source": source}) for chunk in self._semantic_chunks(text)]
+
+    def _structure_chunks(self, text: str, source: str = SOURCE_NAME) -> list[tuple[str, dict]]:
         """结构感知父子分块：解析卷/章/节标题与表格块，产出子块并聚合父块。
 
         子块：正文 150-250（短单元贪心合并、超长单元句边界切分）、表格 25 行原子组；
         父块：章内 800-1200，父块全文写入各子块 metadata["parent"] 供检索回填。
         全文无 `##` 章节结构（平坦语料/测试文本）返回 []，调用方回退语义分块。
+        source：溯源来源（整批内置语料用默认名，增量入库传文档真实路径）。
         """
-        if not any(line.startswith("## ") for line in text.split("\n")):
-            return []
+        lines = text.split("\n")
+        h2 = sum(1 for line in lines if line.startswith("## "))
+        h3 = sum(1 for line in lines if line.startswith("### "))
+        if h2 == 0:
+            # 无 ## 章：有 ### 条目（FAQ/案例/场景/卡片等条目式卷）→ 条目分块，
+            # 避免「无结构回退语义分块」把多个问答/案例混切进同块且丢失卷/条目元数据
+            return self._entry_chunks(text, source) if h3 else []
+        if h3 > h2 * 10:
+            # 条目式主导（如 FAQ 卷仅一个 ## 分编、### 问答上百条）→ 条目分块优先：
+            # 主路径贪心合并会把相邻问答答案拼进同块，破坏一问一答原子性与 section 归属。
+            # 阈值 10 倍：层级卷（章多节少，如 15 章 75 节）仍走结构分块保留表格原子组
+            return self._entry_chunks(text, source)
         # 结构解析：按空行分块，识别 卷/章/节 标题上下文与表格块，其余为正文单元
         units: list[dict] = []
         volume = chapter = section = ""
@@ -156,7 +174,8 @@ class AdvancedRagScheme(RagScheme):
                     continue
                 pieces = self._split_long_body(u["text"]) if len(u["text"]) > CHILD_MAX else [u["text"]]
                 for p in pieces:
-                    if buffer and buf_len + len(p) > CHILD_MAX:
+                    # 跨 section 不合并：相邻条目（### 问题）答案拼块会错配 section 归属
+                    if buffer and (buf_len + len(p) > CHILD_MAX or u["section"] != buf_section):
                         children.append(self._child_block("\n\n".join(buffer), volume, chapter, buf_section, False))
                         buffer, buf_len = [], 0
                     buffer.append(p)
@@ -195,7 +214,7 @@ class AdvancedRagScheme(RagScheme):
             (
                 child["text"],
                 {
-                    "source": SOURCE_NAME,
+                    "source": source,
                     "volume": child["volume"],
                     "chapter": child["chapter"],
                     "section": child["section"],
@@ -205,6 +224,64 @@ class AdvancedRagScheme(RagScheme):
             )
             for i, child in enumerate(children)
         ]
+
+    def _entry_chunks(self, text: str, source: str = SOURCE_NAME) -> list[tuple[str, dict]]:
+        """条目式卷分块（`# 卷标题` + `### 条目`，无 `##` 章）：一条目一子块。
+
+        FAQ/案例/场景/知识卡片卷的条目是天然原子单元（一问一答/一案例/一场景），
+        按条目切分保证问答不混块；条目即父块（parent = 卷标题 + 条目全文），
+        metadata 带 volume/section，与结构化卷一致（不再走 builtin 语义分块回退）。
+        """
+        volume = ""
+        items: list[list[str]] = []  # 每条目 = [行文本...]（标题行为首行）
+        for line in text.split("\n"):
+            s = line.strip()
+            if not s:
+                continue
+            if s.startswith("# ") and not s.startswith("##"):
+                volume = s[2:].strip()
+                continue
+            if s.startswith("### "):
+                items.append([s[4:].strip()])
+                continue
+            if items:
+                items[-1].append(s)
+            else:
+                items.append([s])  # 卷标题后、首个条目前的导语：独立条目，不丢弃
+        children: list[dict] = []
+        for lines in items:
+            entry_text = "\n".join(lines)
+            if not entry_text.strip():
+                continue
+            section = self._entry_section(entry_text)
+            parent = f"{volume}\n{entry_text}" if volume else entry_text
+            if len(parent) > PARENT_MAX:
+                parent = parent[:PARENT_MAX]
+            pieces = self._split_long_body(entry_text) if len(entry_text) > CHILD_MAX else [entry_text]
+            for p in pieces:
+                children.append(
+                    {"text": p, "volume": volume, "chapter": "", "section": section, "table": False, "parent": parent}
+                )
+        return [
+            (
+                c["text"],
+                {
+                    "source": source,
+                    "volume": c["volume"],
+                    "chapter": c["chapter"],
+                    "section": c["section"],
+                    "table": c["table"],
+                    "parent": c["parent"],
+                },
+            )
+            for c in children
+        ]
+
+    @staticmethod
+    def _entry_section(entry_text: str) -> str:
+        """条目 section 标识：首句（到第一个句读符号），截 40 字。"""
+        head = re.split(r"[。？！；\n]", entry_text, 1)[0].strip()
+        return head[:40]
 
     def _split_long_body(self, text: str) -> list[str]:
         """超长正文单元：按句边界（。！？；/换行）切成约 CHILD_MAX 的子块；

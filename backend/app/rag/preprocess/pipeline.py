@@ -22,6 +22,7 @@ from app.rag.preprocess.cleaning.pipeline import clean_document
 from app.rag.preprocess.cleaning.quality import SCORE_PASS, SCORE_QUARANTINE
 from app.rag.preprocess.complexity import route_document
 from app.rag.preprocess.models import (
+    STATUS_CONTAINER,
     STATUS_DLQ,
     STATUS_OK,
     STATUS_QUARANTINED,
@@ -34,12 +35,20 @@ from app.rag.preprocess.models import (
     RawFile,
 )
 from app.rag.preprocess.parsers import route_parse
-from app.rag.preprocess.sniffer import MIME_PDF, check_pdf_openable, sniff
+from app.rag.preprocess.parsers.container import expand_eml, expand_zip
+from app.rag.preprocess.sniffer import (
+    MIME_PDF,
+    MIME_ZIP,
+    check_pdf_openable,
+    is_container,
+    sniff,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_INPUT_DIR = Path("data/docs")
 DEFAULT_OUTPUT_DIR = Path("data/ingest")
+MAX_CONTAINER_DEPTH = 2  # 容器嵌套层数上限（zip 套 zip/eml 只允许再展开一层）
 
 
 def run_pipeline(
@@ -61,7 +70,7 @@ def run_pipeline(
         doc_report = DocReport(path=str(path))
         report.docs.append(doc_report)
         try:
-            _process_one(path, doc_report, clean_docs)
+            _process_one(path, doc_report, clean_docs, report)
         except (DocumentRejected, GarbledDocument) as exc:
             doc_report.status = STATUS_DLQ
             doc_report.error = str(exc)
@@ -80,10 +89,33 @@ def run_pipeline(
     return clean_docs, report
 
 
-def _process_one(path: Path, doc_report: DocReport, clean_docs: list[CleanDocument]) -> None:
-    data = path.read_bytes()
-    raw = sniff(data, path)
+def _process_one(path: Path, doc_report: DocReport, clean_docs: list[CleanDocument], report: PipelineReport) -> None:
+    """顶层入口：真实文件 → 递归处理（容器类型会展开出子文档报告）。"""
+    _process_bytes(
+        path.read_bytes(), str(path), doc_report, clean_docs, report, depth=0, container=None
+    )
+
+
+def _process_bytes(
+    data: bytes,
+    display_path: str,
+    doc_report: DocReport,
+    clean_docs: list[CleanDocument],
+    report: PipelineReport,
+    depth: int,
+    container: str | None,
+) -> None:
+    """处理一个字节载荷（真实文件或容器子文件），写入 doc_report；容器递归展开。
+
+    display_path：展示/溯源路径——容器子文件为「父容器路径/条目名」（虚拟路径，不落盘）；
+    container：父容器路径（顶层文件为 None），随 CleanDocument.metadata 供台账清理子文档。
+    """
+    raw = sniff(data, Path(display_path))
     doc_report.mime = raw.mime
+
+    if is_container(raw.mime):
+        _expand_container(raw, display_path, doc_report, clean_docs, report, depth, container)
+        return
 
     if raw.mime == MIME_PDF:
         check_pdf_openable(data)  # 加密/损坏 → DocumentRejected → DLQ
@@ -107,17 +139,54 @@ def _process_one(path: Path, doc_report: DocReport, clean_docs: list[CleanDocume
         return
 
     doc_report.status = STATUS_OK
-    clean_docs.append(
-        CleanDocument(
-            text=text,
-            metadata={
-                "source": str(path),
-                "quality_score": doc_report.quality_score,
-                "route": route,
-                "stats": clean_stats,
-            },
-        )
-    )
+    metadata = {
+        "source": display_path,
+        "quality_score": doc_report.quality_score,
+        "route": route,
+        "stats": clean_stats,
+    }
+    if container is not None:
+        metadata["container"] = container
+    clean_docs.append(CleanDocument(text=text, metadata=metadata))
+
+
+def _expand_container(
+    raw: RawFile,
+    display_path: str,
+    doc_report: DocReport,
+    clean_docs: list[CleanDocument],
+    report: PipelineReport,
+    depth: int,
+    container: str | None,
+) -> None:
+    """容器（ZIP/EML）展开：子文件逐个递归走完整管线，子报告独立、子失败不拖垮父。"""
+    if depth >= MAX_CONTAINER_DEPTH:
+        raise DocumentRejected(f"容器嵌套超过 {MAX_CONTAINER_DEPTH} 层，已拒绝：{display_path}")
+    expand = expand_zip if raw.mime == MIME_ZIP else expand_eml
+    items = expand(raw)
+    doc_report.status = STATUS_CONTAINER
+    doc_report.stage_stats["container"] = {"mime": raw.mime, "children": len(items)}
+    for item in items:
+        child_path = f"{display_path}/{item.name}"
+        child_report = DocReport(path=child_path)
+        report.docs.append(child_report)
+        try:
+            _process_bytes(
+                item.data,
+                child_path,
+                child_report,
+                clean_docs,
+                report,
+                depth=depth + 1,
+                container=display_path,
+            )
+        except (DocumentRejected, GarbledDocument, OcrError) as exc:
+            child_report.status = STATUS_DLQ
+            child_report.error = str(exc)
+        except Exception as exc:  # 子文档未知异常：只标记该子文档，容器与其余子文档继续
+            logger.exception("容器子文档处理异常：%s", child_path)
+            child_report.status = STATUS_DLQ
+            child_report.error = f"处理异常：{exc}"
 
 
 def _dedup_batch(clean_docs: list[CleanDocument], report: PipelineReport) -> None:

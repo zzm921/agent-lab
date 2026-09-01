@@ -4,7 +4,7 @@ export type ModeId = 'react' | 'plan_execute' | 'reflection' | 'multi_agent'
 export type PromptStrategy = 'standard' | 'few_shot' | 'cot'
 export type ApprovalPolicy = 'always' | 'never'
 export type ApprovalDecision = 'approve' | 'reject' | 'modify'
-export type RagSchemeId = 'naive' | 'advanced' | 'modular'
+export type RagSchemeId = 'naive' | 'advanced' | 'modular' | 'agentic'
 
 export interface Capability {
   id: string
@@ -125,6 +125,49 @@ export type AgentEvent =
       }
       /** 是否为检索不足后升级检索再验证的最终结论 */
       escalated?: boolean
+    }
+  | {
+      type: 'agent_step'
+      query: string
+      scheme?: string
+      /** agentic：检索 Agent 单步工具执行（逐步流式，index 递增） */
+      step: {
+        index: number
+        role: string
+        action: string
+        params: Record<string, unknown>
+        note?: string | null
+        hits_count?: number
+        volumes?: { volume: string; count: number }[]
+      }
+    }
+  | {
+      type: 'grade'
+      query: string
+      scheme?: string
+      /** agentic：CRAG 证据评审结果（保留相关证据数 / 候选总数 / 缺口） */
+      kept: number
+      total: number
+      missing_facts: string[]
+      thought?: string
+    }
+  | {
+      type: 'correct'
+      query: string
+      scheme?: string
+      /** agentic：CRAG 纠错决策（纠错轮次 + 下一波工具调用） */
+      round: number
+      thought?: string
+      calls: { action: string; query: string; volume?: string; reason?: string }[]
+    }
+  | {
+      type: 'verify'
+      query: string
+      scheme?: string
+      /** agentic：Self-RAG 答案校验结论（可答 / 缺口） */
+      answerable: boolean
+      missing_facts: string[]
+      thought?: string
     }
   | { type: 'memory_write'; content: string }
   | { type: 'memory_read'; query: string; hits: HitItem[] }

@@ -16,7 +16,7 @@ const DEFAULT_ACCENT = '#7c5cff'
 /** 合法取值白名单（非法值回退默认，不中断页面） */
 const VALID_STRATEGIES: PromptStrategy[] = ['standard', 'few_shot', 'cot']
 const VALID_POLICIES: ApprovalPolicy[] = ['always', 'never']
-const VALID_RAG_SCHEMES: RagSchemeId[] = ['naive', 'advanced', 'modular']
+const VALID_RAG_SCHEMES: RagSchemeId[] = ['naive', 'advanced', 'modular', 'agentic']
 
 /** tags.md 中标签注册表的原始结构 */
 interface TagManifest {

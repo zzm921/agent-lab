@@ -68,6 +68,43 @@ from app.rag.routing.query_hyde import HydeExpander, build_hyde
 
 logger = logging.getLogger(__name__)
 
+# ---- 路由 target（D6）→ 定向补召回的卷名白名单 ----
+# 卷名 = 语料源文件 `# ` 一级标题（= metadata.volume，与 KNOWLEDGE_DOCS 键一致）。
+# 用途：路由判定 target 后，检索层在白名单卷内**额外**召回一路（非替换全库检索），
+# 保证「人名档案 / FAQ / 版本对比」等定向块与制度条款块同时进入候选，经重排竞争 top_k。
+_TARGET_VOLUME_FILTERS: dict[str, tuple[str, ...]] = {
+    "profile": ("卷十三·附录 全员权益明细档案",),
+    "faq": (
+        "卷十 员工常见问题问答库（FAQ）",
+        "卷三十九 FAQ 补充问答（第三编）",
+        "卷四十四 员工常见问题问答库（第四编）",
+        "卷四十九 员工常见问题问答库（第五编）",
+    ),
+    "case": (
+        "卷十一 典型案例与判例库",
+        "卷四十 案例判例库（第三编）",
+        "卷四十五 案例判例库（第四编）",
+        "卷五十 案例判例库（第五编）",
+    ),
+    "scene": (
+        "卷二十一 常见业务场景处理手册",
+        "卷四十一 常见业务场景处理手册（第二编）",
+        "卷四十六 常见业务场景处理手册（第三编）",
+    ),
+    "card": ("卷二十二 制度速查知识卡片", "卷四十七 制度速查知识卡片（第三编）"),
+    "sop": ("卷十二 标准作业流程（SOP）与表单模板",),
+    "version": ("卷九 制度版本演进与对比",),
+    "duty": ("卷三十八 岗位职责说明书",),
+}
+
+# ---- 定向补召回防挤占（同模板块多样性截断） ----
+# 档案/FAQ 等定向卷内同模板块极多（如「卷十三·附录」逐人分块，模板句相同仅人名/数字不同），
+# 若整路进入 RRF 融合，会成群挤占 top_k 配额，把「档案 + 制度条款」组合证据中的另一类挤出候选。
+# 对策：定向路结果先做贪心多样性选择——与已保留块 2 字词相对重叠过高的同模板块丢弃，
+# 且进入融合的块数设上限（真证据在卷内排名靠前，截断不会伤及目标块）。
+_VOLUME_ROUTE_MAX = 3  # 定向路参与融合的块数上限
+_VOLUME_ROUTE_OVERLAP = 0.55  # 同模板块判定：2 字词相对重叠率阈值（交集/较短集合）
+
 # ---- 跨轮 seed 复用护栏（保守方案） ----
 # 上一轮已验证的检索命中可作为本轮「候选证据」复用（省掉重复检索 + 覆盖复用的跳）；
 # 但它只是多一路 RRF 候选，不注入查询文本、不占当前轮召回配额。为防止「上次不准」传导伤害：
@@ -96,6 +133,7 @@ class ExecutionPlan:
     retrieval: list[ModuleCall] = field(default_factory=list)  # 检索模块调用链
     post_retrieval: list[ModuleCall] = field(default_factory=list)  # 后处理模块调用链
     generation_strategy: str = "citation"  # 生成策略（direct / citation / comparison）
+    volume_filter: tuple[str, ...] | None = None  # 定向补召回卷名白名单（target 映射，None=不过滤）
 
 
 class ModularRagScheme(AdvancedRagScheme):
@@ -181,12 +219,14 @@ class ModularRagScheme(AdvancedRagScheme):
         # 后处理：多路/混合/多跳召回后压缩上下文噪声（单次向量检索噪声有限，不压缩）
         if decision.retrieval_mode in (MULTI_RECALL, HYBRID):
             post.append(ModuleCall("compress"))
+        # 定向补召回：路由判定的 target 映射为卷名白名单，检索层在白名单卷内额外召回一路
         return ExecutionPlan(
             need_retrieval=True,
             pre_retrieval=pre,
             retrieval=retrieval,
             post_retrieval=post,
             generation_strategy=decision.generation_mode,
+            volume_filter=_TARGET_VOLUME_FILTERS.get(decision.target),
         )
 
     @staticmethod
@@ -199,6 +239,35 @@ class ModularRagScheme(AdvancedRagScheme):
         """提取中文相邻 2 字词（重叠窗口）：用于跨轮 seed 相关性的轻量粗判。"""
         seg = re.findall(r"[\u4e00-\u9fff]+", text)
         return {s[i : i + 2] for s in seg for i in range(len(s) - 1)}
+
+    @staticmethod
+    def _diversify(
+        hits: list[dict[str, Any]],
+        max_items: int = _VOLUME_ROUTE_MAX,
+        max_overlap: float = _VOLUME_ROUTE_OVERLAP,
+    ) -> list[dict[str, Any]]:
+        """定向路卷内多样性截断：同模板块（逐人档案/同类 FAQ 条目）只留代表。
+
+        贪心保留与已选块 2 字词相对重叠率（交集/较短集合）不超过阈值的块；
+        模板句相同的档案块（仅人名/数字不同）重叠率接近 1，只会留卷内排名最高的代表，
+        目标人块与制度条款块字面重叠低、互不排斥。进入融合的块数上限 max_items。
+        """
+        kept: list[dict[str, Any]] = []
+        kept_terms: list[set[str]] = []
+        for hit in hits:
+            terms = ModularRagScheme._terms2(hit.get("text") or "")
+            if not terms:
+                continue
+            if any(
+                len(terms & prev) / max(1, min(len(terms), len(prev))) > max_overlap
+                for prev in kept_terms
+            ):
+                continue
+            kept.append(hit)
+            kept_terms.append(terms)
+            if len(kept) >= max_items:
+                break
+        return kept
 
     @staticmethod
     def _cross_turn_seed(query: str, prev_hits: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -233,6 +302,7 @@ class ModularRagScheme(AdvancedRagScheme):
         retrieval: list[ModuleCall],
         k: int,
         seed_hits: list[dict[str, Any]] | None = None,
+        volume_filter: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         """按检索模块对每个（子）查询召回，多路/多查询结果经 RRF 融合去重。
 
@@ -263,12 +333,22 @@ class ModularRagScheme(AdvancedRagScheme):
             ranked.append(seed_hits)
         with ThreadPoolExecutor(max_workers=max(1, min(len(calls), 8))) as ex:
             futures = [ex.submit(fn, *args) for fn, *args in calls]
+            # 定向补召回与各路并发：路由 target 映射的卷内额外一路（Qdrant filter 精确卷名），
+            # 保证档案/FAQ/版本对比等定向块与全库召回块同台竞争（rrf 融合），不替换全库检索；
+            # 结果先经卷内多样性截断——同模板块只留代表，防止成群挤占 top_k 配额
+            volume_future = (
+                ex.submit(self.store.search, query, recall_k, volume_filter)
+                if volume_filter
+                else None
+            )
             # HyDE：用 LLM 生成的假想答案文档做一路稠密 doc-space 召回（规则回退时为原查询，跳过）；
             # 生成调用与上述各路召回并发重叠
             hyde_doc = self.hyde.expand(query)
             if hyde_doc and hyde_doc != query:
                 futures.append(ex.submit(self.store.search, hyde_doc, recall_k))
             ranked.extend(f.result() for f in futures)
+            if volume_future is not None:
+                ranked.append(self._diversify(volume_future.result()))
         return reciprocal_rank_fusion(ranked)
 
     def _apply_post(
@@ -324,6 +404,7 @@ class ModularRagScheme(AdvancedRagScheme):
             retrieval=retrieval,
             post_retrieval=post,
             generation_strategy=plan.generation_strategy,
+            volume_filter=plan.volume_filter,  # 升级路径继承定向补召回
         )
 
     def _run_plan(
@@ -353,7 +434,8 @@ class ModularRagScheme(AdvancedRagScheme):
                 logger.info("[modular] 执行：查询分解 → %d 个子查询 %s", len(decomposed), decomposed)
                 sub_queries = decomposed or [query]
         hits, hops, multihop_plan, verification = self._recall(
-            query, sub_queries, plan.retrieval, k, seed_hits=seed_hits
+            query, sub_queries, plan.retrieval, k, seed_hits=seed_hits,
+            volume_filter=plan.volume_filter,
         )
         # 多跳链式证据按实际检索跳数放大保留数（覆盖复用跳不计入；每条链一环的证据都该保留）
         retrieved_hops = sum(1 for h in hops if not h.get("skipped"))
@@ -439,6 +521,7 @@ class ModularRagScheme(AdvancedRagScheme):
         retrieval: list[ModuleCall],
         k: int,
         seed_hits: list[dict[str, Any]] | None = None,
+        volume_filter: tuple[str, ...] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None]:
         """按检索模块召回：multi_hop 走规划-执行-验证检索（含逐跳/计划/验证记录），其余走 _collect。
 
@@ -462,7 +545,14 @@ class ModularRagScheme(AdvancedRagScheme):
                     plan_to_dict(result.plan),
                     verify_to_dict(result.verification),
                 )
-        return self._collect(query, sub_queries, retrieval, k, seed_hits=seed_hits), [], None, None
+        return (
+            self._collect(
+                query, sub_queries, retrieval, k, seed_hits=seed_hits, volume_filter=volume_filter
+            ),
+            [],
+            None,
+            None,
+        )
 
     def retrieve_full(
         self,
@@ -650,7 +740,13 @@ class ModularRagScheme(AdvancedRagScheme):
                 keep = max(keep, len(seed_hits) + k)
         else:
             hits = await asyncio.to_thread(
-                self._collect, query, sub_queries, plan.retrieval, k, seed_hits
+                self._collect,
+                query,
+                sub_queries,
+                plan.retrieval,
+                k,
+                seed_hits,
+                plan.volume_filter,
             )
             if seed_hits:
                 # 种子证据与召回结果并存：为种子预留保留位，避免挤占新证据的 top_k 名额

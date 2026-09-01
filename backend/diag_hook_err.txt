@@ -1,0 +1,15 @@
+﻿python : C:\Users\ASUS\Desktop\workspace\my-agent\backend\app\memory\stores\qdrant_store.py:48: UserWarning: Api key is
+ used with an insecure connection.
+At C:\Users\ASUS\AppData\Local\Temp\trae-agent-toolhost\jobs\job-4876fa5df34b4e48bab1044e11d4b0f5\command.ps1:15 char:8
+834
++ ... pgrep\bin'; python scripts/diag_hook_zhang.py 2>diag_hook_err.txt 1>d ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\ASUS\D...ure connection.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  self.client = QdrantClient(url=url, api_key=api_key or None)
+C:\Users\ASUS\AppData\Roaming\Python\Python313\site-packages\qdrant_client\qdrant_remote.py:282: UserWarning: Qdrant cl
+ient version 1.19.0 is incompatible with server version 1.12.4. Major versions should match and minor version differenc
+e must not exceed 1. Set check_compatibility=False to skip version check.
+  show_warning(
+ES 6.8.1 为旧版（<8.x），无 dense_vector/kNN/RRF，advanced 的 ES 路退化为 BM25 关键词召回

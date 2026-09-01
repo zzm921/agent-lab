@@ -126,6 +126,18 @@ class AgentRunner:
         强制模型如实说明缺失信息并向用户追问澄清（指令优先级最高，不依赖自身知识编造）。
         """
         if not rag_context or not rag_context.get("hits"):
+            # 零命中：无「答案不足」信号时原样返回；但若答案充分性判定需澄清
+            # （insufficient=True，如 out-of-kb/证据缺口），必须仍注入追问澄清指令——
+            # 否则主 LLM 拿不到任何上下文，会凭空编造（如声称工具不可用、依赖自身
+            # 知识作答），而非如实说明信息缺失。
+            if insufficient:
+                return (
+                    f"{message}\n\n"
+                    "【知识库检索结果】本轮未检索到与问题相关的知识库内容。"
+                    "请如实告知用户当前检索未能获取足够信息，说明缺失的关键信息，"
+                    "并礼貌地向用户追问补充依据（如具体文件、部门名称等）；"
+                    "不要编造、不要依赖自身知识臆测内部数据，也不要声称工具不可用。"
+                )
             return message
         hits = rag_context["hits"]
         name = rag_context["name"]
@@ -230,11 +242,12 @@ class AgentRunner:
             # 最近会话上下文（用户/助手回合）：RAG 是独立检索阶段，只有当前消息；
             # 传入上下文供 modular 前置「指代消解」把「他/这…」替换为具体实体。
             context = await self._recent_context(graph, config)
-            # 跨轮 seed 复用：仅 modular 方案支持；传入上一轮最终命中，由方案内
-            # _cross_turn_seed 按分数/相关性过滤后作候选证据（省重复检索、不注入查询文本）。
+            # 跨轮 seed 复用：modular/agentic 方案支持（共享 _cross_turn_seed 闸门）；
+            # 传入上一轮最终命中，由方案内按分数/相关性过滤后作候选证据
+            # （省重复检索、不注入查询文本）。
             prev_hits = self._last_hits.get(session_id)
             stream_kwargs = {"context": context}
-            if getattr(scheme, "id", None) == "modular" and prev_hits:
+            if getattr(scheme, "id", None) in ("modular", "agentic") and prev_hits:
                 stream_kwargs["seed_hits"] = prev_hits
             async for ev in scheme.astream(message, self.settings.rag_top_k, **stream_kwargs):
                 yield ev

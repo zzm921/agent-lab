@@ -42,6 +42,21 @@ DIRECT = "direct"
 CITATION = "citation"
 COMPARISON = "comparison"
 
+# target（D6）：查询目标语料类型，驱动检索层的定向补召回（卷名映射见 modular._TARGET_VOLUME_FILTERS）
+TARGET_NONE = "none"
+TARGET_PROFILE = "profile"    # 个人档案（员工权益明细）
+TARGET_FAQ = "faq"            # 常见问答
+TARGET_CASE = "case"          # 案例判例
+TARGET_SCENE = "scene"        # 业务场景
+TARGET_SOP = "sop"            # 标准作业流程
+TARGET_VERSION = "version"    # 版本演进对比
+TARGET_DUTY = "duty"          # 岗位职责
+
+_VALID_TARGETS = {
+    TARGET_NONE, TARGET_PROFILE, TARGET_FAQ, TARGET_CASE,
+    TARGET_SCENE, TARGET_SOP, TARGET_VERSION, TARGET_DUTY,
+}
+
 _VALID_MODES = {VECTOR, HYBRID, MULTI_RECALL}
 _VALID_COMPLEXITY = {SIMPLE, REWRITE, DECOMPOSE, MULTIHOP}
 _VALID_GEN = {DIRECT, CITATION, COMPARISON}
@@ -55,6 +70,7 @@ class RouteDecision:
     retrieval_mode: str = VECTOR     # D3：检索策略
     complexity: str = SIMPLE         # D4：查询复杂度
     generation_mode: str = CITATION  # D5：生成模式
+    target: str = TARGET_NONE        # D6：目标语料类型（定向补召回）
     confidence: float = 0.5
     reason: str = ""
 
@@ -100,6 +116,12 @@ class LLMQueryClassifier(QueryClassifier):
                     "multihop=多跳/流程/原因链/实体链（查某人领导的属性，如「张三的领导有几天年假」；"
                     "仅问「领导是谁」不算，属 simple 单跳），需迭代检索多轮。\n"
                     "- generation_mode（str）：direct=直接回答不引用来源；citation=引用来源回答（默认）；comparison=结构化对比输出。\n"
+                    "- target（str）：查询最可能命中的语料类型（用于定向补召回，不影响检索策略）：\n"
+                    "  profile=查某个具体员工的信息（含人名的权益/考勤/报销/档案问题）；\n"
+                    "  faq=常见问答（口语化高频问题）；case=案例/判例（含「案例」「例如」「发生过」）；\n"
+                    "  scene=业务场景处理（含「场景」「遇到…怎么办」）；sop=流程/表单/作业指引；\n"
+                    "  version=版本对比/新旧制度差异（含「2025版」「2026版」「以前」「变更」）；\n"
+                    "  duty=岗位职责/谁负责；none=一般制度条款/政策问题（默认）。\n"
                     "- confidence（float 0~1）：本次判断的把握程度。\n"
                     "- reason（str）：一句话说明分类依据。\n\n"
                     "常见组合（尽量遵循，与后续编排一致）：\n"
@@ -113,37 +135,42 @@ class LLMQueryClassifier(QueryClassifier):
                     '{"retrieval_need": true/false, "retrieval_mode": "vector|hybrid|multi_recall", '
                     '"complexity": "simple|rewrite|decompose|multihop", '
                     '"generation_mode": "direct|citation|comparison", '
+                    '"target": "profile|faq|case|scene|sop|version|duty|none", '
                     '"confidence": 0.0~1.0, "reason": "一句话"}\n\n'
-                    "当 retrieval_need=false 时，retrieval_mode/complexity/generation_mode 统一填 vector/simple/direct。\n\n"
+                    "当 retrieval_need=false 时，其余字段统一填 vector/simple/direct/none。\n\n"
                     "示例：\n"
                     '输入: 发票什么时候交\n'
                     '输出: {"retrieval_need": true, "retrieval_mode": "hybrid", '
                     '"complexity": "simple", "generation_mode": "citation", '
-                    '"confidence": 0.97, "reason": "单点事实含领域词，混合检索"}\n'
+                    '"target": "none", "confidence": 0.97, "reason": "单点事实含领域词，混合检索"}\n'
+                    '输入: 张三去上海出差打车费能报销吗\n'
+                    '输出: {"retrieval_need": true, "retrieval_mode": "multi_recall", '
+                    '"complexity": "multihop", "generation_mode": "citation", '
+                    '"target": "profile", "confidence": 0.9, "reason": "查张三的部门档案再查差旅条款，多跳且定向档案卷"}\n'
                     '输入: 张三的领导是谁\n'
                     '输出: {"retrieval_need": true, "retrieval_mode": "vector", '
                     '"complexity": "simple", "generation_mode": "citation", '
-                    '"confidence": 0.95, "reason": "只问关系实体本身，单跳直接检索"}\n'
+                    '"target": "profile", "confidence": 0.95, "reason": "只问关系实体本身，单跳直接检索"}\n'
                     '输入: 出差和报销有什么区别\n'
                     '输出: {"retrieval_need": true, "retrieval_mode": "multi_recall", '
                     '"complexity": "decompose", "generation_mode": "comparison", '
-                    '"confidence": 0.9, "reason": "多实体对比，需拆分子查询"}\n'
+                    '"target": "none", "confidence": 0.9, "reason": "多实体对比，需拆分子查询"}\n'
                     '输入: 那补卡流程呢（依赖上文）\n'
                     '输出: {"retrieval_need": true, "retrieval_mode": "hybrid", '
                     '"complexity": "rewrite", "generation_mode": "citation", '
-                    '"confidence": 0.88, "reason": "含指代且为流程问题，需改写后检索"}\n'
+                    '"target": "faq", "confidence": 0.88, "reason": "含指代且为流程问题，需改写后检索"}\n'
                     '输入: 报销发票什么时候交\n'
                     '输出: {"retrieval_need": true, "retrieval_mode": "multi_recall", '
                     '"complexity": "multihop", "generation_mode": "citation", '
-                    '"confidence": 0.86, "reason": "多跳流程，需迭代检索"}\n'
+                    '"target": "none", "confidence": 0.86, "reason": "多跳流程，需迭代检索"}\n'
                     '输入: 张三的领导有几天年假\n'
                     '输出: {"retrieval_need": true, "retrieval_mode": "multi_recall", '
                     '"complexity": "multihop", "generation_mode": "citation", '
-                    '"confidence": 0.85, "reason": "实体链多跳，先定位领导再查年假"}\n'
+                    '"target": "profile", "confidence": 0.85, "reason": "实体链多跳，先定位领导再查年假"}\n'
                     '输入: 你好，你是谁\n'
                     '输出: {"retrieval_need": false, "retrieval_mode": "vector", '
                     '"complexity": "simple", "generation_mode": "direct", '
-                    '"confidence": 0.99, "reason": "闲聊元问题，无需检索"}'
+                    '"target": "none", "confidence": 0.99, "reason": "闲聊元问题，无需检索"}'
                 )
             ),
             HumanMessage(content=query),
@@ -167,8 +194,11 @@ class LLMQueryClassifier(QueryClassifier):
         mode = data.get("retrieval_mode")
         complexity = data.get("complexity")
         gen = data.get("generation_mode")
+        target = data.get("target", TARGET_NONE)
         if mode not in _VALID_MODES or complexity not in _VALID_COMPLEXITY or gen not in _VALID_GEN:
             raise ValueError("路由决策枚举值非法")
+        if target not in _VALID_TARGETS:
+            target = TARGET_NONE  # 非法 target 降级为不过滤，不让路由失败
         try:
             confidence = float(data.get("confidence", 0.5))
         except (TypeError, ValueError):
@@ -178,6 +208,7 @@ class LLMQueryClassifier(QueryClassifier):
             retrieval_mode=mode,
             complexity=complexity,
             generation_mode=gen,
+            target=target,
             confidence=max(0.0, min(1.0, confidence)),
             reason=str(data.get("reason", "") or ""),
         )

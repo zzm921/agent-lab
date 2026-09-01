@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     es_index_prefix: str = "knowledge"  # 索引名 = {prefix}_{scheme_id}，如 knowledge_advanced
     es_embedding_dim: int = 1024  # dense_vector 维度，与 embedding 模型一致
     # 已注册的 RAG 方案（每个方案一个独立 Qdrant 集合；graph/agentic 后续扩展）
-    rag_schemes: list[str] = ["naive", "advanced", "modular"]
+    rag_schemes: list[str] = ["naive", "advanced", "modular", "agentic"]
     rag_default_scheme: str = "naive"
     # 知识库检索（RAG）总开关：默认开启（项目约定：能力后端默认就绪），
     # 每轮是否真正检索由请求/前端开关（rag_enabled）控制；设为 false 可整体关闭
@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     rag_rerank_model: str = "qwen3-rerank"
     # Modular 方案多跳迭代检索：最大检索跳数（LLM 路径默认 3，规则兜底上限 2）
     rag_max_hops: int = 3
+    # Agentic 方案（多 Agent 编排）预算治理：步数/纠错轮数/超时/token/单工具上限/并行度
+    rag_agent_max_steps: int = 8  # 全轮工具调用总上限（含被护栏拦截的调用），超限停止检索
+    rag_agent_correction_rounds: int = 2  # CRAG 纠错回环上限，超出仍不足则如实上报缺口
+    rag_agent_timeout_s: float = 90.0  # 单查询墙钟超时（秒），超时后不再发起新决策与工具波次
+    rag_agent_token_budget: int = 0  # 角色 LLM 累计 token 预算（0=不限），达阈值后续角色规则回退；暂放开便于排查多轮遗忘
+    rag_agent_tool_call_cap: int = 3  # 单工具整轮调用上限（multi_hop 固定更紧）
+    rag_agent_parallel: int = 4  # 一波内并行工具调用数（首发按事实清单并行）
 
     # MCP Servers（JSON 字符串，声明可用 server；stdio 子进程由服务启动时自动拉起）
     mcp_servers: str = "{}"

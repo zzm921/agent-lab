@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.llm.client import llm_service
 from app.llm.fake_model import FakeEmbeddings
 from app.memory.stores.memory_store import MemoryStore
 from app.rag.routing.query_hyde import RuleHydeExpander
@@ -115,7 +116,7 @@ class _BM25Store(MemoryStore):
         n = len(self._doc_terms)
         return math.log((n - df + 0.5) / (df + 0.5) + 1.0)
 
-    def search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
         q_terms = _bigrams(query)
         n = len(self._doc_terms)
         if not q_terms or n == 0:
@@ -320,6 +321,12 @@ def run(top_k: int = 3, real_router: bool = False) -> tuple[list[dict[str, Any]]
     cases = _load_cases()
     records: list[dict[str, Any]] = []
     routing_hits = 0
+
+    # 真实路由模式：评测期决策温度归零（指标可复现）；线上默认 0.2 不受影响
+    if real_router:
+        llm_service.update_profile(
+            "rag_classify", params={"temperature": 0, "max_tokens": 500, "enable_thinking": False}
+        )
 
     # 真实路由模式下共用同一个（带记录）路由实例；注入模式按用例期望分别构造
     real_router_obj = _RecordingRouter(build_classifier()) if real_router else None

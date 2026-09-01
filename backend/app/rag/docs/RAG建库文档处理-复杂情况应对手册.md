@@ -125,6 +125,15 @@ data/docs/ 扫描（旧→新按 mtime 排序）
 - **解决**：pdf_parser.py 逐页提取、按块（bbox y,x 排序）流式产出元素，不整档驻留；ocr_parser 同样逐页渲染。
 - **边界**：当前实现的元素列表仍整体存在 ParsedDocument 中；更大规模（万页级）需演进为 JSONL 落盘流式合并（见《后续规划》）。
 
+### 14. 压缩包 / 邮件容器（ZIP/EML）
+
+- **现象**：一个 ZIP 内几十份文档；邮件正文 + 附件（PDF/DOCX/图片）需拆开逐个入库——整体拒收丢知识，整包二进制入库出乱码。
+- **判定**：sniffer.py——PK 头看内层（含 `word/document.xml` → docx，其余 → zip 压缩包）；`.eml` 扩展名或 `MIME-Version:`/`Subject:` 头启发式识别 EML。
+- **解决**：container.py `expand_zip/expand_eml` 展开为子文件队列（EML：text/plain 正文优先 + 全部附件；跳过 `__MACOSX/`、`.DS_Store` 等垃圾条目）；pipeline.py 递归逐子文件走完整管线，子报告以 `父容器/条目名` 层级路径记录，metadata["container"] 指向父容器（台账按容器+子文档集合清理被移除条目）。
+- **护栏**：条目数 ≤ **200**、解压总量 ≤ **256 MB**、附件数 ≤ **50**、嵌套深度 ≤ **2** 层（zip 套 zip/eml）；超限或容器损坏 → 拒绝进 DLQ，防压缩包炸弹。
+- **结果**：子文档独立状态（子失败不拖垮容器与其余子文档）；容器本身标记 `container` 不入库。
+- **示例**：`tests/test_preprocess_containers.py`——3 文档 ZIP（含 1 乱码子文档）+ 带 1 附件 EML → 层级报告；三层嵌套 zip 第 3 层拒收。
+
 ---
 
 ## 三、阈值速查表（改代码必改此表）

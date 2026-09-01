@@ -304,7 +304,17 @@ class DashScopeChatModel(BaseChatModel):
             raise RuntimeError(self._friendly_error(resp))
         turn = _parse_message(resp.output.choices[0].message)
         turn.finish_reason = resp.output.choices[0].get("finish_reason") or ""
-        return ChatResult(generations=[ChatGeneration(message=self._to_message(turn))])
+        # token 用量写入 AIMessage.usage_metadata：上层（agentic roles / 评测）据此记账，
+        # 预算护栏（over_budget）才能生效。resp.usage 为 dict（input/output/total_tokens）；
+        # 新版 langchain ChatResult 已无 usage_metadata 字段，须设在消息对象上。
+        usage = getattr(resp, "usage", None) or {}
+        msg = self._to_message(turn)
+        msg.usage_metadata = {
+            "input_tokens": int(usage.get("input_tokens", 0) or 0),
+            "output_tokens": int(usage.get("output_tokens", 0) or 0),
+            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+        }
+        return ChatResult(generations=[ChatGeneration(message=msg)])
 
     def _stream(self, messages, stop=None, run_manager=None, **kwargs) -> Iterator[ChatGenerationChunk]:
         """流式调用：逐 token 产出，reasoning_content 与 content 分别透出。"""
@@ -334,4 +344,12 @@ class DashScopeChatModel(BaseChatModel):
                 additional_kwargs=extra,
                 tool_call_chunks=_to_tool_call_chunks(msg.get("tool_calls") or []),
             )
+            # 流式末块通常携带 usage（dict）：写入 chunk 供 LangChain 聚合时回填 usage_metadata
+            usage = getattr(resp, "usage", None)
+            if usage is not None and usage.get("total_tokens", 0):
+                chunk.usage_metadata = {
+                    "input_tokens": int(usage.get("input_tokens", 0) or 0),
+                    "output_tokens": int(usage.get("output_tokens", 0) or 0),
+                    "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                }
             yield ChatGenerationChunk(message=chunk)

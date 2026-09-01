@@ -27,7 +27,8 @@ class MemoryStore(StoreBackend):
     def add(self, text: str, metadata: dict | None = None) -> None:
         self._store.add(text, metadata)
 
-    def search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        # 测试桩：volume_filter 忽略（无过滤能力，安全 no-op）
         return self._store.search(query, top_k)
 
     def all_texts(self) -> list[str]:
@@ -37,6 +38,21 @@ class MemoryStore(StoreBackend):
         self._store.texts = []
         self._store.metadatas = []
         self._store.vectors = []
+
+    def delete_source(self, source: str) -> int:
+        """按 metadata.source 删除匹配块（增量更新：文档变更先删旧块）。"""
+        keep = [
+            i
+            for i, meta in enumerate(self._store.metadatas)
+            if (meta or {}).get("source") != source
+        ]
+        removed = len(self._store.texts) - len(keep)
+        if removed == 0:
+            return 0
+        self._store.texts = [self._store.texts[i] for i in keep]
+        self._store.metadatas = [self._store.metadatas[i] for i in keep]
+        self._store.vectors = [self._store.vectors[i] for i in keep]
+        return removed
 
     def __len__(self) -> int:
         return len(self._store)

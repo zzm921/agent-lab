@@ -1,4 +1,6 @@
 """格式识别与复杂度路由测试：magic bytes 优先、加密/损坏拦截、二分路由。"""
+import io
+
 import fitz
 import pytest
 
@@ -35,10 +37,22 @@ class TestSniff:
         raw = sniff(_make_pdf(tmp_path), tmp_path / "t.txt")
         assert raw.mime == MIME_PDF  # 扩展名 .txt 但真实为 PDF
 
-    def test_zip_magic_docx(self):
-        raw = sniff(b"PK\x03\x04xxxx", "a.docx")
+    def test_zip_magic_docx(self, tmp_path):
+        from docx import Document
+
+        doc = Document()
+        doc.add_heading("考勤制度", level=1)
+        doc.add_paragraph("员工应当按时出勤，请假须提前审批。")
+        buf = io.BytesIO()
+        doc.save(buf)
+        raw = sniff(buf.getvalue(), "a.docx")
         assert raw.mime == MIME_DOCX
         assert raw.ext == ".docx"
+
+    def test_zip_magic_corrupt_rejected(self):
+        # PK 头但结构损坏：前置拦截进 DLQ，而非误判 docx 读出乱码
+        with pytest.raises(DocumentRejected, match="损坏"):
+            sniff(b"PK\x03\x04xxxx", "a.docx")
 
     def test_image_magics(self):
         assert sniff(b"\x89PNG\r\n\x1a\n....", "a.png").mime == MIME_PNG

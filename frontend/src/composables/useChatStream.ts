@@ -47,6 +47,10 @@ export type StepKind =
   | 'multi_hop_verify' // 多跳质量闸门验证（规划-执行-验证，modular）
   | 'compress' // 上下文压缩统计（modular）
   | 'answerability' // 检索后答案充分性验证（跨复杂度路径质量闸门，modular）
+  | 'agent_step' // 检索 Agent 单步工具执行（agentic）
+  | 'grade' // CRAG 证据评审（agentic）
+  | 'correct' // CRAG 纠错决策（agentic）
+  | 'verify' // Self-RAG 答案校验（agentic）
   | 'memory_read' // 记忆召回
   | 'memory_write' // 记忆写入
   | 'reflect' // 反思意见
@@ -110,6 +114,26 @@ export interface StepEntry {
   /** answerability：检索后答案充分性验证（answerable / missing_facts / recommendation / escalated） */
   verdict?: { answerable: boolean; missing_facts: string[]; recommendation: string; escalate_to?: string | null }
   escalated?: boolean
+  /** agent_step：检索 Agent 单步工具执行记录（同一卡片逐步追加） */
+  agentSteps?: {
+    index: number
+    role: string
+    action: string
+    params: Record<string, unknown>
+    note?: string | null
+    hits_count?: number
+    volumes?: { volume: string; count: number }[]
+  }[]
+  /** grade：CRAG 证据评审（保留相关证据数 / 候选总数 / 缺口 / 理由） */
+  kept?: number
+  total?: number
+  missing_facts?: string[]
+  thought?: string
+  /** correct：CRAG 纠错决策（纠错轮次 + 下一波工具调用） */
+  round?: number
+  calls?: { action: string; query: string; volume?: string; reason?: string }[]
+  /** verify：Self-RAG 答案校验（可答 / 缺口） */
+  answerable?: boolean
   /** memory_write */
   content?: string
   /** reflect */
@@ -428,6 +452,50 @@ export function useChatStream(): ChatStream {
           scheme: ev.scheme,
           verdict: ev.verdict,
           escalated: ev.escalated,
+        })
+        break
+      case 'agent_step': {
+        // agentic：检索 Agent 单步工具执行，逐步流式追加到同一张卡片（保持流水线原始位置）
+        const lastStep = stream.steps[stream.steps.length - 1]
+        if (lastStep && lastStep.kind === 'agent_step') {
+          lastStep.agentSteps = [...(lastStep.agentSteps ?? []), ev.step]
+        } else {
+          pushStep({ kind: 'agent_step', query: ev.query, scheme: ev.scheme, agentSteps: [ev.step] })
+        }
+        break
+      }
+      case 'grade':
+        // agentic：CRAG 证据评审（保留相关证据数 / 候选总数 / 缺口）
+        pushStep({
+          kind: 'grade',
+          query: ev.query,
+          scheme: ev.scheme,
+          kept: ev.kept,
+          total: ev.total,
+          missing_facts: ev.missing_facts,
+          thought: ev.thought,
+        })
+        break
+      case 'correct':
+        // agentic：CRAG 纠错决策（纠错轮次 + 下一波工具调用）
+        pushStep({
+          kind: 'correct',
+          query: ev.query,
+          scheme: ev.scheme,
+          round: ev.round,
+          thought: ev.thought,
+          calls: ev.calls,
+        })
+        break
+      case 'verify':
+        // agentic：Self-RAG 答案校验（可答 / 缺口）
+        pushStep({
+          kind: 'verify',
+          query: ev.query,
+          scheme: ev.scheme,
+          answerable: ev.answerable,
+          missing_facts: ev.missing_facts,
+          thought: ev.thought,
         })
         break
       case 'memory_write':

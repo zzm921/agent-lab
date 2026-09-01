@@ -36,7 +36,7 @@ class ExtractiveContextCompressor(ContextCompressor):
     重复表达只保留分数最高的一条（真 Embedding 下生效；未提供则仅精确去重）。
     """
 
-    def __init__(self, max_chars: int = 200, embeddings=None, semantic_threshold: float = 0.95):
+    def __init__(self, max_chars: int = 400, embeddings=None, semantic_threshold: float = 0.95):
         self.max_chars = max_chars
         self.embeddings = embeddings
         self.semantic_threshold = semantic_threshold
@@ -62,14 +62,18 @@ class ExtractiveContextCompressor(ContextCompressor):
             except Exception:  # noqa: BLE001 — 语义去重为增强项，Embedding 失败时回退精确去重结果
                 pass
 
-        # 3) top_k 截断 + 超长截断
+        # 3) top_k 截断 + 超长截断（原文保留至 metadata["raw_text"]，供溯源与评测判定）
         kept = []
         for h in unique[: max(1, top_k)]:
             text = h.get("text", "") or ""
             if len(text) > self.max_chars:
-                text = self._truncate(text)
+                truncated_text = self._truncate(text)
+                meta = dict(h.get("metadata") or {})
+                meta.setdefault("raw_text", text)
+                kept.append(dict(h, text=truncated_text, metadata=meta))
                 truncated += 1
-            kept.append(dict(h, text=text))
+            else:
+                kept.append(dict(h))
 
         metrics = {"original": original, "kept": len(kept), "truncated": truncated}
         return kept, metrics
@@ -105,7 +109,27 @@ class ExtractiveContextCompressor(ContextCompressor):
             return 0.0
 
     def _truncate(self, text: str) -> str:
-        """按句边界截到 max_chars，超出加省略号；无边界时硬切。"""
+        """超长块截断：优先按空行分段（条文/条目天然分段），预算内整段保留、不留半条；
+        被丢弃段落以标题提示形式附在末尾，避免检索证据（条文标题）随截断丢失。
+        无分段结构时按句边界截断；无边界时硬切。"""
+        parts = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
+        if len(parts) > 1:
+            kept_parts: list[str] = []
+            used = 0
+            for p in parts:
+                if kept_parts and used + len(p) > self.max_chars:
+                    break
+                kept_parts.append(p)
+                used += len(p) + 2
+            if len(kept_parts) < len(parts):
+                dropped_titles = [
+                    self._head_title(p) for p in parts[len(kept_parts):]
+                ]
+                head = "\n\n".join(kept_parts)
+                head = head.rstrip() + "\n…（后文略：" + "；".join(dropped_titles) + "）"
+                return head
+            return text
+
         head = ""
         for sentence in _SENTENCE_BOUNDARY.split(text):
             if len(head) + len(sentence) > self.max_chars:
@@ -117,8 +141,16 @@ class ExtractiveContextCompressor(ContextCompressor):
             head = head.rstrip() + "…"
         return head
 
+    @staticmethod
+    def _head_title(part: str) -> str:
+        """段落标题：首行剥掉「第X条（…）」以外的正文，保留标题与首句要点（≤24 字）。"""
+        first = part.strip().split("\n", 1)[0].strip()
+        m = re.match(r"^(第[一二三四五六七八九十百零]+条（[^）]+）)", first)
+        title = m.group(1) if m else first
+        return title[:24]
 
-def build_compressor(max_chars: int = 200, embeddings=None, semantic_threshold: float = 0.95) -> ContextCompressor:
+
+def build_compressor(max_chars: int = 400, embeddings=None, semantic_threshold: float = 0.95) -> ContextCompressor:
     """构造提取式上下文压缩器（纯本地，无外部依赖；embeddings 提供时启用语义去重）。"""
     return ExtractiveContextCompressor(
         max_chars=max_chars, embeddings=embeddings, semantic_threshold=semantic_threshold

@@ -35,12 +35,14 @@ class MultiBackendStore(StoreBackend):
         for backend in self.backends:
             backend.add(text, metadata)
 
-    def _query_all(self, method: str, query: str, top_k: int) -> list[list[dict[str, Any]]]:
+    def _query_all(
+        self, method: str, query: str, top_k: int, volume_filter: tuple[str, ...] | None = None
+    ) -> list[list[dict[str, Any]]]:
         """并行查询所有后端；单个后端异常只告警跳过，保证一路失败不拖垮整体。"""
 
         def _query_one(backend: StoreBackend) -> list[dict[str, Any]]:
             try:
-                return getattr(backend, method)(query, max(top_k * 2, 8))
+                return getattr(backend, method)(query, max(top_k * 2, 8), volume_filter=volume_filter)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("后端 %s 检索失败（%s），跳过该路", backend.name, exc)
                 return []
@@ -67,11 +69,11 @@ class MultiBackendStore(StoreBackend):
         ranked = sorted(best.values(), key=lambda h: h.get("score", 0.0), reverse=True)
         return ranked[:top_k]
 
-    def search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
-        return self._fuse(self._query_all("search", query, top_k), top_k)
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        return self._fuse(self._query_all("search", query, top_k, volume_filter), top_k)
 
-    def hybrid_search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
-        return self._fuse(self._query_all("hybrid_search", query, top_k), top_k)
+    def hybrid_search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        return self._fuse(self._query_all("hybrid_search", query, top_k, volume_filter), top_k)
 
     def all_texts(self) -> list[str]:
         seen: list[str] = []
@@ -84,6 +86,10 @@ class MultiBackendStore(StoreBackend):
     def clear(self) -> None:
         for backend in self.backends:
             backend.clear()
+
+    def delete_source(self, source: str) -> int:
+        """按来源删除所有后端中该文档的块，返回删除总条数。"""
+        return sum(backend.delete_source(source) for backend in self.backends)
 
     def __len__(self) -> int:
         # 各后端入库同一语料，条数应一致；取最大避免某后端未写全时误判为空

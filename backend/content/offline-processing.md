@@ -98,15 +98,16 @@ accent: '#10b981'
 
 ## 本项目的做法
 
-前置处理管线已落地于 `app/rag/preprocess/`（入口 `scripts/ingest_documents.py --input data/docs`），单文档四态状态（`ok` / `superseded` / `quarantined` / `dlq`），任何单档异常不阻塞整批：
+前置处理管线已落地于 `app/rag/preprocess/`（入口 `scripts/ingest_documents.py --input data/docs`），单文档五态状态（`ok` / `superseded` / `quarantined` / `dlq`，容器为 `container`），任何单档异常不阻塞整批：
 
 ```
-扫描（按 mtime 旧→新）→ sniff 格式识别（magic bytes + 加密/损坏前置拦截）
+扫描（按 mtime 旧→新）→ sniff 格式识别（magic bytes + 加密/损坏前置拦截；ZIP/EML 容器识别）
+  → 容器展开：ZIP/EML 递归展开为子文件队列（防炸弹护栏，嵌套 ≤ 2 层），子文档逐个走完整管线
   → complexity 复杂度路由（扫描页占比 > 50% 或图片 → OCR；否则快路径）
   → 解析：md/html/txt、docx（标题层级+表格扁平化）、文本 PDF（块坐标排序）、扫描件 OCR（qwen3.5-flash 多模态，200 DPI 逐页渲染）
   → 清洗五阶段：归一化（NFKC/零宽/断行合并）→ 页眉页脚移除（跨页重复度 > 60%）→ 乱码拦截（� > 3% / mojibake > 5%）→ 质量评分（≥70 入库 / 50-69 隔离 / <50 DLQ）
   → 跨文档去重（SHA256 精确 + bottom-k 近似）
-  → 报告 data/ingest/report.json + DLQ 归档 data/ingest/dlq/ → RagManager.ingest_all() 各方案幂等入库
+  → 报告 data/ingest/report.json + DLQ 归档 data/ingest/dlq/ → 内容 hash 台账增量入库（只重算变更文档）
 ```
 
 - **解析层**：sniffer 以字节头嗅探优先于扩展名（防 `.txt` 伪装 PDF）；复杂文档（扫描件/图片）走 qwen3.5-flash 多模态 OCR，DashScope 非 200 转可操作中文报错并重试；

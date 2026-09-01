@@ -101,6 +101,36 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
     },
     {
+        "scenario": "rag_agent_route",  # Agentic RAG 路由角色：检索必要性/生成策略 JSON（轻量决策）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.1, "max_tokens": 250, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_agent_plan",  # Agentic RAG 规划角色：事实清单 + 首发检索计划 JSON
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_agent_grade",  # Agentic RAG 评审角色（CRAG）：逐条证据相关性 + 缺失事实 JSON
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.1, "max_tokens": 500, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_agent_correct",  # Agentic RAG 纠错角色（CRAG）：纠错波工具调用 JSON
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 400, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_agent_verify",  # Agentic RAG 校验角色（Self-RAG）：事实-证据支持度 JSON
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.1, "max_tokens": 400, "enable_thinking": False},
+    },
+    {
         "scenario": "rag_judge",  # L2 语义评测 judge（LLM-as-a-Judge）：输出结构化评分，低随机 + 关闭思考
         "provider": "dashscope",
         "model": "qwen3.5-flash",

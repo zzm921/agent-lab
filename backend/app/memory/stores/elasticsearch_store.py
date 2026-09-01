@@ -186,8 +186,8 @@ class ElasticsearchStore(StoreBackend):
 
     # ---- 检索 ----
 
-    def search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
-        """稠密向量检索（现代 kNN）；旧版退化为 BM25 关键词检索。"""
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        """稠密向量检索（现代 kNN）；旧版退化为 BM25 关键词检索。volume_filter 忽略。"""
         if self._legacy:
             return self._bm25_search(query, top_k)
         qv = self.embeddings.embed_query(query)
@@ -203,8 +203,8 @@ class ElasticsearchStore(StoreBackend):
         )
         return self._map_hits(resp)
 
-    def hybrid_search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
-        """混合检索：现代 kNN+BM25 RRF 融合；旧版仅 BM25（稠密语义路由由 Qdrant 承担）。"""
+    def hybrid_search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        """混合检索：现代 kNN+BM25 RRF 融合；旧版仅 BM25（稠密语义路由由 Qdrant 承担）。volume_filter 忽略。"""
         if self._legacy:
             return self._bm25_search(query, top_k)
         if not self.hybrid:
@@ -272,6 +272,22 @@ class ElasticsearchStore(StoreBackend):
             query={"match_all": {}},
             refresh=True,
         )
+
+    def delete_source(self, source: str) -> int:
+        """按 metadata.source 过滤删除（增量更新：文档变更先删旧块）。"""
+        if self._legacy:
+            resp = self._http.post(
+                f"/{self._index}/_delete_by_query",
+                params={"refresh": "true"},
+                json={"query": {"match": {"metadata.source": source}}},
+            )
+            return int((resp.json() or {}).get("deleted", 0))
+        resp = self.client.delete_by_query(
+            index=self._index,
+            query={"match": {"metadata.source": source}},
+            refresh=True,
+        )
+        return int((resp or {}).get("deleted", 0))
 
     def __len__(self) -> int:
         if self._legacy:

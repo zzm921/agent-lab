@@ -26,6 +26,7 @@ class RetrieveResult:
     plan: dict[str, Any] | None = None  # 多跳检索计划（规划-执行-验证：steps+reason，非多跳为空）
     verification: dict[str, Any] | None = None  # 多跳质量闸门结果（{"covered","missing","patched"}，非多跳为空）
     answerability: dict[str, Any] | None = None  # 答案充分性验证（{"answerable","missing_facts","recommendation","escalate_to"}）
+    trace: dict[str, Any] | None = None  # agentic 检索 Agent 轨迹（{"steps","tool_calls"}，其他方案为 None）
 
 
 class RagScheme(ABC):
@@ -88,6 +89,26 @@ class RagScheme(ABC):
             self.store.clear()  # 语料已更新：清空后按新语料重建
         for text, metadata in expected:
             self.store.add(text, metadata)
+
+    def _doc_chunks(self, text: str, source: str) -> list[tuple[str, dict]]:
+        """单文档分块（增量入库用）：复用本方案的整批分块策略，块元数据携带来源。
+
+        各方案自行实现；未实现者不支持文档级增量入库。
+        """
+        raise NotImplementedError(f"方案 {self.id} 未实现文档级分块，不支持增量入库")
+
+    def ingest_document(self, text: str, source: str) -> int:
+        """单文档增量入库：按 source 删旧块 → 分块写入新块，返回写入块数。
+
+        与 ingest（整批重建、语料指纹幂等）互补：本方法由调用方台账
+        （preprocess/ledger.py 内容 hash）判重后按文档粒度调用，
+        未变化的文档不进入本方法，重解析/重向量化只发生在变更文档上。
+        """
+        self.store.delete_source(source)
+        chunks = self._doc_chunks(text, source)
+        for chunk_text, metadata in chunks:
+            self.store.add(chunk_text, metadata)
+        return len(chunks)
 
     def __len__(self) -> int:
         return len(self.store)

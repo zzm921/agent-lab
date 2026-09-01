@@ -34,6 +34,10 @@ const RETRIEVE_KIND: Record<string, string> = {
   compress: '上下文压缩',
   answerability: '答案充分性',
   retrieve: '知识库检索',
+  agent_step: 'Agent 检索',
+  grade: '证据评审',
+  correct: '纠错决策',
+  verify: '答案校验',
   memory_read: '记忆召回',
   memory_write: '记忆写入',
 }
@@ -71,6 +75,22 @@ const RECOMMENDATION_CLS: Record<string, string> = {
   answer: 'bg-emerald-500/20 text-emerald-200',
   escalate: 'bg-amber-500/20 text-amber-200',
   clarify: 'bg-rose-500/20 text-rose-200',
+}
+// agentic 检索工具动作的中文展示
+const ACTION_LABEL: Record<string, string> = {
+  search: '向量检索',
+  hybrid: '混合检索',
+  volume_search: '定向卷检索',
+  multi_hop: '多跳检索',
+}
+// agentic 角色中文展示
+const ROLE_LABEL: Record<string, string> = {
+  retriever: '检索执行',
+  route: '路由',
+  plan: '规划',
+  grade: '评审',
+  correct: '纠错',
+  verify: '校验',
 }
 </script>
 
@@ -492,6 +512,173 @@ const RECOMMENDATION_CLS: Record<string, string> = {
             </div>
           </div>
           <p v-else class="mt-1.5 text-slate-500">本轮未产生验证结论</p>
+        </section>
+
+        <!-- Agent 检索（agentic：检索 Agent 单步工具执行，逐步流式追加） -->
+        <section v-else-if="s.kind === 'agent_step'" class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-amber-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-normal text-amber-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div v-if="s.agentSteps?.length" class="mt-2 space-y-2">
+            <div
+              v-for="(st, si) in s.agentSteps"
+              :key="si"
+              class="border-l-2 border-amber-500/30 pl-3"
+            >
+              <p class="flex flex-wrap items-center gap-1.5 font-medium text-amber-300">
+                <span class="text-slate-500">#{{ st.index }}</span>
+                <span class="rounded bg-amber-500/10 px-1.5 py-0.5 font-normal">{{ ROLE_LABEL[st.role] ?? st.role }}</span>
+                <span class="rounded bg-slate-800 px-1.5 py-0.5 font-normal text-slate-300">
+                  {{ ACTION_LABEL[st.action] ?? st.action }}
+                </span>
+                <span v-if="st.params?.query" class="font-normal text-slate-300">「{{ st.params.query }}」</span>
+                <span v-if="st.params?.volume" class="rounded bg-cyan-500/10 px-1.5 py-0.5 font-normal text-cyan-200">
+                  卷 {{ st.params.volume }}
+                </span>
+              </p>
+              <p class="mt-1 flex flex-wrap items-center gap-1.5 text-slate-400">
+                <span v-if="typeof st.hits_count === 'number'">
+                  {{ st.hits_count }} 条命中
+                </span>
+                <span
+                  v-for="(v, vi) in st.volumes ?? []"
+                  :key="vi"
+                  class="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-400"
+                >
+                  {{ v.volume }}×{{ v.count }}
+                </span>
+                <span
+                  v-if="st.note"
+                  class="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-300"
+                  title="护栏拦截/降级原因"
+                >
+                  {{ st.note }}
+                </span>
+              </p>
+            </div>
+          </div>
+          <p v-else class="mt-1.5 text-slate-500">检索 Agent 尚未执行工具调用</p>
+        </section>
+
+        <!-- 证据评审（agentic：CRAG 检索评估器，逐条证据相关性 + 缺口归纳） -->
+        <section v-else-if="s.kind === 'grade'" class="rounded-xl border border-violet-500/20 bg-violet-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-violet-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-normal text-violet-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div class="mt-2 space-y-1.5">
+            <p class="flex flex-wrap items-center gap-1.5">
+              <span class="text-slate-500">相关证据：</span>
+              <span class="rounded bg-violet-500/10 px-1.5 py-0.5 text-violet-200">
+                {{ s.kept ?? 0 }} / {{ s.total ?? 0 }}
+              </span>
+            </p>
+            <p v-if="s.missing_facts?.length" class="flex flex-wrap items-center gap-1.5">
+              <span class="text-slate-500">缺口：</span>
+              <span
+                v-for="(m, mi) in s.missing_facts"
+                :key="mi"
+                class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200"
+              >
+                {{ m }}
+              </span>
+            </p>
+            <p v-if="s.thought" class="text-slate-500">{{ s.thought }}</p>
+          </div>
+        </section>
+
+        <!-- 纠错决策（agentic：CRAG 纠正分支，证据不足时给出下一波检索调用） -->
+        <section v-else-if="s.kind === 'correct'" class="rounded-xl border border-orange-500/20 bg-orange-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-orange-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] font-normal text-orange-200"
+              >
+                {{ s.scheme }}
+              </span>
+              <span
+                v-if="s.round"
+                class="rounded bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-normal text-orange-200"
+              >
+                第 {{ s.round }} 轮
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div v-if="s.calls?.length" class="mt-2 space-y-1.5">
+            <div
+              v-for="(c, ci) in s.calls"
+              :key="ci"
+              class="rounded-lg bg-black/20 p-2"
+            >
+              <p class="flex flex-wrap items-center gap-1.5">
+                <span class="rounded bg-orange-500/10 px-1.5 py-0.5 text-orange-200">
+                  {{ ACTION_LABEL[c.action] ?? c.action }}
+                </span>
+                <span v-if="c.volume" class="rounded bg-cyan-500/10 px-1.5 py-0.5 text-cyan-200">卷 {{ c.volume }}</span>
+                <span class="text-slate-300">「{{ c.query }}」</span>
+              </p>
+              <p v-if="c.reason" class="mt-0.5 text-[11px] text-slate-500">{{ c.reason }}</p>
+            </div>
+          </div>
+          <p v-if="s.thought" class="mt-1.5 text-slate-500">{{ s.thought }}</p>
+          <p v-else class="mt-1.5 text-slate-500">本轮无可用纠错调用</p>
+        </section>
+
+        <!-- 答案校验（agentic：Self-RAG 支持度校验，事实-证据支持度矩阵） -->
+        <section v-else-if="s.kind === 'verify'" class="rounded-xl border border-teal-500/20 bg-teal-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-teal-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-teal-500/20 px-1.5 py-0.5 text-[10px] font-normal text-teal-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <div class="mt-2 space-y-1.5">
+            <p class="flex flex-wrap items-center gap-1.5">
+              <span
+                class="rounded px-1.5 py-0.5 font-medium"
+                :class="s.answerable ? 'bg-emerald-500/20 text-emerald-200' : 'bg-rose-500/20 text-rose-200'"
+              >
+                {{ s.answerable ? '证据足以回答' : '证据不足，需追问澄清' }}
+              </span>
+            </p>
+            <p v-if="s.missing_facts?.length" class="flex flex-wrap items-center gap-1.5">
+              <span class="text-slate-500">缺失的关键信息：</span>
+              <span
+                v-for="(m, mi) in s.missing_facts"
+                :key="mi"
+                class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200"
+              >
+                {{ m }}
+              </span>
+            </p>
+            <p v-if="s.thought" class="text-slate-500">{{ s.thought }}</p>
+          </div>
         </section>
 
         <!-- Query 重写结果（advanced：独立步骤，先于知识库检索展示） -->

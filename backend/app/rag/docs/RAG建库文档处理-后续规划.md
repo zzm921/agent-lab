@@ -25,12 +25,11 @@
 
 ## 二、逐项说明
 
-### 1. 压缩包与邮件递归解析（ZIP/RAR/EML/MSG）
+### 1. 压缩包与邮件递归解析（ZIP/EML）✅ 已落地
 
-- **动机**：一个 ZIP 里可能 50 份文档；邮件正文+附件（PDF/XLSX）需拆开逐个入库，否则知识缺失。
-- **挂点**：`sniffer.py` 新增 `MIME_ZIP`/`MIME_EML` 识别；`preprocess/pipeline.py: _process_one` 对此类文档展开为子文件队列递归走「sniff→路由→解析→清洗」，DocReport 以 `父文档/子文档` 层级记录。
-- **方案**：技术方案文档 §2.2「邮件递归解析」；RAR 需额外依赖（unrar/7z），ZIP 用标准库 zipfile。
-- **验收**：含 3 份文档的 ZIP 与带 2 个附件的 EML 均逐个入库，报告呈层级结构。
+- **实现**：`sniffer.py` 识别 `MIME_ZIP`/`MIME_EML`（PK 头看内层区分 docx/压缩包；`.eml` 扩展名 + 头部启发式）；`parsers/container.py` `expand_zip/expand_eml` 展开子文件（防炸弹护栏：条目 ≤ 200、解压总量 ≤ 256 MB、附件 ≤ 50）；`pipeline.py` 递归展开（深度 ≤ 2），子报告以 `父容器/条目名` 层级记录，metadata["container"] 溯源，子文档独立状态、子失败不拖垮容器。
+- **未覆盖**：RAR/7z/MSG 需额外依赖（unrar/7z），出现时在 container.py 增加对应 expand 函数即可。
+- **测试**：`tests/test_preprocess_containers.py`——识别/展开/护栏/嵌套/e2e 层级报告。
 
 ### 2. L0-L4 五级复杂度评分
 

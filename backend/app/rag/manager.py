@@ -12,6 +12,7 @@ from typing import Any
 
 from app.config import Settings
 from app.core.errors import ConfigError
+from app.rag.schemes.agentic import AgenticRagScheme
 from app.memory.stores.base import StoreBackend
 from app.memory.stores.elasticsearch_store import ElasticsearchStore
 from app.memory.stores.memory_store import MemoryStore
@@ -29,6 +30,7 @@ _SCHEME_REGISTRY: dict[str, type[RagScheme]] = {
     "naive": NaiveRagScheme,
     "advanced": AdvancedRagScheme,
     "modular": ModularRagScheme,
+    "agentic": AgenticRagScheme,
 }
 
 
@@ -63,6 +65,14 @@ class RagManager:
                 )
                 if scheme_cls is ModularRagScheme:
                     kwargs["max_hops"] = self.settings.rag_max_hops
+                if scheme_cls is AgenticRagScheme:
+                    kwargs["max_hops"] = self.settings.rag_max_hops
+                    kwargs["max_steps"] = self.settings.rag_agent_max_steps
+                    kwargs["correction_rounds"] = self.settings.rag_agent_correction_rounds
+                    kwargs["timeout_s"] = self.settings.rag_agent_timeout_s
+                    kwargs["token_budget"] = self.settings.rag_agent_token_budget
+                    kwargs["call_cap"] = self.settings.rag_agent_tool_call_cap
+                    kwargs["parallel"] = self.settings.rag_agent_parallel
                 self.schemes[scheme_id] = scheme_cls(embeddings, store, top_k, **kwargs)
             else:
                 self.schemes[scheme_id] = scheme_cls(embeddings, store, top_k)
