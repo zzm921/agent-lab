@@ -1471,6 +1471,47 @@ def test_modular_collect_includes_hyde_doc(settings):
     assert "发票报销提交时限规定" in store.search_calls, "HyDE 文档应被稠密检索"
 
 
+async def test_astream_hyde_events_fired_and_fallback(settings):
+    """modular 流式：非多跳路径应产出 HyDE 假想文档检索事件（running→done 两段式）；
+    真生成假想文档时 fired=True 并携带文档与召回数；规则回退（返回原查询）时 fired=False。"""
+    store = RecordingStore()
+    store.add("发票须在出差结束后10天内提交报销。")
+    store.add("员工年假满一年5天起。")
+    plan = ExecutionPlan(
+        need_retrieval=True,
+        retrieval=[ModuleCall("search")],
+        post_retrieval=[ModuleCall("rerank")],
+        generation_strategy=CITATION,
+    )
+
+    # 1) HyDE 真触发：LLM 生成了与查询不同的假想文档
+    scheme = make_modular(settings, store=store, hyde=StubHyde(doc="发票报销提交时限规定"))
+    events = [ev async for ev in scheme._astream_plan("发票什么时候交", plan, 2)]
+    hyde = [e for e in events if e["type"] == "hyde"]
+    assert len(hyde) == 2, "应先发 running 占位、再发 done"
+    assert hyde[0]["status"] == "running"
+    assert hyde[1]["status"] == "done"
+    assert hyde[1]["fired"] is True
+    assert hyde[1]["doc"] == "发票报销提交时限规定"
+    assert isinstance(hyde[1]["recall"], int), "应携带假想文档这一路的召回数"
+
+    # 2) HyDE 规则回退：返回原查询（no-op），fired=False，不追加额外检索
+    class NoopHyde:
+        def expand(self, query):  # noqa: ARG002
+            return query
+
+    scheme2 = make_modular(settings, store=store, hyde=NoopHyde())
+    calls_before = len(store.search_calls)
+    events2 = [ev async for ev in scheme2._astream_plan("发票什么时候交", plan, 2)]
+    hyde2 = [e for e in events2 if e["type"] == "hyde"]
+    assert len(hyde2) == 2
+    assert hyde2[1]["status"] == "done"
+    assert hyde2[1]["fired"] is False
+    assert len(store.search_calls) == calls_before + 1, (
+        "规则回退时不追加 HyDE 一路检索（search 只发生查询本身那一次）"
+    )
+
+
 # ---- 多路召回并行化：多路检索并发执行而非串行累加 ----
 
 class ConcurrentStore(MemoryStore):

@@ -42,6 +42,7 @@ export type StepKind =
   | 'rewrite' // Query 重写结果
   | 'classify' // 查询语义路由（五维决策，modular）
   | 'decompose' // Query 分解子问题（modular）
+  | 'hyde' // HyDE 假想文档检索（modular 召回阶段的隐式一路）
   | 'multi_hop_plan' // 多跳检索计划（规划-执行-验证，modular）
   | 'multi_hop' // 多跳迭代检索（modular）
   | 'multi_hop_verify' // 多跳质量闸门验证（规划-执行-验证，modular）
@@ -100,6 +101,10 @@ export interface StepEntry {
   reason?: string
   /** decompose：查询分解子问题 */
   sub_queries?: string[]
+  /** hyde：HyDE 假想文档检索（LLM 生成的假想答案文档 + 该路召回数；fired=false=规则回退原查询跳过） */
+  fired?: boolean
+  doc?: string
+  recall?: number
   /** multi_hop_plan：多跳检索计划（规划-执行-验证） */
   plan?: {
     steps: { target: string; query: string; entity?: string | null; depends_on?: string[]; status?: string }[]
@@ -407,6 +412,27 @@ export function useChatStream(): ChatStream {
       case 'decompose':
         pushStep({ kind: 'decompose', query: ev.query, scheme: ev.scheme, sub_queries: ev.sub_queries })
         break
+      case 'hyde': {
+        // HyDE 假想文档检索：先收到 running 占位（LLM 生成假想文档，转圈），完成后收到 done 就地填充同一张卡片
+        const last = stream.steps[stream.steps.length - 1]
+        if (last && last.kind === 'hyde' && last.running) {
+          last.running = false
+          last.fired = ev.fired
+          last.doc = ev.doc
+          last.recall = ev.recall
+        } else {
+          pushStep({
+            kind: 'hyde',
+            query: ev.query,
+            scheme: ev.scheme,
+            running: ev.status === 'running',
+            fired: ev.fired,
+            doc: ev.doc,
+            recall: ev.recall,
+          })
+        }
+        break
+      }
       case 'multi_hop_plan': {
         // 规划-执行-验证：先收到 running 占位（卡片转圈），完成后再收到 done 就地填充计划
         const last = stream.steps[stream.steps.length - 1]

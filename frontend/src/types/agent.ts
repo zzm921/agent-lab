@@ -70,6 +70,19 @@ export type AgentEvent =
     }
   | { type: 'decompose'; query: string; scheme?: string; sub_queries: string[] }
   | {
+      type: 'hyde'
+      query: string
+      scheme?: string
+      /** running：LLM 生成假想答案文档中（占位，转圈）；done：携带结果 */
+      status?: 'running' | 'done'
+      /** 是否真的生成了假想文档并追加一路 doc-space 稠密召回（false = 规则回退原查询，跳过） */
+      fired?: boolean
+      /** 生成的假想答案文档全文（仅演示展示，不注入答案） */
+      doc?: string
+      /** 假想文档这一路召回到的条数（RRF 融合前） */
+      recall?: number
+    }
+  | {
       type: 'multi_hop_plan'
       query: string
       scheme?: string

@@ -303,6 +303,7 @@ class ModularRagScheme(AdvancedRagScheme):
         k: int,
         seed_hits: list[dict[str, Any]] | None = None,
         volume_filter: tuple[str, ...] | None = None,
+        hyde_out: dict | None = None,  # 可选输出通道：HyDE 真触发时回填 {"doc","recall"}（流式 hyde 事件用）
     ) -> list[dict[str, Any]]:
         """按检索模块对每个（子）查询召回，多路/多查询结果经 RRF 融合去重。
 
@@ -331,6 +332,8 @@ class ModularRagScheme(AdvancedRagScheme):
         ranked: list[list[dict[str, Any]]] = []
         if seed_hits:
             ranked.append(seed_hits)
+        hyde_fut: Any = None
+        hyde_doc = ""
         with ThreadPoolExecutor(max_workers=max(1, min(len(calls), 8))) as ex:
             futures = [ex.submit(fn, *args) for fn, *args in calls]
             # 定向补召回与各路并发：路由 target 映射的卷内额外一路（Qdrant filter 精确卷名），
@@ -345,10 +348,15 @@ class ModularRagScheme(AdvancedRagScheme):
             # 生成调用与上述各路召回并发重叠
             hyde_doc = self.hyde.expand(query)
             if hyde_doc and hyde_doc != query:
-                futures.append(ex.submit(self.store.search, hyde_doc, recall_k))
+                hyde_fut = ex.submit(self.store.search, hyde_doc, recall_k)
+                futures.append(hyde_fut)
             ranked.extend(f.result() for f in futures)
             if volume_future is not None:
                 ranked.append(self._diversify(volume_future.result()))
+        # 把 HyDE 一路的信息经可选输出通道回传（供流式 hyde 事件展示；同步路径不传则忽略）
+        if hyde_fut is not None and hyde_out is not None:
+            hyde_out["doc"] = hyde_doc
+            hyde_out["recall"] = len(hyde_fut.result())
         return reciprocal_rank_fusion(ranked)
 
     def _apply_post(
@@ -739,6 +747,14 @@ class ModularRagScheme(AdvancedRagScheme):
                 # 种子证据也是链路一环：为种子与新召回预留保留位，避免被重排截断
                 keep = max(keep, len(seed_hits) + k)
         else:
+            # HyDE 假想文档检索为 LLM 阻塞生成：先发 running 占位（转圈），完成后再发 done 就地填充
+            yield {
+                "type": "hyde",
+                "query": query,
+                "scheme": self.id,
+                "status": "running",
+            }
+            hyde_out: dict = {}
             hits = await asyncio.to_thread(
                 self._collect,
                 query,
@@ -747,7 +763,17 @@ class ModularRagScheme(AdvancedRagScheme):
                 k,
                 seed_hits,
                 plan.volume_filter,
+                hyde_out,
             )
+            yield {
+                "type": "hyde",
+                "query": query,
+                "scheme": self.id,
+                "status": "done",
+                "fired": bool(hyde_out),
+                "doc": hyde_out.get("doc"),
+                "recall": hyde_out.get("recall"),
+            }
             if seed_hits:
                 # 种子证据与召回结果并存：为种子预留保留位，避免挤占新证据的 top_k 名额
                 keep = max(keep, len(seed_hits) + k)

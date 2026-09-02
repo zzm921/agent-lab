@@ -49,7 +49,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ### RAG
 
-> 技术说明：从语料建库到在线检索的完整链路：文档解析 → 切块/分块 → 向量化入库 → 多路召回 → 融合/重排 → 压缩 → 生成。本项目落地三套方案（naive / advanced / modular）并在实验室点选对比；检索命中注入上下文，回答可引用来源。
+> 技术说明：从语料建库到在线检索的完整链路：文档解析 → 切块/分块 → 向量化入库 → 多路召回 → 融合/重排 → 压缩 → 生成。本项目落地四套方案（naive / advanced / modular / agentic）并在实验室点选对比；检索命中注入上下文，回答可引用来源。
 
 - **naive RAG**（100%）— 相关技术：固定 500 字切块（100 重叠）+ 纯稠密向量检索
   - 定位说明：作为**对照基线**，刻意不做任何增强（无改写 / 重排 / 混合 / 压缩），用于对比展示缺陷
@@ -57,9 +57,10 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
   - 未完成：稀疏检索是本地字符 n-gram 哈希向量（md5 → 2^16 桶），非真 BM25（真 BM25 仅在可选 ES 后端）；重排依赖外部 API（qwen3-rerank），无 Key 时回退「原分 + 字符二元组」的简单词法重排；无上下文压缩与充分性闸门；语义分块被结构分块旁路（真实语料走结构感知路径）；HyDE 无缓存
 - **modular RAG**（90%）— 相关技术：语义路由（五维决策 D1/D3/D4/D5）→ 执行计划 → 动态编排模块（改写 / 指代消解 / 分解 / HyDE / 多跳规划-执行-验证 / 语义去重 / 压缩 / 充分性闸门），闸门前置 + 有界升级增量补缺
   - 未完成：D2 多知识库路由**明确不做**（单语料）；执行计划是确定性规则映射（if-else 枚举），非 LLM 生成 / 可插拔配置；compress 不覆盖 simple / multihop 路径；无模块级独立消融实验（现有评测为整链路 L1/L2/L3）；classifier 纯 LLM、无 Key 时 modular 不可路由
-- **RAG 专项增强**（rag-variants）— HyDE（假想文档生成，融入稠密路召回）**已实现**；Self-RAG / CRAG / RAPTOR → **待实现**
+- **RAG 专项增强**（rag-variants）— HyDE（假想文档生成，融入稠密路召回）**已实现**；Self-RAG / CRAG / RAPTOR → **待实现**（Self-RAG / CRAG 已在智能体式 RAG 卡以角色编排形态实现，此卡为独立模块插件形态）
 - **知识图谱 RAG**（graph-rag）— 相关技术：实体-关系建模 + 多跳推理 → **待实现**
-- **智能体式 RAG**（agentic-rag，Self-RAG / CRAG）— 相关技术：自主决策「何时检索 / 检索几次 / 结果可信度」→ **待实现**
+- **智能体式 RAG**（agentic-rag，Self-RAG / CRAG / Adaptive-RAG，85%）— 相关技术：LangGraph 多角色状态机（路由 / 规划 / 评审 / 纠错 / 校验）+ 工具注册表（4 个库内检索工具 + 五类护栏）+ 预算治理（步数 / 纠错轮数 / token / 墙钟超时 / 单工具上限 / 角色熔断）+ 双闭环（CRAG 逐条证据评审 + Self-RAG 支持度校验）+ 逐事件 SSE 轨迹
+  - 未完成：无多级缓存（查询 / Embedding / 检索结果三级缓存）；无规则路由 / 快速通道（纯 LLM 路由，规则仅在无 Key / 失败 / 超预算时降级兜底）；无监控告警（token / 时延 / 熔断等已记账但无看板与主动告警）；无检索级权限过滤与脱敏（库内结果按可信数据直进上下文）；多知识库路由（D2）明确不做（单语料）；工具仅限库内只读检索（无写操作 / 外部 API）
 - **离线数据处理 / 建库**（offline-processing）— 语义分块 + 建库脚本 + 文本指纹幂等重建**已实现**；完整解析（OCR / PDF / docx / 表格图片 / 公式）与多语料增量挂载 → **待实现**
 - **在线混合检索策略**（online-hybrid-retrieval）— RRF 融合（K=60）**已实现**；加权 RRF / 多方式融合对比、独立参数化实验 → **待实现**
 
@@ -112,11 +113,11 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ## 总结
 
-**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、安全防护 60%、SSE 85%、技术路径点选 100%、源码展示 100%。
+**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% / agentic 85% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、安全防护 60%、SSE 85%、技术路径点选 100%、源码展示 100%。
 
 **待实现**：
 - 未正式启动（有雏形）：multi_agent、跨轮长期记忆
-- 实现待落地：知识图谱 RAG、智能体式 RAG（Self-RAG / CRAG）、RAG 专项增强其余插件、上下文管理与压缩、上下文缓存与渐进式披露、计算机操作代理、A2A、可观测性完整接入、结构化输出独立模块
+- 实现待落地：知识图谱 RAG、RAG 专项增强其余插件（RAPTOR 等）、上下文管理与压缩、上下文缓存与渐进式披露、计算机操作代理、A2A、可观测性完整接入、结构化输出独立模块
 - 安全余量：记忆投毒防御、服务端工具白名单、RBAC 权限管控、敏感操作审计日志
 - 增强项：离线建库完整解析（OCR / PDF / 表格 / 公式）、在线混合检索参数化实验、模块级消融评估
 
@@ -175,7 +176,7 @@ RAG 向量库数据在**线上前**通过建库脚本预建（在线服务启动
 cd backend
 python scripts/ingest_naive.py     # naive 方案（固定切块 + 纯稠密检索）
 python scripts/ingest_advanced.py  # advanced 方案（语义分块 + 混合检索）
-python scripts/ingest_modular.py   # modular 方案（复用 advanced 索引 + modular 元数据）
+python scripts/ingest_modular.py   # modular / agentic 方案（语义分块，缺省同时建两库）
 ```
 
 详见 [docs/deployment.md](docs/deployment.md)。
@@ -190,7 +191,7 @@ python scripts/ingest_modular.py   # modular 方案（复用 advanced 索引 + m
 | POST | `/api/stream` | SSE 流式对话（模式/能力/策略/审批策略/RAG 方案） |
 | POST | `/api/approve` | HITL 审批（批准/拒绝/修改） |
 | POST | `/api/stop` | 停止当前流式任务 |
-| GET | `/api/rag/schemes` | RAG 方案目录（naive / advanced / modular） |
+| GET | `/api/rag/schemes` | RAG 方案目录（naive / advanced / modular / agentic） |
 | GET | `/api/faults` | 当前注入的故障列表 |
 | GET | `/api/faults/types` | 故障类型目录（瞬时 / 参数业务两类） |
 | POST | `/api/fault` | 注入 / 清除工具故障（13 种类型，演示两层重试） |
@@ -243,7 +244,8 @@ my-agent/
 │   │   │   ├── corpus.py
 │   │   │   └── stores/          #   Qdrant / Elasticsearch / 内存 可替换后端
 │   │   ├── rag/                 # RAG 方案与算子
-│   │   │   ├── schemes/         #   naive / advanced / modular 三套方案
+│   │   │   ├── schemes/         #   naive / advanced / modular / agentic 四套方案
+│   │   │   ├── agentic/         #   Agentic RAG 编排（角色 / 工具注册表 / 状态机）
 │   │   │   ├── routing/         #   语义路由 / 改写 / 分解 / 指代消解 / HyDE
 │   │   │   ├── retrieval/       #   融合 / 重排 / 压缩 / 多跳 / 充分性闸门
 │   │   │   ├── corpus/          #   云帆制度语料（知识库）

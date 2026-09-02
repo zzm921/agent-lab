@@ -28,6 +28,7 @@ const RETRIEVE_KIND: Record<string, string> = {
   rewrite: 'Query 重写',
   classify: '语义路由',
   decompose: 'Query 分解',
+  hyde: 'HyDE 假想文档检索',
   multi_hop_plan: '多跳规划',
   multi_hop: '多跳检索',
   multi_hop_verify: '多跳验证',
@@ -711,6 +712,38 @@ const ROLE_LABEL: Record<string, string> = {
               {{ r }}
             </span>
           </div>
+        </section>
+
+        <!-- HyDE 假想文档检索（modular 召回阶段隐式一路：LLM 生成假想答案文档 → doc-space 稠密召回） -->
+        <section v-else-if="s.kind === 'hyde'" class="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-sky-300">
+              <svg
+                v-if="s.running"
+                class="h-3.5 w-3.5 shrink-0 animate-spin text-sky-400"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+              </svg>
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.scheme"
+                class="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-normal text-sky-200"
+              >
+                {{ s.scheme }}
+              </span>
+            </span>
+            <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
+          </div>
+          <!-- 假想文档为纯 LLM 阻塞调用：running 占位转圈，done 后再填充 -->
+          <p v-if="s.running" class="mt-2 text-sky-300/70">生成假想答案文档…</p>
+          <template v-else-if="s.fired">
+            <p class="mt-2 text-slate-400">假想文档 → doc-space 稠密召回 {{ s.recall ?? 0 }} 条（并入 RRF 融合）：</p>
+            <p class="mt-1 whitespace-pre-wrap rounded-lg bg-black/20 p-2 text-slate-300">{{ s.doc }}</p>
+          </template>
+          <p v-else class="mt-2 text-slate-500">未生成假想文档（回退原查询，跳过 HyDE 一路）</p>
         </section>
 
         <!-- 知识库检索（RAG） -->
