@@ -7,7 +7,9 @@ difficulty: beg
 tags: [Function-Calling, Tool-Calling, JSON, Protocol]
 techFilters: [MCP]
 accent: '#6366f1'
-experience: false
+enabledTools: [rag, calculator]
+prompts:
+  - 出差 6 天，连续出差按每日 100 元餐补，餐补一共多少钱？
 ---
 ## 概述
 

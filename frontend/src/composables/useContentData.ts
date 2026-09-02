@@ -44,6 +44,7 @@ interface CardPayload {
   strategy?: string
   policy?: string
   ragScheme?: string
+  rag_scheme?: string
   prompts?: string[]
   prompt?: string
   experience?: boolean
@@ -81,8 +82,8 @@ function normalizeCard(card: CardPayload): LandingCapability | null {
         : {},
     strategy: VALID_STRATEGIES.includes(card.strategy as PromptStrategy) ? (card.strategy as PromptStrategy) : null,
     policy: VALID_POLICIES.includes(card.policy as ApprovalPolicy) ? (card.policy as ApprovalPolicy) : null,
-    ragScheme: VALID_RAG_SCHEMES.includes(card.ragScheme as RagSchemeId)
-      ? (card.ragScheme as RagSchemeId)
+    ragScheme: VALID_RAG_SCHEMES.includes((card.ragScheme ?? card.rag_scheme) as RagSchemeId)
+      ? ((card.ragScheme ?? card.rag_scheme) as RagSchemeId)
       : null,
     prompts: Array.isArray(card.prompts)
       ? card.prompts.filter((p): p is string => typeof p === 'string').map((p) => p.trim()).filter(Boolean)

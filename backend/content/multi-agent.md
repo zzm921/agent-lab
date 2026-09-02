@@ -9,9 +9,11 @@ tags: [Orchestrator, Multi-Agent, Coordination, Agent]
 techFilters: [LangGraph, MCP]
 accent: '#7c5cff'
 mode: multi_agent
+enabledTools: [rag]
 prompts:
   - 你是项目经理：把「上线一个 AI 助手网站」拆给研究员、开发者、测试员三个角色，分派任务并汇总执行方案。
   - 让「策划师 + 文案 + 设计师」三个角色协作，为新品咖啡出一份上市营销方案。
+  - 新员工入职需要准备哪些材料？请分角色给出清单
 ---
 ## 为什么需要它
 

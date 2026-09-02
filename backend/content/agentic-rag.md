@@ -7,7 +7,12 @@ difficulty: adv
 tags: [Agentic-RAG, Self-RAG, CRAG, RAG]
 techFilters: [LangGraph, Qdrant]
 accent: '#0ea5e9'
-experience: false
+enabledTools: [rag]
+rag_scheme: agentic
+prompts:
+  - 请对比差旅报销和日常报销的完整流程差异，并说明依据
+  - 研发部主管王刚的上级是谁？他分管哪些部门？
+  - 张三入职以来的年假权益是怎么算的？
 ---
 ## 为什么需要它
 

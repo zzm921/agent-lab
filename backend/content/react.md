@@ -10,10 +10,12 @@ techFilters: [LangGraph]
 accent: '#f59e0b'
 mode: react
 strategy: cot
+enabledTools: [rag, calculator]
 prompts:
   - 帮我计算 2 的 10 次方，再告诉我今天的日期。
   - 帮我计算 (137 × 0.85 − 20) ÷ 3，保留两位小数，并说明计算步骤。
   - 今天是几号？顺便帮我算 2026 年 1 月 1 日距今过了多少天。
+  - 请说明我司加班费的支付标准
 ---
 ## 概述
 

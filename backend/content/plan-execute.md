@@ -9,10 +9,12 @@ tags: [Planning, Decomposition, Task-Graph, Agent]
 techFilters: [LangGraph]
 accent: '#38bdf8'
 mode: plan_execute
+enabledTools: [rag]
 prompts:
   - 帮我策划一次周末短途旅行：先拆解预算、交通、住宿、行程等子任务，再逐个给出建议。
   - 拆解「从零学习 Python 数据分析」的学习路径，分步骤给出每周计划。
   - 帮我规划明天的工作：先列出任务清单，再按重要与紧急排序，给出执行顺序。
+  - 帮我把「申请出差报销」的完整流程整理出来，并列出每一步需要的材料
 ---
 ## 概述
 
