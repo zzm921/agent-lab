@@ -199,8 +199,6 @@ def _build_store():
 
 
 def _build_scheme(top_k: int, store, router) -> ModularRagScheme:
-    # fast_path_conf=1.0：确定性回归要衡量「完整模块链」（含不足升级补召回），
-    # 故显式禁用置信度快速通道（它是路由层成本优化，不影响检索质量评测）。
     return ModularRagScheme(
         FakeEmbeddings(),
         store,
@@ -217,9 +215,6 @@ def _build_scheme(top_k: int, store, router) -> ModularRagScheme:
         ),
         multi_hop=PlanExecuteRetriever(RuleMultiHopPlanner(), RuleMultiHopVerifier()),
         answerability=RuleAnswerabilityVerifier(),
-        fast_path_conf=1.0,
-        # cache_enabled=False：确定性回归要衡量「完整模块链」（含每次检索），显式禁用三级缓存
-        cache_enabled=False,
     )
 
 
@@ -386,88 +381,3 @@ def save_report(report: dict[str, Any], path: str) -> None:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _is_failure(r: dict[str, Any]) -> bool:
-    """失败样本判定：召回<1 / 未可答 / 答案关键词未覆盖。
-
-    不检索分支（零检索是期望）与库外问题（未可答/拒答是期望）不判失败。
-    """
-    if not r["need_retrieval"] or r["branch"] == "out_of_kb":
-        return False
-    return (
-        (r["recall"] is not None and r["recall"] < 1.0)
-        or (r["answerable"] is False)
-        or (r["keyword_hit"] is False)
-    )
-
-
-def extract_failures(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """从逐用例记录中提取失败样本，附缺失分块、缺失事实与整改建议（供回流入库/人工核查）。
-
-    与 CLI 控制台失败明细共用同一判定，避免两处标准漂移。
-    """
-    failures: list[dict[str, Any]] = []
-    for r in records:
-        if not _is_failure(r):
-            continue
-        relevant = set(r["relevant"])
-        retrieved = set(r["retrieved_ids"])
-        missing_ids = sorted(relevant - retrieved)
-        actions: list[str] = []
-        if r["recall"] is not None and r["recall"] < 1.0:
-            actions.append(
-                f"相关分块未全部召回（缺失 {missing_ids or '-'}）：核对语料是否含对应条目，"
-                "或调整检索策略（向量/多路召回/定向补召回）"
-            )
-        if r["keyword_hit"] is False:
-            actions.append(
-                "命中文未覆盖答案关键词：核对语料用词与查询是否一致"
-                "（answer_keywords 需与语料文本精确一致，含空格）"
-            )
-        if r["answerable"] is False:
-            rec = r.get("recommendation")
-            if rec == "clarify":
-                actions.append("闸门判定需澄清（本用例应可答）：疑似证据缺失，检查语料是否缺对应分块")
-            elif rec == "escalate":
-                actions.append("闸门判定需升级检索：首轮证据不足，检查升级补召回路径/候选配额")
-            else:
-                actions.append("闸门判定不可答：检查检索是否漏召回关键分块")
-        failures.append(
-            {
-                "id": r["id"],
-                "branch": r["branch"],
-                "query": r["query"],
-                "recall": r["recall"],
-                "mrr": r["mrr"],
-                "keyword_hit": r["keyword_hit"],
-                "answerable": r["answerable"],
-                "recommendation": r.get("recommendation"),
-                "missing_facts": r["missing_facts"],
-                "relevant": sorted(relevant),
-                "retrieved_ids": r["retrieved_ids"],
-                "missing_ids": missing_ids,
-                "suggested_actions": actions,
-                "elapsed_ms": r["elapsed_ms"],
-            }
-        )
-    return failures
-
-
-def save_failures(records: list[dict[str, Any]], report_path: str) -> str:
-    """把失败样本回流写入 <报告同目录>/failures.json；返回写入路径。"""
-    out = Path(report_path)
-    failures = extract_failures(records)
-    payload = {
-        "meta": {
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "source_report": str(out),
-            "failure_count": len(failures),
-            "criteria": "recall<1 或 answerable=False 或 keyword_hit=False（排除 no_retrieval / out_of_kb）",
-        },
-        "failures": failures,
-    }
-    failures_path = out.with_name("failures.json")
-    failures_path.parent.mkdir(parents=True, exist_ok=True)
-    failures_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return str(failures_path)

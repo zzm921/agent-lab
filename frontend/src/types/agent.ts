@@ -53,9 +53,8 @@ export type AgentEvent =
   | { type: 'tool_end'; tool: string; args?: Record<string, unknown>; result: string; success: boolean }
   | { type: 'tool_retry'; tool: string; attempt: number; max: number; delay: number; base_delay?: number; reason: string }
   | { type: 'plan'; steps: string[]; current_step: number; status: string }
-  | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean; cache_hit?: boolean }
+  | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean }
   | { type: 'rewrite'; query: string; scheme?: string; rewrites: string[]; reason?: string }
-  | { type: 'cache_hit'; query: string; scheme?: string; level?: string; hits?: number }
   | {
       type: 'classify'
       query: string
@@ -126,8 +125,6 @@ export type AgentEvent =
       }
       /** 是否为检索不足后升级检索再验证的最终结论 */
       escalated?: boolean
-      /** 是否命中 L1 查询缓存（复用上轮命中+重跑验证） */
-      cache_hit?: boolean
     }
   | {
       type: 'agent_step'

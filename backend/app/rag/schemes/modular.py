@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.memory.stores.base import StoreBackend
-from app.rag.cache import TTLCache
 from app.rag.retrieval.answerability import (
     ANSWER,
     CLARIFY,
@@ -46,7 +45,6 @@ from app.rag.routing.classifier import (
     MULTIHOP,
     MULTI_RECALL,
     REWRITE,
-    SIMPLE,
     VECTOR,
     QueryClassifier,
     RouteDecision,
@@ -136,7 +134,6 @@ class ExecutionPlan:
     post_retrieval: list[ModuleCall] = field(default_factory=list)  # 后处理模块调用链
     generation_strategy: str = "citation"  # 生成策略（direct / citation / comparison）
     volume_filter: tuple[str, ...] | None = None  # 定向补召回卷名白名单（target 映射，None=不过滤）
-    fast_path: bool = False  # 置信度快速通道：simple+高置信 → 只验证不升级（省升级链路成本/延迟）
 
 
 class ModularRagScheme(AdvancedRagScheme):
@@ -165,11 +162,6 @@ class ModularRagScheme(AdvancedRagScheme):
         multi_hop: MultiHopRetriever | None = None,
         deictic: DeicticResolver | None = None,
         answerability: AnswerabilityVerifier | None = None,
-        fast_path_conf: float = 0.9,
-        low_conf_threshold: float = 0.6,
-        cache_enabled: bool = True,
-        cache_max_entries: int = 128,
-        cache_ttl_s: float = 300.0,
     ):
         super().__init__(
             embeddings,
@@ -192,38 +184,11 @@ class ModularRagScheme(AdvancedRagScheme):
         self.answerability = (
             answerability if answerability is not None else build_answerability_verifier()
         )
-        self.fast_path_conf = fast_path_conf  # 置信度快速通道阈值（simple+≥此值 → 只验证不升级）
-        self.low_conf_threshold = low_conf_threshold  # 低置信度拓宽阈值（<此值 → 升一档多路召回）
-        # 三级缓存（性能治理）：L1 查询缓存 / L3 检索缓存（TTL + LRU 有界），L2 嵌入缓存在 store 侧
-        self.cache_enabled = cache_enabled
-        self._l1 = TTLCache(cache_max_entries, cache_ttl_s)  # 消解后 query → 最终命中（复用+重跑验证）
-        self._l3 = TTLCache(cache_max_entries, cache_ttl_s)  # query+检索策略 → RRF 融合命中
-
-    def _invalidate_cache(self) -> None:
-        """语料变更（整批重建/增量入库）后清空查询/检索缓存，防止旧命中服务新语料。"""
-        self._l1.clear()
-        self._l3.clear()
-
-    def ingest(self, texts: list[str]) -> None:
-        super().ingest(texts)
-        self._invalidate_cache()
-
-    def ingest_document(self, text: str, source: str) -> int:
-        n = super().ingest_document(text, source)
-        self._invalidate_cache()
-        return n
 
     # ---- 调度层：路由决策 → 执行计划 ----
 
     def _build_plan(self, decision: RouteDecision) -> ExecutionPlan:
-        """把五维路由决策映射为执行计划（模块可组合、可跳过）。
-
-        新增两条置信度策略（企业级成本/可用性治理）：
-        - 低置信拓宽：confidence < low_conf_threshold 时单路检索（vector/hybrid）保守升为
-          多路召回（防单路漏召回；降级路由 confidence=0 即走此分支）；
-        - 置信度快速通道：simple + confidence ≥ fast_path_conf → fast_path=True，
-          后续只验证不升级（省升级链路的 LLM/延迟）。
-        """
+        """把五维路由决策映射为执行计划（模块可组合、可跳过）。"""
         pre: list[ModuleCall] = []
         retrieval: list[ModuleCall] = []
         post: list[ModuleCall] = []
@@ -235,12 +200,6 @@ class ModularRagScheme(AdvancedRagScheme):
                 post_retrieval=post,
                 generation_strategy=decision.generation_mode,
             )
-        # 低置信度拓宽：把握不足时保守升一档检索策略（已在多路则不变）
-        mode = decision.retrieval_mode
-        if decision.confidence < self.low_conf_threshold and mode in (VECTOR, HYBRID):
-            mode = MULTI_RECALL
-        # 置信度快速通道：simple + 高置信 → 只验证不升级
-        fast_path = decision.complexity == SIMPLE and decision.confidence >= self.fast_path_conf
         # 预处理：按复杂度挂载改写/分解模块（多跳的规划-执行-验证由 multi_hop 模块自包含完成）
         if decision.complexity == DECOMPOSE:
             pre.append(ModuleCall("decompose"))
@@ -250,15 +209,15 @@ class ModularRagScheme(AdvancedRagScheme):
         if decision.complexity == MULTIHOP:
             retrieval.append(ModuleCall("multi_hop", params={"max_hops": self.max_hops}))
             post.append(ModuleCall("rerank"))  # 多跳合并命中后必须精排压噪
-        elif mode == MULTI_RECALL:
+        elif decision.retrieval_mode == MULTI_RECALL:
             retrieval.append(ModuleCall("multi_recall"))
             post.append(ModuleCall("rerank"))  # 多路宽召回后必须精排压噪
-        elif mode == HYBRID:
+        elif decision.retrieval_mode == HYBRID:
             retrieval.append(ModuleCall("hybrid_search"))
         else:
             retrieval.append(ModuleCall("search"))
         # 后处理：多路/混合/多跳召回后压缩上下文噪声（单次向量检索噪声有限，不压缩）
-        if mode in (MULTI_RECALL, HYBRID):
+        if decision.retrieval_mode in (MULTI_RECALL, HYBRID):
             post.append(ModuleCall("compress"))
         # 定向补召回：路由判定的 target 映射为卷名白名单，检索层在白名单卷内额外召回一路
         return ExecutionPlan(
@@ -268,7 +227,6 @@ class ModularRagScheme(AdvancedRagScheme):
             post_retrieval=post,
             generation_strategy=decision.generation_mode,
             volume_filter=_TARGET_VOLUME_FILTERS.get(decision.target),
-            fast_path=fast_path,
         )
 
     @staticmethod
@@ -354,20 +312,6 @@ class ModularRagScheme(AdvancedRagScheme):
         不占当前轮召回配额；无关或弱命中在 _cross_turn_seed 闸门已被滤掉。
         """
         recall_k = self._recall_k(k)
-        # L3 检索缓存：同 query+策略（含子查询/定向卷/宽召回数）复用 RRF 融合命中，省重复检索与 HyDE 生成。
-        # 传入 seed_hits（跨轮/升级既有证据）时不缓存——结果依赖可变种子，避免脏缓存。
-        l3_key = (
-            query,
-            tuple(sub_queries),
-            tuple(m.name for m in retrieval),
-            volume_filter,
-            recall_k,
-        )
-        if self.cache_enabled and not seed_hits:
-            cached = self._l3.get(l3_key)
-            if cached is not None:
-                logger.info("[modular] L3 检索缓存命中 → 复用 %d 条融合命中（省检索）", len(cached))
-                return cached
         # 多路召回并行化：各子查询 × 各检索模式（向量/混合）互不依赖，放线程池并发执行，
         # 召回延迟从「各路耗时之和」降为「最慢一路」；HyDE 的 LLM 假想文档生成同时在本线程进行，
         # 生成完再并入线程池做一路稠密召回——避免串行 for 循环累加各路的向量库/网络往返。
@@ -405,10 +349,7 @@ class ModularRagScheme(AdvancedRagScheme):
             ranked.extend(f.result() for f in futures)
             if volume_future is not None:
                 ranked.append(self._diversify(volume_future.result()))
-        fused = reciprocal_rank_fusion(ranked)
-        if self.cache_enabled and not seed_hits:
-            self._l3.set(l3_key, fused)
-        return fused
+        return reciprocal_rank_fusion(ranked)
 
     def _apply_post(
         self,
@@ -544,16 +485,6 @@ class ModularRagScheme(AdvancedRagScheme):
             verdict.answerable,
             verdict.recommendation,
         )
-        # 置信度快速通道：simple+高置信查询不升级检索，如实上报缺口（省升级链路的 LLM/延迟）
-        if plan.fast_path and not verdict.answerable:
-            result.answerability = verdict_to_dict(
-                AnswerabilityVerdict(
-                    answerable=False,
-                    missing_facts=verdict.missing_facts,
-                    recommendation=CLARIFY,
-                )
-            )
-            return result
         if not verdict.answerable and verdict.recommendation == ESCALATE:
             escalated = self._escalate(plan, verdict)
             if escalated is not None:
@@ -638,22 +569,6 @@ class ModularRagScheme(AdvancedRagScheme):
         resolved = self.deictic.resolve(query, context) or query
         if resolved != query:
             logger.info("[modular] 执行：指代消解 %r → %r", query, resolved)
-        # L1 查询缓存：同 query 复用上轮最终命中 + 重跑答案充分性验证（只省消解/路由/检索成本）。
-        # 命中即不再路由/检索/升级——上轮已尽力（含升级），不足时如实上报缺口而非再次升级。
-        if self.cache_enabled:
-            cached = self._l1.get((resolved, k))
-            if cached is not None:
-                logger.info("[modular] L1 查询缓存命中 → 复用 %d 条命中（重跑验证）", len(cached))
-                result = RetrieveResult(query=resolved, hits=cached)
-                verdict = self.answerability.verify(resolved, cached)
-                if not verdict.answerable:
-                    verdict = AnswerabilityVerdict(
-                        answerable=False,
-                        missing_facts=verdict.missing_facts,
-                        recommendation=CLARIFY,
-                    )
-                result.answerability = verdict_to_dict(verdict)
-                return result
         seed = self._cross_turn_seed(resolved, seed_hits) if seed_hits else []
         if seed:
             logger.info("[modular] 执行：跨轮 seed 复用 → %d 条候选证据", len(seed))
@@ -677,10 +592,7 @@ class ModularRagScheme(AdvancedRagScheme):
         )
         if not plan.need_retrieval:
             logger.info("[modular] 执行：无需检索，直接生成")
-        result = self._execute_plan(resolved, plan, k, seed_hits=seed)
-        if self.cache_enabled:
-            self._l1.set((resolved, k), result.hits)
-        return result
+        return self._execute_plan(resolved, plan, k, seed_hits=seed)
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         return self.retrieve_full(query, top_k).hits
@@ -905,44 +817,6 @@ class ModularRagScheme(AdvancedRagScheme):
                 "reason": "指代消解",
             }
         query = resolved
-        # L1 查询缓存：同 query 复用上轮最终命中 + 重跑答案充分性验证（只省消解/路由/检索成本）。
-        # 命中即透出 cache_hit / retrieve / answerability 事件（retrieve 供 runner 注入上下文），
-        # 不再路由/检索/升级——上轮已尽力（含升级），不足时如实上报缺口而非再次升级。
-        if self.cache_enabled:
-            cached = self._l1.get((query, k))
-            if cached is not None:
-                logger.info("[modular] 流式：L1 查询缓存命中 → 复用 %d 条命中（重跑验证）", len(cached))
-                yield {
-                    "type": "cache_hit",
-                    "query": query,
-                    "scheme": self.id,
-                    "level": "L1",
-                    "hits": len(cached),
-                }
-                yield {
-                    "type": "retrieve",
-                    "query": query,
-                    "scheme": self.id,
-                    "hits": cached,
-                    "reranked": True,
-                    "cache_hit": True,
-                }
-                verdict = await asyncio.to_thread(self.answerability.verify, query, cached)
-                if not verdict.answerable:
-                    verdict = AnswerabilityVerdict(
-                        answerable=False,
-                        missing_facts=verdict.missing_facts,
-                        recommendation=CLARIFY,
-                    )
-                yield {
-                    "type": "answerability",
-                    "query": query,
-                    "scheme": self.id,
-                    "verdict": verdict_to_dict(verdict),
-                    "escalated": False,
-                    "cache_hit": True,
-                }
-                return
         seed = self._cross_turn_seed(query, seed_hits) if seed_hits else []
         if seed:
             logger.info("[modular] 流式：跨轮 seed 复用 → %d 条候选证据", len(seed))
@@ -989,7 +863,6 @@ class ModularRagScheme(AdvancedRagScheme):
             "generation_mode": decision.generation_mode,
             "confidence": decision.confidence,
             "reason": decision.reason,
-            "fast_path": plan.fast_path,
         }
         if not plan.need_retrieval:
             logger.info("[modular] 流式：无需检索，直接生成")
@@ -1006,17 +879,10 @@ class ModularRagScheme(AdvancedRagScheme):
             verdict.answerable,
             verdict.recommendation,
         )
-        # 置信度快速通道：simple+高置信查询不升级检索，如实上报缺口（省升级链路的 LLM/延迟）
-        if plan.fast_path and not verdict.answerable:
-            verdict = AnswerabilityVerdict(
-                answerable=False,
-                missing_facts=verdict.missing_facts,
-                recommendation=CLARIFY,
-            )
         # 与同步 _execute_plan 保持一致：仅当验证建议升级（escalate）且有更高路径时
         # 才有界升级 1 轮；建议澄清（clarify，如缺指代/信息确实缺失）不升级、直接如实上报，
         # 避免「该追问却升级检索后越权作答」。
-        elif not verdict.answerable and verdict.recommendation == ESCALATE:
+        if not verdict.answerable and verdict.recommendation == ESCALATE:
             escalated = await asyncio.to_thread(self._escalate, plan, verdict)
             if escalated is not None:
                 logger.info(
@@ -1051,8 +917,6 @@ class ModularRagScheme(AdvancedRagScheme):
                     "verdict": verdict_to_dict(final),
                     "escalated": True,
                 }
-                if self.cache_enabled:
-                    self._l1.set((query, k), current_hits)
                 return
             # 升级不可行（已是最全路径）仍不足 → 如实上报缺口（追问澄清交给生成层/前端）
             verdict = AnswerabilityVerdict(
@@ -1074,5 +938,3 @@ class ModularRagScheme(AdvancedRagScheme):
             "verdict": verdict_to_dict(verdict),
             "escalated": False,
         }
-        if self.cache_enabled:
-            self._l1.set((query, k), current_hits)

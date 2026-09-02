@@ -1,4 +1,5 @@
 """FastAPI 应用入口：CORS、路由、异常处理、前端静态托管。"""
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,13 @@ from app.api.content import router as content_router
 from app.api.sandbox import router as sandbox_router
 from app.config import settings
 from app.core.errors import ConfigError
+
+# 统一日志配置：root logger 输出到控制台（uvicorn 不配置 root，应用模块的
+# logger.info 默认会被丢弃）。级别由环境变量 LOG_LEVEL / .env 控制，默认 INFO。
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+)
 
 
 @asynccontextmanager

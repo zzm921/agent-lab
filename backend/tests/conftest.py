@@ -34,8 +34,6 @@ def make_settings(**kw) -> Settings:
         "es_password": "",
         # 与 .env 解耦：测试固定启用 naive + advanced 两方案
         "rag_schemes": ["naive", "advanced"],
-        # 测试强制不落盘：跨轮 seed 仅用内存层（进程内跨轮行为不变，验证见 test_modular_rag.py）
-        "rag_seed_persist_enabled": False,
     }
     defaults.update(kw)
     return Settings(**defaults)

@@ -42,26 +42,6 @@ class Settings(BaseSettings):
     rag_rerank_model: str = "qwen3-rerank"
     # Modular 方案多跳迭代检索：最大检索跳数（LLM 路径默认 3，规则兜底上限 2）
     rag_max_hops: int = 3
-    # Modular 方案路由阈值：
-    # rag_fast_path_conf：置信度快速通道——simple+置信度≥该值 → 只验证不升级（省升级链路成本/延迟）；
-    # rag_low_conf_threshold：低置信度拓宽——置信度<该值 → 检索策略保守升一档（防单路漏召回）
-    rag_fast_path_conf: float = 0.9
-    rag_low_conf_threshold: float = 0.6
-    # Modular 方案三级缓存（性能治理）：L1 查询缓存（复用命中+重跑验证）/ L2 嵌入缓存 / L3 检索缓存。
-    # rag_cache_enabled：总开关（默认开）；rag_cache_max_entries：L1/L3 LRU 上限；
-    # rag_cache_ttl_s：缓存有效期（秒）——语料重建/策略变化后的旧命中按 TTL 自然过期
-    rag_cache_enabled: bool = True
-    rag_cache_max_entries: int = 128
-    rag_cache_ttl_s: float = 300.0
-    # 跨轮 seed 持久化（阶段 2.3，性能治理）：按会话把上一轮已验证命中落盘，进程重启后仍可复用。
-    # rag_seed_persist_enabled：总开关（默认开）；rag_seed_dir：数据目录（相对 backend/）；
-    # rag_seed_max_sessions：会话数上限（LRU 淘汰最久未更新）；rag_seed_ttl_s：种子有效期（秒）；
-    # rag_seed_max_hits：单会话命中条数上限（与 modular _SEED_MAX=5 对齐）
-    rag_seed_persist_enabled: bool = True
-    rag_seed_dir: str = "./data/seeds"
-    rag_seed_max_sessions: int = 100
-    rag_seed_ttl_s: float = 86400.0
-    rag_seed_max_hits: int = 5
     # Agentic 方案（多 Agent 编排）预算治理：步数/纠错轮数/超时/token/单工具上限/并行度
     rag_agent_max_steps: int = 8  # 全轮工具调用总上限（含被护栏拦截的调用），超限停止检索
     rag_agent_correction_rounds: int = 2  # CRAG 纠错回环上限，超出仍不足则如实上报缺口
@@ -81,6 +61,8 @@ class Settings(BaseSettings):
     quota_store_path: str = "./data/quota.json"  # 计数持久化文件（空字符串表示仅内存）
 
     # 运行参数
+    # 日志级别：应用统一日志输出的最低级别（默认 INFO，可设 DEBUG/WARNING/ERROR 降噪）
+    log_level: str = "INFO"
     max_iterations: int = 8
     max_steps: int = 5  # 各 Agent 循环的轮数上限（模型思考/工具回合数），超限强制结束防死循环
     rag_top_k: int = 3

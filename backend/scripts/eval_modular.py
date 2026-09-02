@@ -6,9 +6,8 @@
     python scripts/eval_modular.py --report PATH   # 指定报告输出路径（默认 eval/reports/latest.json）
 
 输出：
-    - 控制台：按分支汇总表 + 失败用例明细（召回<1 / 未可答 / 关键词未覆盖，含整改建议）
-    - JSON 报告：全量逐用例明细 + 汇总（默认 eval/reports/latest.json）
-    - 失败样本回流：失败用例 + 缺失分块/缺失事实 + 整改建议（默认 eval/reports/failures.json）
+    - 控制台：按分支汇总表 + 失败用例明细（召回<1 / 未可答 / 关键词未覆盖）
+    - JSON 报告：全量逐用例明细 + 汇总，供后续失败样本回流分析。
 """
 from __future__ import annotations
 
@@ -56,18 +55,28 @@ def _print_table(title: str, agg: dict) -> None:
 
 def _print_failures(records: list[dict]) -> None:
     print("\n=== 失败用例明细（召回<1 或 未可答 或 关键词未覆盖，需人工核查）===")
-    failures = runner.extract_failures(records)
-    for r in failures[:20]:
+    shown = 0
+    for r in records:
+        # 不检索 / 库外问题：未可答是期望行为，不算失败
+        if not r["need_retrieval"] or r["branch"] == "out_of_kb":
+            continue
+        failed = (
+            (r["recall"] is not None and r["recall"] < 1.0)
+            or (r["answerable"] is False)
+            or (r["keyword_hit"] is False)
+        )
+        if not failed:
+            continue
+        shown += 1
         print(f"[{r['id']}] ({_BRANCH_NAME.get(r['branch'], r['branch'])}) {r['query']}")
         print(f"    相关={r['relevant']} 命中id={r['retrieved_ids']} "
               f"召回={r['recall']} MRR={r['mrr']} 关键词命中={r['keyword_hit']}")
         print(f"    可答={r['answerable']} 建议={r['recommendation']} "
               f"缺失={r['missing_facts']} 耗时={r['elapsed_ms']}ms")
-        for act in r["suggested_actions"]:
-            print(f"    整改→ {act}")
-    if len(failures) > 20:
-        print("…（仅显示前 20 条）")
-    if not failures:
+        if shown >= 20:
+            print("…（仅显示前 20 条）")
+            break
+    if not shown:
         print("（无）")
 
 
@@ -80,8 +89,6 @@ def main() -> None:
 
     records, report = runner.run(top_k=args.top_k, real_router=args.real_router)
     runner.save_report(report, args.report)
-    failures_path = runner.save_failures(records, args.report)
-    failures = runner.extract_failures(records)
 
     print("=== modular RAG 离线评测报告 ===")
     print(f"路由模式: {report['meta']['modules']} | top_k={args.top_k} | "
@@ -103,7 +110,6 @@ def main() -> None:
 
     _print_failures(records)
     print(f"\n报告已写入: {args.report}")
-    print(f"失败样本回流: {failures_path}（{len(failures)} 条）")
     if not args.real_router:
         print("提示: 使用 --real-router 可额外评测真实 LLM 路由准确率（需配置 Key）。")
 
