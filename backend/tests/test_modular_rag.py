@@ -13,9 +13,9 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.runner import AgentRunner
-from app.core.errors import ConfigError
 from app.llm.fake_model import FakeChatModel, FakeEmbeddings
 from app.memory.stores.memory_store import MemoryStore
+from app.rag.cache import CrossTurnSeedStore
 from app.rag.manager import RagManager
 from app.rag.retrieval.answerability import (
     ESCALATE,
@@ -87,6 +87,17 @@ class StubClassifier:
         )
 
 
+class MidConfClassifier:
+    """测试桩：simple+hybrid 但置信度中等（0.7）——不进快速通道（fast_path=False），
+    也不触发低置信拓宽（≥0.6），用于测「单次检索不足 → 仍可升级」的编排行为。"""
+
+    def classify(self, query: str) -> RouteDecision:
+        return RouteDecision(
+            retrieval_need=True, retrieval_mode=HYBRID, complexity=SIMPLE,
+            generation_mode=CITATION, confidence=0.7, reason="单点事实，非快速通道",
+        )
+
+
 class StubDeicticResolver:
     """测试桩：确定性指代消解——查询含指代词且上下文提到「王刚」时替换为具体实体。"""
 
@@ -149,19 +160,24 @@ def test_llm_classifier_relation_attribute_multihop(monkeypatch):
     assert decision.complexity == MULTIHOP
 
 
-def test_llm_classifier_requires_llm(monkeypatch):
-    """纯 LLM 路由：未配置聊天模型（get_chat_model 返回 None）时直接报错，无规则兜底。"""
+def test_llm_classifier_requires_llm_degrades(monkeypatch):
+    """LLM 路由：未配置聊天模型（get_chat_model 返回 None）→ 降级保守多路召回路径，不阻断 modular。"""
     monkeypatch.setattr("app.rag.routing.classifier.get_chat_model", lambda scenario: None)
-    with pytest.raises(ConfigError):
-        LLMQueryClassifier().classify("张三的领导是谁")
+    decision = LLMQueryClassifier().classify("张三的领导是谁")
+    assert decision.retrieval_need is True
+    assert decision.retrieval_mode == MULTI_RECALL
+    assert decision.confidence == 0.0
+    assert "降级" in decision.reason
 
 
-def test_llm_classifier_invalid_enum_raises(monkeypatch):
-    """纯 LLM 路由：LLM 输出非法枚举/不可解析时直接报错（不再回退规则路由）。"""
+def test_llm_classifier_invalid_enum_degrades(monkeypatch):
+    """LLM 路由：LLM 输出非法枚举/不可解析 → 降级保守多路召回路径（不再抛错使 modular 不可用）。"""
     llm = FakeChatModel(script=[AIMessage(content='{"retrieval_mode": "自造路径"}')])
     monkeypatch.setattr("app.rag.routing.classifier.get_chat_model", lambda scenario: llm)
-    with pytest.raises(ConfigError):
-        LLMQueryClassifier().classify("发票什么时候交")
+    decision = LLMQueryClassifier().classify("发票什么时候交")
+    assert decision.retrieval_need is True
+    assert decision.retrieval_mode == MULTI_RECALL
+    assert decision.confidence == 0.0
 
 
 def test_llm_classifier_parses_decision(monkeypatch):
@@ -362,6 +378,85 @@ def test_build_plan_multihop(settings):
     assert [m.name for m in plan.retrieval] == ["multi_hop"]
     assert [m.name for m in plan.post_retrieval] == ["rerank", "compress"]
     assert plan.generation_strategy == "citation"
+
+
+def test_build_plan_fast_path_high_confidence_simple(settings):
+    """快速通道：simple + 高置信（≥0.9）→ fast_path=True，且保持单次检索策略。"""
+    scheme = make_modular(settings)
+    plan = scheme._build_plan(
+        RouteDecision(
+            retrieval_need=True, retrieval_mode=VECTOR, complexity=SIMPLE,
+            generation_mode=CITATION, confidence=0.95, reason="单点事实",
+        )
+    )
+    assert plan.fast_path is True
+    assert [m.name for m in plan.retrieval] == ["search"]
+    assert plan.post_retrieval == [], "单次向量检索快速通道不压缩"
+
+
+def test_build_plan_no_fast_path_for_complex(settings):
+    """非快速通道：multihop / decompose / rewrite 即使高置信也不进快速通道。"""
+    scheme = make_modular(settings)
+    for complexity, mode in ((MULTIHOP, MULTI_RECALL), (DECOMPOSE, MULTI_RECALL), (REWRITE, HYBRID)):
+        plan = scheme._build_plan(
+            RouteDecision(
+                retrieval_need=True, retrieval_mode=mode, complexity=complexity,
+                generation_mode=CITATION, confidence=0.98, reason="复杂查询",
+            )
+        )
+        assert plan.fast_path is False, f"{complexity} 不应走快速通道"
+
+
+def test_build_plan_low_confidence_widens_to_multi_recall(settings):
+    """低置信拓宽：confidence < 0.6 时单路检索（vector/hybrid）保守升为多路召回。"""
+    scheme = make_modular(settings)
+    plan = scheme._build_plan(
+        RouteDecision(
+            retrieval_need=True, retrieval_mode=VECTOR, complexity=SIMPLE,
+            generation_mode=CITATION, confidence=0.4, reason="把握不足",
+        )
+    )
+    assert [m.name for m in plan.retrieval] == ["multi_recall"]
+    assert [m.name for m in plan.post_retrieval] == ["rerank", "compress"]
+    assert plan.fast_path is False, "低置信不进快速通道"
+
+
+def test_execute_plan_fast_path_never_escalates(settings):
+    """快速通道：simple+高置信查询即使验证建议升级，也不升级检索，直接如实上报缺口。"""
+    verifier = ScriptedVerifier(
+        AnswerabilityVerdict(
+            answerable=False, missing_facts=["报销时限"], recommendation=ESCALATE, escalate_to="multi_recall"
+        ),
+    )
+    scheme = make_modular(settings, answerability=verifier, classifier=MidConfClassifier())
+    # 覆盖 fast_path 阈值：把默认 0.9 降到 0.7 让 MidConfClassifier（conf=0.7）进快速通道
+    scheme.fast_path_conf = 0.7
+    scheme.ingest(["公司要求发票随报销单据一次性上传，逾期不受理。"])
+    result = scheme.retrieve_full("发票什么时候交", top_k=2)
+    assert verifier.calls == 1, "快速通道不应触发升级后的二次验证"
+    assert result.answerability["recommendation"] == CLARIFY
+    assert result.answerability["answerable"] is False
+
+
+async def test_astream_fast_path_no_escalate(settings):
+    """流式快速通道：simple+高置信查询不升级检索，只下发一次 answerability（clarify）。"""
+    verifier = ScriptedVerifier(
+        AnswerabilityVerdict(
+            answerable=False, missing_facts=["报销时限"], recommendation=ESCALATE, escalate_to="multi_recall"
+        ),
+    )
+    scheme = make_modular(settings, answerability=verifier, classifier=MidConfClassifier())
+    scheme.fast_path_conf = 0.7
+    scheme.ingest(["公司要求发票随报销单据一次性上传，逾期不受理。"])
+    events = [ev async for ev in scheme.astream("发票什么时候交", 2)]
+    kinds = [e["type"] for e in events]
+    assert kinds.count("retrieve") == 1, "快速通道不应二次检索升级"
+    answers = [e for e in events if e["type"] == "answerability"]
+    assert len(answers) == 1
+    assert answers[0]["verdict"]["recommendation"] == CLARIFY
+    assert answers[0]["escalated"] is False
+    classify = [e for e in events if e["type"] == "classify"][-1]
+    assert classify["fast_path"] is True, "classify 事件应透出 fast_path 供前端可观测"
 
 
 # ---- 按执行计划路由 ----
@@ -1143,14 +1238,15 @@ class ScriptedVerifier:
 
 
 def test_execute_plan_escalates_on_insufficient(settings):
-    """同步：单次检索不足 → 有界升级 1 轮（多路召回+重排）→ 二次验证可答，最终命中采用升级轮结果。"""
+    """同步：单次检索不足 → 有界升级 1 轮（多路召回+重排）→ 二次验证可答，最终命中采用升级轮结果。
+    （用中等置信度分类器避开快速通道，确保升级机制本身被触发。）"""
     verifier = ScriptedVerifier(
         AnswerabilityVerdict(
             answerable=False, missing_facts=["报销时限"], recommendation=ESCALATE, escalate_to="multi_recall"
         ),
         AnswerabilityVerdict(answerable=True, missing_facts=[], recommendation=ANSWER),
     )
-    scheme = make_modular(settings, answerability=verifier)
+    scheme = make_modular(settings, answerability=verifier, classifier=MidConfClassifier())
     scheme.ingest(["公司要求发票随报销单据一次性上传，逾期不受理。"])
     result = scheme.retrieve_full("发票什么时候交", top_k=2)
     assert verifier.calls == 2, "应验证两次：首轮不足 + 升级后复验"
@@ -1220,14 +1316,15 @@ def test_execute_plan_multihop_insufficient_maps_to_clarify(settings):
 
 
 async def test_astream_insufficient_escalates_and_final_verdict(settings):
-    """流式：首轮检索不足 → 下发 answerability(升级) → 二次检索 → 下发 answerability(最终可答，escalated=True)。"""
+    """流式：首轮检索不足 → 下发 answerability(升级) → 二次检索 → 下发 answerability(最终可答，escalated=True)。
+    （用中等置信度分类器避开快速通道，确保升级机制本身被触发。）"""
     verifier = ScriptedVerifier(
         AnswerabilityVerdict(
             answerable=False, missing_facts=["报销时限"], recommendation=ESCALATE, escalate_to="multi_recall"
         ),
         AnswerabilityVerdict(answerable=True, missing_facts=[], recommendation=ANSWER),
     )
-    scheme = make_modular(settings, answerability=verifier)
+    scheme = make_modular(settings, answerability=verifier, classifier=MidConfClassifier())
     scheme.ingest(["公司要求发票随报销单据一次性上传，逾期不受理。"])
     events = [ev async for ev in scheme.astream("发票什么时候交", 2)]
     kinds = [e["type"] for e in events]
@@ -1666,3 +1763,165 @@ def test_context_compress_semantic_dedup():
     plain = ExtractiveContextCompressor()
     _, m2 = plain.compress("考勤", hits, top_k=5)
     assert m2["kept"] == 3, "未提供 embeddings 时仅精确去重，不触发语义去重"
+
+
+# ---- 阶段 2.1：三级缓存（L1 查询缓存 / L2 嵌入缓存 / L3 检索缓存） ----
+
+class CountingClassifier:
+    """测试桩：包装任意 classifier，统计 classify 调用次数（验证 L1 命中跳过路由）。"""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.calls = 0
+
+    def classify(self, query: str) -> RouteDecision:
+        self.calls += 1
+        return self.inner.classify(query)
+
+
+class CountingStore(MemoryStore):
+    """测试桩：统计检索后端被触达的次数（search/hybrid_search 均计入，验证缓存省检索）。"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.retrieval_calls = 0
+
+    def search(self, query: str, top_k: int = 3, volume_filter=None):
+        self.retrieval_calls += 1
+        return super().search(query, top_k, volume_filter=volume_filter)
+
+    def hybrid_search(self, query: str, top_k: int = 3, volume_filter=None):
+        self.retrieval_calls += 1
+        return super().hybrid_search(query, top_k, volume_filter=volume_filter)
+
+
+def test_l1_query_cache_reuses_hits_and_reruns_verify(settings):
+    """L1 查询缓存：同 query 第二次调用复用命中并重跑答案充分性验证，不重复路由/检索。"""
+    counting = CountingClassifier(StubClassifier())
+    scheme = make_modular(settings, classifier=counting)
+    first = scheme.retrieve_full("发票什么时候交")
+    second = scheme.retrieve_full("发票什么时候交")
+    assert counting.calls == 1, "L1 命中后不应再次调用语义路由"
+    assert first.hits == second.hits, "应复用首轮最终命中"
+    assert second.answerability is not None, "命中后应重跑答案充分性验证"
+
+
+def test_l1_query_cache_skips_store_search(settings):
+    """L1 查询缓存命中后不再触碰检索后端（省检索成本）。"""
+    store = CountingStore(FakeEmbeddings(), collection="knowledge_modular")
+    store.add("员工年假按工龄计算：满一年5天起，王刚作为部门主管年假按标准执行。", {"volume": "卷一"})
+    scheme = make_modular(settings, store=store)
+    scheme.retrieve_full("王刚有多少天年假")
+    calls_after_first = store.retrieval_calls
+    assert calls_after_first > 0
+    scheme.retrieve_full("王刚有多少天年假")
+    assert store.retrieval_calls == calls_after_first, "L1 命中后不应再次检索"
+
+
+def test_l1_cache_disabled_when_flag_off(settings):
+    """禁用缓存（cache_enabled=False）时每轮都路由/检索，行为与未接入缓存一致。"""
+    counting = CountingClassifier(StubClassifier())
+    scheme = make_modular(settings, classifier=counting, cache_enabled=False)
+    scheme.retrieve_full("发票什么时候交")
+    scheme.retrieve_full("发票什么时候交")
+    assert counting.calls == 2, "禁用缓存时应每轮都语义路由"
+
+
+def test_l3_retrieval_cache_reuses_fused_hits(settings):
+    """L3 检索缓存：同 query+策略第二次 _collect 复用 RRF 融合命中，不再触碰检索后端。"""
+    store = CountingStore(FakeEmbeddings(), collection="knowledge_modular")
+    store.add("员工年假按工龄计算：满一年5天起，王刚作为部门主管年假按标准执行。", {"volume": "卷一"})
+    scheme = make_modular(settings, store=store)
+    plan = scheme._build_plan(scheme.classifier.classify("年假"))
+    h1 = scheme._collect("年假", ["年假"], plan.retrieval, 3)
+    calls_after_first = store.retrieval_calls
+    assert calls_after_first > 0
+    h2 = scheme._collect("年假", ["年假"], plan.retrieval, 3)
+    assert h1 == h2, "应复用 RRF 融合命中"
+    assert store.retrieval_calls == calls_after_first, "L3 命中后不应再次检索"
+
+
+def test_l3_cache_skipped_when_seed_present(settings):
+    """L3 检索缓存：传入 seed_hits（跨轮/升级既有证据）时跳过缓存读写，避免依赖可变种子的脏缓存。"""
+    store = CountingStore(FakeEmbeddings(), collection="knowledge_modular")
+    store.add("员工年假按工龄计算：满一年5天起。", {"volume": "卷一"})
+    scheme = make_modular(settings, store=store)
+    plan = scheme._build_plan(scheme.classifier.classify("年假"))
+    scheme._collect("年假", ["年假"], plan.retrieval, 3)
+    calls_after_first = store.retrieval_calls
+    scheme._collect("年假", ["年假"], plan.retrieval, 3, seed_hits=[{"text": "种子", "score": 0.6}])
+    assert store.retrieval_calls > calls_after_first, "含 seed 时不得命中 L3 缓存，应重新检索"
+
+
+async def test_astream_l1_cache_hit_emits_events(settings):
+    """astream：第二次同 query 命中 L1 → 透出 cache_hit/retrieve/answerability，且不再路由。"""
+    counting = CountingClassifier(StubClassifier())
+    scheme = make_modular(settings, classifier=counting)
+    events1 = [ev async for ev in scheme.astream("发票什么时候交")]
+    assert any(ev["type"] == "retrieve" for ev in events1), "首轮应有检索事件"
+    events2 = [ev async for ev in scheme.astream("发票什么时候交")]
+    types2 = [ev["type"] for ev in events2]
+    assert "cache_hit" in types2, "第二次应命中 L1 并透出 cache_hit 事件"
+    assert "classify" not in types2, "L1 命中后不应再语义路由"
+    assert counting.calls == 1, "两次共应只路由一次"
+    retrieve2 = next(ev for ev in events2 if ev["type"] == "retrieve")
+    assert retrieve2.get("cache_hit") is True, "retrieve 事件应标记缓存命中"
+    assert any(ev["type"] == "answerability" for ev in events2), "命中后应重跑验证"
+
+
+# ---- 跨轮 seed 持久化（阶段 2.3） ----
+
+def test_seed_store_persists_across_restart(tmp_path):
+    """跨轮 seed 持久化：set 落盘后，新实例（模拟进程重启）从同一路径加载可复用上轮命中。"""
+    data_path = tmp_path / "seeds" / "cross_turn_seeds.json"
+    store = CrossTurnSeedStore(data_path, enabled=True)
+    store.set("s1", [{"text": "张三 研发部", "score": 0.9}])
+    # 模拟重启：新建实例读同一文件
+    revived = CrossTurnSeedStore(data_path, enabled=True)
+    assert revived.get("s1") == [{"text": "张三 研发部", "score": 0.9}]
+    assert store.get("s1") == [{"text": "张三 研发部", "score": 0.9}], "内存层同步可见"
+
+
+def test_seed_store_memory_layer_works_when_disabled(tmp_path):
+    """跨轮 seed：enabled=False 时进程内 set/get/clear 行为不变，但不落盘。"""
+    data_path = tmp_path / "seeds" / "cross_turn_seeds.json"
+    store = CrossTurnSeedStore(data_path, enabled=False)
+    store.set("s1", [{"text": "张三 研发部", "score": 0.9}])
+    assert store.get("s1") == [{"text": "张三 研发部", "score": 0.9}]
+    assert not data_path.exists(), "禁用持久化时不应写盘"
+    store.clear("s1")
+    assert store.get("s1") is None
+
+
+def test_seed_store_limits_and_eviction(tmp_path):
+    """跨轮 seed 治理上限：单会话截断（按分降序留前 N）、会话 LRU 淘汰、clear 后磁盘同步清空。"""
+    data_path = tmp_path / "seeds" / "cross_turn_seeds.json"
+    store = CrossTurnSeedStore(data_path, enabled=True, max_sessions=2, max_hits_per_session=2)
+    store.set("s1", [
+        {"text": "低分", "score": 0.3},
+        {"text": "高分", "score": 0.9},
+        {"text": "中分", "score": 0.6},
+    ])
+    assert store.get("s1") == [{"text": "高分", "score": 0.9}, {"text": "中分", "score": 0.6}], "按分降序留前 2"
+    store.set("s2", [{"text": "b", "score": 0.8}])
+    store.set("s3", [{"text": "c", "score": 0.8}])
+    assert store.get("s1") is None, "会话数超限应淘汰最久未更新的 s1"
+    assert store.get("s2") is not None and store.get("s3") is not None
+    store.clear("s2")
+    # 新实例加载：clear 已同步到磁盘，s2 不应存在
+    revived = CrossTurnSeedStore(data_path, enabled=True)
+    assert revived.get("s2") is None
+
+
+def test_seed_store_ttl_expiry(tmp_path):
+    """跨轮 seed TTL：超期会话在读取/加载时被剔除，不再复用上轮证据。"""
+    data_path = tmp_path / "seeds" / "cross_turn_seeds.json"
+    store = CrossTurnSeedStore(data_path, enabled=True, ttl_s=10)
+    store.set("s1", [{"text": "旧证据", "score": 0.8}])
+    # 把写入时间戳拨回过去（模拟 11 秒前写入，超过 ttl=10）并落盘
+    store._cache["s1"] = (time.time() - 11.0, store._cache["s1"][1])
+    store._flush()
+    assert store.get("s1") is None, "超期会话在读取时应被剔除"
+    # 新实例加载也应跳过超期会话
+    revived = CrossTurnSeedStore(data_path, enabled=True, ttl_s=10)
+    assert revived.get("s1") is None

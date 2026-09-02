@@ -12,6 +12,9 @@
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from eval import runner
 
 
@@ -100,3 +103,30 @@ def test_all_expected_routes_covered_by_eval_set() -> None:
         branch_counts
     ), f"评测集分支覆盖不完整: {sorted(branch_counts)}"
     assert report["meta"]["eval_cases"] >= 10
+
+
+def test_failure_extraction_excludes_expected_branches() -> None:
+    """失败样本回流：no_retrieval / out_of_kb 不判失败（未可答是期望），
+    其余分支按 召回<1 / 未可答 / 关键词未覆盖 提取，且每条都附整改建议。"""
+    records, _ = _run()
+    failures = runner.extract_failures(records)
+    for f in failures:
+        assert f["branch"] not in ("no_retrieval", "out_of_kb")
+        assert f["suggested_actions"], f"失败样本 {f['id']} 应给出整改建议"
+    # 召回不足的样本必须列出缺失分块（回流供人工核查的核心信息）
+    for f in failures:
+        if f["recall"] is not None and f["recall"] < 1.0:
+            assert f["missing_ids"], f"召回不足样本 {f['id']} 应列出缺失分块"
+
+
+def test_save_failures_writes_json(tmp_path) -> None:
+    """失败样本回流：写入 <报告同目录>/failures.json，meta 含数量与判定标准，逐条含缺失/建议。"""
+    records, _ = _run()
+    report_path = tmp_path / "reports" / "latest.json"
+    out = runner.save_failures(records, str(report_path))
+    assert out == str(report_path.with_name("failures.json"))
+    payload = json.loads(Path(out).read_text(encoding="utf-8"))
+    assert payload["meta"]["failure_count"] == len(payload["failures"])
+    assert "recall<1" in payload["meta"]["criteria"]
+    for f in payload["failures"]:
+        assert "id" in f and "suggested_actions" in f and "missing_ids" in f

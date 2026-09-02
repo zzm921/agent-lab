@@ -735,6 +735,13 @@ const ROLE_LABEL: Record<string, string> = {
               >
                 重排
               </span>
+              <span
+                v-if="s.cacheHit"
+                class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-normal text-amber-200"
+                title="L1 查询缓存命中：复用上轮检索命中并重跑答案充分性验证"
+              >
+                缓存命中
+              </span>
             </span>
             <span v-if="s.query" class="break-all text-slate-500">query: {{ s.query }}</span>
           </div>

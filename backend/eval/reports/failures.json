@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "generated_at": "2026-09-02T10:03:22+00:00",
+    "source_report": "eval\\reports\\latest.json",
+    "failure_count": 3,
+    "criteria": "recall<1 或 answerable=False 或 keyword_hit=False（排除 no_retrieval / out_of_kb）"
+  },
+  "failures": [
+    {
+      "id": "d03",
+      "branch": "decompose",
+      "query": "年假和事假有什么区别",
+      "recall": 0.5,
+      "mrr": 0.333,
+      "keyword_hit": true,
+      "answerable": true,
+      "recommendation": "answer",
+      "missing_facts": [],
+      "relevant": [
+        "c06",
+        "c08"
+      ],
+      "retrieved_ids": [
+        "c08",
+        "c36",
+        "c42"
+      ],
+      "missing_ids": [
+        "c06"
+      ],
+      "suggested_actions": [
+        "相关分块未全部召回（缺失 ['c06']）：核对语料是否含对应条目，或调整检索策略（向量/多路召回/定向补召回）"
+      ],
+      "elapsed_ms": 3.2
+    },
+    {
+      "id": "m01",
+      "branch": "multihop",
+      "query": "报销发票的完整流程是什么",
+      "recall": 0.667,
+      "mrr": 0.333,
+      "keyword_hit": true,
+      "answerable": true,
+      "recommendation": "answer",
+      "missing_facts": [],
+      "relevant": [
+        "c18",
+        "c19",
+        "c22"
+      ],
+      "retrieved_ids": [
+        "c18",
+        "c19",
+        "c21",
+        "c26",
+        "c39",
+        "c41"
+      ],
+      "missing_ids": [
+        "c22"
+      ],
+      "suggested_actions": [
+        "相关分块未全部召回（缺失 ['c22']）：核对语料是否含对应条目，或调整检索策略（向量/多路召回/定向补召回）"
+      ],
+      "elapsed_ms": 2.8
+    },
+    {
+      "id": "m02",
+      "branch": "multihop",
+      "query": "李四的领导的审批范围是什么",
+      "recall": 0.5,
+      "mrr": 1.0,
+      "keyword_hit": true,
+      "answerable": true,
+      "recommendation": "answer",
+      "missing_facts": [],
+      "relevant": [
+        "c25",
+        "c30"
+      ],
+      "retrieved_ids": [
+        "c13",
+        "c21",
+        "c24",
+        "c29",
+        "c30",
+        "c37"
+      ],
+      "missing_ids": [
+        "c25"
+      ],
+      "suggested_actions": [
+        "相关分块未全部召回（缺失 ['c25']）：核对语料是否含对应条目，或调整检索策略（向量/多路召回/定向补召回）"
+      ],
+      "elapsed_ms": 3.6
+    }
+  ]
+}

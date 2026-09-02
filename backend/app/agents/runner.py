@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -19,6 +20,7 @@ from app.agents.modes.react import build_react_agent
 from app.agents.modes.reflection import build_reflection_agent
 from app.agents.tools_builder import build_tools
 from app.llm.service import LLMService
+from app.rag.cache import CrossTurnSeedStore
 from app.security import InputGuard
 
 STRATEGY_PROMPTS = {
@@ -60,8 +62,16 @@ class AgentRunner:
         self._configs: dict[str, dict] = {}
         self._specs: dict[str, tuple] = {}
         # 跨轮 seed 复用：按会话记录上一轮最终检索命中（已含重排/压缩），
-        # 供 modular 下一轮作为「候选证据」复用（经 _cross_turn_seed 分数/相关性闸门过滤）。
-        self._last_hits: dict[str, list[dict]] = {}
+        # 供 modular/agentic 下一轮作为「候选证据」复用（经 _cross_turn_seed 分数/相关性闸门过滤）。
+        # 内存层始终可用；rag_seed_persist_enabled=True 时按会话落盘，进程重启后仍可复用。
+        seed_path = Path(getattr(self.settings, "rag_seed_dir", "./data/seeds")) / "cross_turn_seeds.json"
+        self._seeds = CrossTurnSeedStore(
+            data_path=seed_path,
+            enabled=bool(getattr(self.settings, "rag_seed_persist_enabled", True)),
+            max_sessions=int(getattr(self.settings, "rag_seed_max_sessions", 100)),
+            ttl_s=float(getattr(self.settings, "rag_seed_ttl_s", 86400.0)),
+            max_hits_per_session=int(getattr(self.settings, "rag_seed_max_hits", 5)),
+        )
 
     def _scenario_llm(self, scenario: str):
         """取指定场景的模型：有 LLMService 走场景配置，否则回退单模型。"""
@@ -266,7 +276,7 @@ class AgentRunner:
             # 跨轮 seed 复用：modular/agentic 方案支持（共享 _cross_turn_seed 闸门）；
             # 传入上一轮最终命中，由方案内按分数/相关性过滤后作候选证据
             # （省重复检索、不注入查询文本）。
-            prev_hits = self._last_hits.get(session_id)
+            prev_hits = self._seeds.get(session_id)
             stream_kwargs = {"context": context}
             if getattr(scheme, "id", None) in ("modular", "agentic") and prev_hits:
                 stream_kwargs["seed_hits"] = prev_hits
@@ -287,11 +297,11 @@ class AgentRunner:
                     # 检索结果不足以回答 → 强制模型追问澄清，不编造内部数据。
                     if ev.get("verdict", {}).get("answerable") is False:
                         insufficient = True
-            # 更新跨轮 seed 缓存：本轮检索到命中则记录（供下一轮复用），否则清空
+            # 更新跨轮 seed 缓存：本轮检索到命中则记录（供下一轮复用，落盘持久化），否则清空
             if rag_context and rag_context.get("hits"):
-                self._last_hits[session_id] = rag_context["hits"]
+                self._seeds.set(session_id, rag_context["hits"])
             else:
-                self._last_hits.pop(session_id, None)
+                self._seeds.clear(session_id)
         inputs = await self._make_inputs(
             graph,
             config,

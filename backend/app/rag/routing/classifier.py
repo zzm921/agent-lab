@@ -11,19 +11,23 @@
 
 路由为**纯 LLM**：按命名场景 rag_classify 懒取聊天模型（模型/参数见 service.DEFAULT_PROFILES），
 一次调用输出 JSON 路由决策（枚举白名单校验）。单跳/多跳这类语义判定交给模型判断，
-**不做规则正则兜底**——未配置 LLM（无 Key）或调用失败时直接抛错，避免规则误判
-（如把「张三的领导是谁」这类单跳事实题误判为多跳）。
+**不做规则正则兜底**——避免规则误判（如把「张三的领导是谁」这类单跳事实题误判为多跳）。
+为保可用性，路由在「未配置 LLM / 调用失败 / 输出非法」时**降级为保守的多路召回路径**
+（宽召回 + 引用生成），而不是让 modular 方案整体不可用；降级不是规则路由器，
+只是模型异常时的一个保守默认（置信度记 0，交由编排层的低置信拓宽逻辑接管）。
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+logger = logging.getLogger(__name__)
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.core.errors import ConfigError
 from app.llm.client import get_chat_model
 
 # complexity（D4）
@@ -88,7 +92,8 @@ class LLMQueryClassifier(QueryClassifier):
 
     提示词遵循企业模板要点：角色隔离（你是路由引擎不是问答助手）、枚举封闭（禁止自造）、
     结构化 JSON 输出 + 置信度 + 理由、few-shot 对齐高频场景（简单事实/单跳关系/多实体对比/多跳）。
-    未配置聊天模型或调用失败时抛 ConfigError——路由为纯 LLM，无规则兜底。
+    路由判定完全交给 LLM（无规则正则兜底）；但未配置模型/调用失败/输出非法时
+    降级为保守多路召回路径（_degraded），保证 modular 方案可用性。
     """
 
     # 本阶段使用的模型/参数场景（qwen3.5-flash / temp=0.2 / max_tokens=500 / thinking=False，见 service.DEFAULT_PROFILES）
@@ -97,10 +102,8 @@ class LLMQueryClassifier(QueryClassifier):
     def classify(self, query: str) -> RouteDecision:
         llm = get_chat_model(self.scenario)
         if llm is None:
-            raise ConfigError(
-                f"modular 语义路由需要聊天模型（场景 {self.scenario}）：请配置 LLM_API_KEY。"
-                "路由已改为纯 LLM，不再回退规则判定。"
-            )
+            # 未配置聊天模型（无 Key）→ 降级保守路径（多路召回+引用），不阻断 modular 可用性
+            return self._degraded("未配置聊天模型（rag_classify）")
         messages = [
             SystemMessage(
                 content=(
@@ -179,12 +182,31 @@ class LLMQueryClassifier(QueryClassifier):
             resp = llm.invoke(messages)
             content = resp.content if isinstance(resp.content, str) else str(resp.content or "")
             return self._parse(content)
-        except Exception as exc:  # noqa: BLE001 — 纯 LLM：失败直接报错，不静默回退
-            raise ConfigError(f"语义路由（{self.scenario}）调用失败：{exc}") from exc
+        except Exception as exc:  # noqa: BLE001 — 模型抖动/输出非法 → 降级保守路径，不阻断 modular
+            return self._degraded(f"语义路由调用失败：{exc}")
+
+    @staticmethod
+    def _degraded(reason: str) -> RouteDecision:
+        """路由失败降级：返回保守的多路召回路径（宽召回 + 引用生成）。
+
+        仍保留「纯 LLM 路由、无规则正则兜底」——降级**不是规则路由器**，只是
+        模型/调用失败时的一个保守默认（confidence=0，由编排层低置信拓宽逻辑
+        接管 → 多路召回），避免路由异常让 modular 方案整体不可用。
+        """
+        logger.warning("[router] 语义路由降级：%s → 多路召回保守路径", reason)
+        return RouteDecision(
+            retrieval_need=True,
+            retrieval_mode=MULTI_RECALL,
+            complexity=SIMPLE,
+            generation_mode=CITATION,
+            target=TARGET_NONE,
+            confidence=0.0,
+            reason=f"路由降级（{reason}）",
+        )
 
     @staticmethod
     def _parse(content: str) -> RouteDecision:
-        """提取 JSON 片段并校验枚举白名单；非法/不可解析抛异常（由调用方统一报错）。"""
+        """提取 JSON 片段并校验枚举白名单；非法/不可解析抛异常（由 classify 捕获并降级）。"""
         match = re.search(r"\{.*\}", content, re.DOTALL)
         if not match:
             raise ValueError("LLM 路由输出中未找到 JSON")
@@ -215,5 +237,5 @@ class LLMQueryClassifier(QueryClassifier):
 
 
 def build_classifier() -> QueryClassifier:
-    """构造路由器：纯 LLM 路由（内部按场景懒取模型，无 Key/失败时报错）。"""
+    """构造路由器：纯 LLM 路由（内部按场景懒取模型；无 Key/失败时降级保守多路召回路径）。"""
     return LLMQueryClassifier()

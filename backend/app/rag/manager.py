@@ -12,6 +12,7 @@ from typing import Any
 
 from app.config import Settings
 from app.core.errors import ConfigError
+from app.rag.cache import CachedEmbeddings
 from app.rag.schemes.agentic import AgenticRagScheme
 from app.memory.stores.base import StoreBackend
 from app.memory.stores.elasticsearch_store import ElasticsearchStore
@@ -47,6 +48,12 @@ class RagManager:
     ):
         self.settings = settings
         self.embeddings = embeddings
+        # L2 嵌入缓存：包装后所有方案共享同一记忆层（query 文本 → 向量），避免重复 embedding 调用。
+        # 语义等价（纯记忆），仅当开关开启时生效；语料重建不影响 query 向量有效性。
+        if settings.rag_cache_enabled:
+            self.embeddings = CachedEmbeddings(
+                embeddings, max_entries=settings.rag_cache_max_entries * 8
+            )
         self.top_k = top_k
         self.schemes: dict[str, RagScheme] = {}
         # 指定方案时只构建这些方案（离线建库按方案独立脚本用）；缺省用 settings.rag_schemes
@@ -65,6 +72,11 @@ class RagManager:
                 )
                 if scheme_cls is ModularRagScheme:
                     kwargs["max_hops"] = self.settings.rag_max_hops
+                    kwargs["fast_path_conf"] = self.settings.rag_fast_path_conf
+                    kwargs["low_conf_threshold"] = self.settings.rag_low_conf_threshold
+                    kwargs["cache_enabled"] = self.settings.rag_cache_enabled
+                    kwargs["cache_max_entries"] = self.settings.rag_cache_max_entries
+                    kwargs["cache_ttl_s"] = self.settings.rag_cache_ttl_s
                 if scheme_cls is AgenticRagScheme:
                     kwargs["max_hops"] = self.settings.rag_max_hops
                     kwargs["max_steps"] = self.settings.rag_agent_max_steps

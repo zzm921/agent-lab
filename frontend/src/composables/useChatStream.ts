@@ -90,6 +90,8 @@ export interface StepEntry {
   rewrites?: string[]
   /** retrieve：是否经过重排 */
   reranked?: boolean
+  /** retrieve / answerability：是否命中 L1 查询缓存（复用上轮命中+重跑验证） */
+  cacheHit?: boolean
   /** classify：五维路由决策（D1 是否检索 / D3 检索策略 / D4 复杂度 / D5 生成模式 + 置信度） */
   retrieval_need?: boolean
   retrieval_mode?: string
@@ -372,10 +374,13 @@ export function useChatStream(): ChatStream {
         break
       }
       case 'retrieve':
-        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits, scheme: ev.scheme, reranked: ev.reranked })
+        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits, scheme: ev.scheme, reranked: ev.reranked, cacheHit: ev.cache_hit })
         break
       case 'rewrite':
         pushStep({ kind: 'rewrite', query: ev.query, scheme: ev.scheme, rewrites: ev.rewrites, reason: ev.reason })
+        break
+      case 'cache_hit':
+        // L1 查询缓存命中：命中徽标展示在 retrieve/answerability 卡片上，本事件仅消费占位
         break
       case 'classify': {
         // 语义路由：先收到 running 占位（卡片转圈），完成后再收到 done 就地填充同一张卡片
@@ -454,6 +459,7 @@ export function useChatStream(): ChatStream {
           scheme: ev.scheme,
           verdict: ev.verdict,
           escalated: ev.escalated,
+          cacheHit: ev.cache_hit,
         })
         break
       case 'agent_step': {
