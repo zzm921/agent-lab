@@ -94,5 +94,12 @@ class Settings(BaseSettings):
     opensandbox_api_key: str = ""
     opensandbox_image: str = "opensandbox/code-interpreter:latest"
 
+    # 安全防护（security.md：输入/输出 Guardrail、来源可信分级、敏感数据脱敏）
+    security_enabled: bool = True        # 安全防护总开关
+    guard_input: bool = True             # 输入 Guardrail：越狱/提示注入特征过滤
+    guard_output: bool = True            # 输出 Guardrail：敏感数据泄露阻断提示
+    mask_sensitive_output: bool = True   # 输出敏感数据脱敏（手机号/身份证/银行卡/密钥）
+    mark_untrusted: bool = True          # 不可信外部来源标记（Prompt 注入防御）
+
 
 settings = Settings()

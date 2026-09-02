@@ -314,7 +314,7 @@ async def test_runner_injects_resolved_query_to_llm(settings, sessions):
     ):
         pass
 
-    injected = [c for c in captured if "知识库检索结果" in c]
+    injected = [c for c in captured if "不可信外部数据" in c]
     assert injected, "应有注入检索结果的用户消息"
     latest = injected[-1]
     assert "王刚有多少天年假" in latest
@@ -1355,7 +1355,7 @@ async def test_runner_insufficient_injects_clarify_directive(settings, sessions)
         rag_scheme="modular", rag_enabled=True,
     ):
         pass
-    injected = [c for c in captured if "知识库检索结果" in c]
+    injected = [c for c in captured if "不可信外部数据" in c]
     assert injected, "应有注入检索结果的用户消息"
     latest = injected[-1]
     assert "追问" in latest and "不要编造" in latest, "不足时注入的指令应强制追问澄清、不编造"

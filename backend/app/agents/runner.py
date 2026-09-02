@@ -19,6 +19,7 @@ from app.agents.modes.react import build_react_agent
 from app.agents.modes.reflection import build_reflection_agent
 from app.agents.tools_builder import build_tools
 from app.llm.service import LLMService
+from app.security import InputGuard, wrap_untrusted
 
 STRATEGY_PROMPTS = {
     "standard": "你是专业的 AI 助手，请直接、准确地回答用户的问题。",
@@ -45,6 +46,13 @@ class AgentRunner:
     def __init__(self, settings, llm, registry, session_store):
         self.harness = AgentHarness(settings)  # 护栏层：审批策略/资源上限/止损/统计
         self.settings = settings
+        # 输入 Guardrail（security.md 第一层）：越狱/提示注入特征命中即礼貌拒绝
+        self.input_guard = InputGuard(
+            enabled=bool(
+                getattr(self.settings, "security_enabled", True)
+                and getattr(self.settings, "guard_input", True)
+            )
+        )
         self.llm = llm  # 单模型路径（测试注入 Fake 等）时所有场景共用
         self.llm_service = llm if isinstance(llm, LLMService) else None  # 按场景取模型的路径
         self.registry = registry
@@ -91,7 +99,15 @@ class AgentRunner:
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
             msgs.append(SystemMessage(content=f"{base}\n\n{TOOL_RETRY_HINT}"))
-        msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient, generation_mode)))
+        mark_untrusted = bool(
+            getattr(self.settings, "security_enabled", True)
+            and getattr(self.settings, "mark_untrusted", True)
+        )
+        msgs.append(
+            HumanMessage(
+                content=self._augment_query(message, rag_context, insufficient, generation_mode, mark_untrusted)
+            )
+        )
         return {"messages": msgs}
 
     @staticmethod
@@ -115,6 +131,7 @@ class AgentRunner:
         rag_context: dict | None,
         insufficient: bool = False,
         generation_mode: str | None = None,
+        mark_untrusted: bool = True,
     ) -> str:
         """把检索命中注入用户消息：RAG 是独立检索阶段，不依赖模型主动调用工具。
 
@@ -124,6 +141,9 @@ class AgentRunner:
         generation_mode：语义路由产出的生成策略（direct / citation / comparison）；
         无路由事件（naive / advanced）时默认 citation；检索结果不足（insufficient）时
         强制模型如实说明缺失信息并向用户追问澄清（指令优先级最高，不依赖自身知识编造）。
+
+        mark_untrusted：为 True 时把检索命中包上「不可信外部数据」分隔符（security.md
+        来源可信分级 / 提示注入防御）——知识库内容属外部数据，其中夹带的指令一律忽略。
         """
         if not rag_context or not rag_context.get("hits"):
             # 零命中：无「答案不足」信号时原样返回；但若答案充分性判定需澄清
@@ -142,11 +162,12 @@ class AgentRunner:
         hits = rag_context["hits"]
         name = rag_context["name"]
         if insufficient:
+            blocks = "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
+            data_block = wrap_untrusted(blocks, f"知识库·{name}") if mark_untrusted else f"【知识库检索结果（{name}）】\n{blocks}"
             return (
                 f"{message}\n\n"
-                f"【知识库检索结果（{name}）】\n"
-                + "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
-                + "\n请严格基于以上检索内容如实回答；若检索内容不足以回答用户问题，"
+                f"{data_block}\n"
+                + "请严格基于以上检索内容如实回答；若检索内容不足以回答用户问题，"
                 "请明确说明缺失的关键信息，并礼貌地向用户追问补充，不要编造、"
                 "不要依赖自身知识臆测内部人事数据。"
             )
@@ -169,9 +190,10 @@ class AgentRunner:
                 "若检索内容不足以回答，再结合自身知识补充，并注明哪些属于推测。"
             )
         sources = "\n".join(AgentRunner._build_sources(hits)) if mode != "direct" else ""
+        data_block = wrap_untrusted(blocks, f"知识库·{name}") if mark_untrusted else f"【知识库检索结果（{name}）】\n{blocks}"
         return (
             f"{message}\n\n"
-            f"【知识库检索结果（{name}）】\n{blocks}\n"
+            f"{data_block}\n"
             + (f"来源：\n{sources}\n" if sources else "")
             + instruction
         )
@@ -227,6 +249,16 @@ class AgentRunner:
         self._configs[session_id] = config
         self._specs[session_id] = (mode, tools)
         yield {"type": "meta", "session_id": session_id, "mode": mode, "capabilities": enabled, "rag_scheme": rag_scheme, "rag_enabled": rag_enabled}
+        # 输入 Guardrail（security.md 第一层）：越狱/提示注入特征命中即礼貌拒绝，
+        # 不进入 RAG 检索与图执行，避免浪费 token 与扩大风险面。
+        verdict = self.input_guard.check(message)
+        if verdict.rejected:
+            # 直接下发拒绝文案（不经事件队列：本路径不会进入 _run_graph 排空队列，
+            # 若用 emit_text 入队会导致「抱歉」文案永远不被消费）
+            yield {"type": "message", "delta": self.input_guard.refusal}
+            yield {"type": "guard_refused", "reason": verdict.reason, "matched": verdict.matched}
+            yield {"type": "done", "summary": "已按安全策略拒绝", "stats": {"tool_calls": 0}}
+            return
         # RAG 前置检索：启用 rag 能力时按选定方案自动召回并注入上下文（不依赖模型调用工具）。
         # 需总开关开启（rag_manager 非 None）且本轮请求开启（rag_enabled=True）才执行。
         # 方案经 astream 流式产出事件（rewrite→retrieve），runner 逐条直发前端保持解耦；

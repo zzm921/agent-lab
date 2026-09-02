@@ -174,6 +174,8 @@ export interface ChatStream {
   steps: StepEntry[]
   done: { summary: string; stats: Record<string, unknown> } | null
   error: ErrorInfo | null
+  /** 安全护栏拒绝/阻断提示（security.md 输入/输出 Guardrail 事件） */
+  guard: { reason: string; matched?: string } | null
   approval: ApprovalRequest | null
   elapsed: number
   enabled: string[]
@@ -525,6 +527,9 @@ export function useChatStream(): ChatStream {
       case 'error':
         stream.error = { message: ev.message, detail: ev.detail }
         break
+      case 'guard_refused':
+        stream.guard = { reason: ev.reason, matched: ev.matched }
+        break
     }
   }
 
@@ -563,6 +568,7 @@ export function useChatStream(): ChatStream {
     lastParams = params
     stream.done = null
     stream.error = null
+    stream.guard = null
     stream.approval = null
     stream.elapsed = 0
     if (withUserStep) pushStep({ kind: 'user', text: params.message })
@@ -642,6 +648,7 @@ export function useChatStream(): ChatStream {
     steps: [],
     done: null,
     error: null,
+    guard: null,
     approval: null,
     elapsed: 0,
     enabled: [],

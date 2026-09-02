@@ -338,11 +338,14 @@ class GraderAgent:
 
     @staticmethod
     def _user(query: str, hits: list[dict[str, Any]], prior_hits: list[dict[str, Any]]) -> str:
-        lines = [f"{i}. {(h.get('metadata') or {}).get('volume') or ''}：{(h.get('text') or '')[:120]}" for i, h in enumerate(hits)]
+        # 证据截断放宽到 400 字符，与 Verifier 可见内容对齐：检索命中常为表格型明细（流程表/
+        # 标准表），关键行可能在 120 字符之外；过小截断会把已召回的事实误判为缺口，
+        # 导致纠错重复检索（与 Verifier._user 不二次截断、answerability.py 放宽到 800 同理）。
+        lines = [f"{i}. {(h.get('metadata') or {}).get('volume') or ''}：{(h.get('text') or '')[:400]}" for i, h in enumerate(hits)]
         body = f"用户问题：{query}\n\n候选证据：\n" + "\n".join(lines)
         if prior_hits:
             prior = "\n".join(
-                f"· {(h.get('metadata') or {}).get('volume') or ''}：{(h.get('text') or '')[:80]}" for h in prior_hits[:5]
+                f"· {(h.get('metadata') or {}).get('volume') or ''}：{(h.get('text') or '')[:400]}" for h in prior_hits[:5]
             )
             body += f"\n\n先前轮已确认的证据（缺失事实归纳时请结合，勿再把其中已支持的事实报为缺失）：\n{prior}"
         return body + "\n\n请输出评审 JSON。"

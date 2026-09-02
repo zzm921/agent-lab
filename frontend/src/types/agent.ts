@@ -178,3 +178,4 @@ export type AgentEvent =
   | { type: 'agent_event'; worker: string; status: string; task?: string; result?: string }
   | { type: 'done'; summary: string; stats: Record<string, unknown> }
   | { type: 'error'; message: string; detail?: string }
+  | { type: 'guard_refused'; reason: string; matched?: string }

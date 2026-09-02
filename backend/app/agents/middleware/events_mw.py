@@ -20,6 +20,7 @@ from langgraph.types import Command, interrupt
 from app.agents.harness import should_approve
 from app.core.errors import RetryableToolError
 from app.core.events import emit_text, event
+from app.security import StreamMasker, is_untrusted_tool, mask_sensitive, scan_output, wrap_untrusted
 from app.tools.retry import format_tool_error, invoke_with_retry
 
 
@@ -54,15 +55,43 @@ def _reasoning_text(chunk) -> str:
     return ""
 
 
-async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None, model_settings=None, system_prompt="", output_event="message"):
+def resolve_guards(settings) -> dict:
+    """按配置解析输出 Guardrail 开关（security.md 第三层）。settings 为 None 时全部关闭。"""
+    sec = bool(getattr(settings, "security_enabled", True))
+    return {
+        "mask_output": sec and bool(getattr(settings, "mask_sensitive_output", True)),
+        "block_output": sec and bool(getattr(settings, "guard_output", True)),
+    }
+
+
+def _maybe_wrap_tool_result(msg: ToolMessage, name: str, enabled: bool = True) -> ToolMessage:
+    """不可信外部内容工具（网页/命令/记忆）返回经来源分级包装后再给模型，防间接注入。
+
+    只包装「外部内容来源」工具（web_search / run_command / memory_recall）的成功返回，
+    内部工具（calculator 等）原样透传，避免污染正常工具结果。
+    """
+    if not enabled or not is_untrusted_tool(name):
+        return msg
+    content = getattr(msg, "content", None)
+    return ToolMessage(content=wrap_untrusted(str(content), name), tool_call_id=msg.tool_call_id)
+
+
+async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None, model_settings=None, system_prompt="", output_event="message", guards: dict | None = None):
     """用 astream 逐 token 生成并实时下发 thinking/message 事件，返回合并后的 AIMessage。
 
     供 create_agent 中间件与手写 StateGraph 节点（plan-execute / reflection）共用：
     - 有工具时 bind_tools，否则 bind；system_prompt 非空时前置为系统消息；
     - reasoning_content(reason) → thinking 事件（思考过程），content(output) → output_event 事件
       （默认 message；reflection 修订稿用 revise，前端按修订稿样式展示）；
-    - tool_calls 经 chunk 合并回 AIMessage，交由调用方路由到工具循环。
+    - tool_calls 经 chunk 合并回 AIMessage，交由调用方路由到工具循环；
+    - 输出 Guardrail（security.md 第三层）：guards 控制敏感脱敏（流式实时生效）与
+      违规阻断（全文扫描后追加 guard_refused 提示）；guards 为 None 时不做输出防护，
+      调用方需传入 resolve_guards(settings) 的结果。
     """
+    guards = guards or {}
+    mask_enabled = bool(guards.get("mask_output"))
+    block_enabled = bool(guards.get("block_output"))
+    masker = StreamMasker() if mask_enabled else None
     bound = (
         llm.bind_tools(tools, tool_choice=tool_choice, **(model_settings or {}))
         if tools
@@ -85,7 +114,18 @@ async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None
         if text:
             print(f"[model-stream] output: {text!r}", flush=True)
             output_texts.append(text)
-            emit_text(emit, output_event, text)
+            if masker is not None:
+                # 流式脱敏：只发射已到安全边界的脱敏前缀，未完成 token 留在缓冲
+                masked = masker.push(text)
+                if masked:
+                    emit_text(emit, output_event, masked)
+            else:
+                emit_text(emit, output_event, text)
+    # 冲刷脱敏缓冲尾部（末尾未到空白边界的最后一个 token）
+    if masker is not None:
+        tail = masker.flush()
+        if tail:
+            emit_text(emit, output_event, tail)
 
     if not chunks:
         raise RuntimeError("模型流式调用未返回任何内容")
@@ -95,12 +135,20 @@ async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None
         merged = merged + chunk
     tool_calls = getattr(merged, "tool_calls", None) or []
     reasoning_full = "".join(reason_texts)
+    raw_output = "".join(output_texts)
+    # 落库（会话历史）也保存脱敏后的内容，避免后续轮次再次暴露敏感数据
     msg = AIMessage(
-        content="".join(output_texts),
+        content=mask_sensitive(raw_output) if mask_enabled else raw_output,
         tool_calls=tool_calls,
         additional_kwargs={"reasoning_content": reasoning_full} if reasoning_full else {},
     )
     print(f"[model-stream] done: reasoning_len={len(reasoning_full)} output_len={len(msg.content)} tool_calls={tool_calls!r}", flush=True)
+
+    # 输出 Guardrail：敏感数据泄露阻断提示（流式已发，事后提示；只针对最终答案类事件）
+    if block_enabled and output_event in ("message", "revise"):
+        verdict = scan_output(raw_output)
+        if verdict.blocked:
+            emit(event("guard_refused", reason=verdict.reason, matched=verdict.matched))
 
     # 只有工具调用且无思考/输出时补占位文案，保证思考区非空
     if tool_calls and not reasoning_full and not msg.content:
@@ -189,7 +237,9 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=
         emit(event("tool_end", tool=name, args=args, result=str(content), success=True))
         if harness is not None:
             harness.record_tool_success(session_id, name, args)
-        return result
+        # 来源可信分级：不可信外部内容工具（网页/命令/记忆）返回包装后再给模型，防间接注入
+        mark = bool(getattr(settings, "security_enabled", True) and getattr(settings, "mark_untrusted", True))
+        return _maybe_wrap_tool_result(result, name, enabled=mark)
     # 失败：结构化错误文本返回给模型（Agent 层思考后重试：模型修正参数/换工具后再调）
     msg = format_tool_error(name, error, retried=retries)
     emit(event("tool_end", tool=name, args=args, result=msg, success=False))
@@ -219,6 +269,7 @@ class StreamEventsMiddleware(AgentMiddleware):
             tool_choice=request.tool_choice,
             model_settings=request.model_settings,
             system_prompt=request.system_prompt,
+            guards=resolve_guards(getattr(self._harness, "settings", None)),
         )
         return ModelResponse(result=[msg], structured_response=None)
 

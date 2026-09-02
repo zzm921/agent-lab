@@ -19,7 +19,7 @@ from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
-from app.agents.middleware.events_mw import stream_model_call
+from app.agents.middleware.events_mw import resolve_guards, stream_model_call
 from app.tools.runner import make_tools_node
 
 _PLAN_PROMPT = "你是任务规划器。把下面的用户任务拆解为 2-5 个有序子步骤，每行一个步骤，不要编号，不要解释。"
@@ -102,7 +102,7 @@ def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, c
             base = str(msgs[0].content)
             msgs = msgs[1:]
         system_prompt = (base + "\n" + _step_hint(state)).strip()
-        msg = await stream_model_call(executor_llm, msgs, emit, tools=tool_list, system_prompt=system_prompt)
+        msg = await stream_model_call(executor_llm, msgs, emit, tools=tool_list, system_prompt=system_prompt, guards=resolve_guards(settings))
         failed = _step_failure(state)
         if getattr(msg, "tool_calls", None):
             return {"messages": [msg], "step_failed": failed, "steps": steps}

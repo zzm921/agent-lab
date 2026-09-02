@@ -7,7 +7,20 @@ from langgraph.types import interrupt
 from app.agents.harness import should_approve
 from app.core.errors import RetryableToolError
 from app.core.events import event
+from app.security import is_untrusted_tool, wrap_untrusted
 from app.tools.retry import format_tool_error, invoke_with_retry
+
+
+def _wrap_untrusted_tool_output(name: str, output: str, settings) -> str:
+    """不可信外部内容工具（网页/命令/记忆）返回经来源分级包装后再给模型，防间接注入。
+
+    只包装「外部内容来源」工具的成功返回（web_search / run_command / memory_recall），
+    内部工具（calculator 等）原样透传，避免污染正常工具结果。
+    """
+    mark = bool(getattr(settings, "security_enabled", True) and getattr(settings, "mark_untrusted", True))
+    if not mark or not is_untrusted_tool(name):
+        return str(output)
+    return wrap_untrusted(str(output), name)
 
 
 def make_tools_node(tools, emit, harness=None):
@@ -115,7 +128,7 @@ def make_tools_node(tools, emit, harness=None):
                 if harness is not None:
                     harness.record_tool_success(session_id, name, args)
                 emit(event("tool_end", tool=name, args=args, result=str(output), success=True))
-                results.append(ToolMessage(content=str(output), tool_call_id=c["id"]))
+                results.append(ToolMessage(content=_wrap_untrusted_tool_output(name, str(output), settings), tool_call_id=c["id"]))
             else:
                 any_failed = True
                 if harness is not None:

@@ -21,7 +21,7 @@ from langchain_core.messages import AnyMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from app.agents.middleware.events_mw import stream_model_call
+from app.agents.middleware.events_mw import resolve_guards, stream_model_call
 from app.tools.runner import make_tools_node
 
 _GENERATOR_SYSTEM = "你是专业的 AI 助手，请直接、准确地回答用户的问题。"
@@ -118,6 +118,7 @@ def build_reflection_agent(generator_llm, critic_llm, tools, emit, settings, che
             tools=tool_list,
             system_prompt=base if base else _GENERATOR_SYSTEM,
             output_event="revise" if revising else "message",
+            guards=resolve_guards(settings),
         )
         if getattr(msg, "tool_calls", None):
             # 模型请求工具：路由到 tools 执行，完成后回到本节点继续生成
@@ -142,6 +143,7 @@ def build_reflection_agent(generator_llm, critic_llm, tools, emit, settings, che
             emit,
             system_prompt=_CRITIC_SYSTEM,
             output_event="critique",
+            guards=resolve_guards(settings),
         )
         text = msg.content or ""
         return {"critique": text, "passed": _judge_text(text)}

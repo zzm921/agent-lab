@@ -6,7 +6,7 @@ import ToolCallBadge from './ToolCallBadge.vue'
 import StreamingText from './StreamingText.vue'
 import ApprovalDialog from './ApprovalDialog.vue'
 import ErrorBanner from './ErrorBanner.vue'
-
+import GuardBanner from './GuardBanner.vue'
 defineProps<{ stream: ChatStream }>()
 
 // 思考过程默认折叠，点击标题展开/收起（按步骤 id 独立记录）
@@ -115,6 +115,7 @@ const ROLE_LABEL: Record<string, string> = {
 
     <div class="space-y-4 p-4">
       <ErrorBanner :error="stream.error" @retry="stream.retry()" />
+      <GuardBanner :guard="stream.guard" />
 
       <!-- 流水线：用户输入 → 思考 → 工具 → … → 输出，按发生顺序渲染、多轮交替 -->
       <template v-for="s in stream.steps" :key="s.id">
@@ -591,11 +592,11 @@ const ROLE_LABEL: Record<string, string> = {
               </span>
             </p>
             <p v-if="s.missing_facts?.length" class="flex flex-wrap items-center gap-1.5">
-              <span class="text-slate-500">缺口：</span>
+              <span class="text-slate-500">可补充细节（供纠错参考）：</span>
               <span
                 v-for="(m, mi) in s.missing_facts"
                 :key="mi"
-                class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-200"
+                class="rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-200"
               >
                 {{ m }}
               </span>
@@ -668,7 +669,7 @@ const ROLE_LABEL: Record<string, string> = {
               </span>
             </p>
             <p v-if="s.missing_facts?.length" class="flex flex-wrap items-center gap-1.5">
-              <span class="text-slate-500">缺失的关键信息：</span>
+              <span class="text-slate-500">阻断性缺口（需追问澄清）：</span>
               <span
                 v-for="(m, mi) in s.missing_facts"
                 :key="mi"
