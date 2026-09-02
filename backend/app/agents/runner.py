@@ -19,7 +19,7 @@ from app.agents.modes.react import build_react_agent
 from app.agents.modes.reflection import build_reflection_agent
 from app.agents.tools_builder import build_tools
 from app.llm.service import LLMService
-from app.security import InputGuard, wrap_untrusted
+from app.security import InputGuard
 
 STRATEGY_PROMPTS = {
     "standard": "你是专业的 AI 助手，请直接、准确地回答用户的问题。",
@@ -99,15 +99,7 @@ class AgentRunner:
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
             msgs.append(SystemMessage(content=f"{base}\n\n{TOOL_RETRY_HINT}"))
-        mark_untrusted = bool(
-            getattr(self.settings, "security_enabled", True)
-            and getattr(self.settings, "mark_untrusted", True)
-        )
-        msgs.append(
-            HumanMessage(
-                content=self._augment_query(message, rag_context, insufficient, generation_mode, mark_untrusted)
-            )
-        )
+        msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient, generation_mode)))
         return {"messages": msgs}
 
     @staticmethod
@@ -131,7 +123,6 @@ class AgentRunner:
         rag_context: dict | None,
         insufficient: bool = False,
         generation_mode: str | None = None,
-        mark_untrusted: bool = True,
     ) -> str:
         """把检索命中注入用户消息：RAG 是独立检索阶段，不依赖模型主动调用工具。
 
@@ -142,8 +133,8 @@ class AgentRunner:
         无路由事件（naive / advanced）时默认 citation；检索结果不足（insufficient）时
         强制模型如实说明缺失信息并向用户追问澄清（指令优先级最高，不依赖自身知识编造）。
 
-        mark_untrusted：为 True 时把检索命中包上「不可信外部数据」分隔符（security.md
-        来源可信分级 / 提示注入防御）——知识库内容属外部数据，其中夹带的指令一律忽略。
+        说明：知识库为受控内部语料，视为可信来源，不做「不可信外部数据」包装；
+        仅对 web_search / run_command / memory_recall 等真正的外部来源做注入隔离。
         """
         if not rag_context or not rag_context.get("hits"):
             # 零命中：无「答案不足」信号时原样返回；但若答案充分性判定需澄清
@@ -162,12 +153,11 @@ class AgentRunner:
         hits = rag_context["hits"]
         name = rag_context["name"]
         if insufficient:
-            blocks = "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
-            data_block = wrap_untrusted(blocks, f"知识库·{name}") if mark_untrusted else f"【知识库检索结果（{name}）】\n{blocks}"
             return (
                 f"{message}\n\n"
-                f"{data_block}\n"
-                + "请严格基于以上检索内容如实回答；若检索内容不足以回答用户问题，"
+                f"【知识库检索结果（{name}）】\n"
+                + "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
+                + "\n请严格基于以上检索内容如实回答；若检索内容不足以回答用户问题，"
                 "请明确说明缺失的关键信息，并礼貌地向用户追问补充，不要编造、"
                 "不要依赖自身知识臆测内部人事数据。"
             )
@@ -190,10 +180,9 @@ class AgentRunner:
                 "若检索内容不足以回答，再结合自身知识补充，并注明哪些属于推测。"
             )
         sources = "\n".join(AgentRunner._build_sources(hits)) if mode != "direct" else ""
-        data_block = wrap_untrusted(blocks, f"知识库·{name}") if mark_untrusted else f"【知识库检索结果（{name}）】\n{blocks}"
         return (
             f"{message}\n\n"
-            f"{data_block}\n"
+            f"【知识库检索结果（{name}）】\n{blocks}\n"
             + (f"来源：\n{sources}\n" if sources else "")
             + instruction
         )

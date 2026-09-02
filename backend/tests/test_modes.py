@@ -451,7 +451,7 @@ def test_augment_query_injects_context():
     """检索命中注入用户消息；无命中时原样返回。"""
     ctx = {"name": "朴素 RAG", "hits": [{"score": 0.9, "text": "LangGraph 基于 StateGraph 构建。"}]}
     out = AgentRunner._augment_query("LangGraph 是什么", ctx)
-    assert "不可信外部数据" in out and "朴素 RAG" in out  # 来源可信分级：RAG 命中包为不可信外部数据
+    assert "【知识库检索结果（朴素 RAG）】" in out
     assert "LangGraph 基于 StateGraph" in out
     assert "请优先基于以上检索内容回答" in out
     assert AgentRunner._augment_query("x", {"name": "naive", "hits": []}) == "x"
