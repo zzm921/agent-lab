@@ -1,10 +1,32 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import hljs from 'highlight.js'
+import { marked } from 'marked'
 
-const props = defineProps<{ text: string; streaming?: boolean; placeholder?: string }>()
+const props = defineProps<{
+  text: string
+  streaming?: boolean
+  placeholder?: string
+  /** 开启后按 markdown 渲染（代码块走 highlight.js 高亮），流式期间渲染增量内容 */
+  markdown?: boolean
+}>()
 
 const displayed = ref('')
 let raf = 0
+
+// Markdown 渲染配置：代码块交给 highlight.js 高亮（未知语言回退 plaintext）
+marked.use({
+  renderer: {
+    code({ text, lang }) {
+      const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
+      const html = hljs.highlight(text, { language }).value
+      return `<pre class="markdown-code"><code class="hljs language-${language}">${html}</code></pre>`
+    },
+  },
+})
+
+/** markdown 模式：把已显示的增量文本实时解析为 HTML */
+const html = computed(() => (props.markdown ? (marked.parse(displayed.value) as string) : ''))
 
 function startTyping(target: string) {
   if (raf) {
@@ -56,7 +78,9 @@ watch(
 </script>
 
 <template>
-  <span class="whitespace-pre-wrap break-words">{{ displayed || placeholder }}</span>
+  <div v-if="markdown && displayed" class="markdown-body break-words" v-html="html"></div>
+  <span v-else-if="markdown" class="whitespace-pre-wrap break-words">{{ placeholder }}</span>
+  <span v-else class="whitespace-pre-wrap break-words">{{ displayed || placeholder }}</span>
   <span
     v-if="streaming"
     class="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-indigo-400 align-middle"

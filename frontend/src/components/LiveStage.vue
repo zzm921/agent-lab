@@ -775,9 +775,9 @@ const ROLE_LABEL: Record<string, string> = {
         <!-- 修订稿 -->
         <section v-else-if="s.kind === 'revise'" class="rounded-xl border border-orange-500/30 bg-orange-500/5 p-3 text-xs">
           <p class="text-orange-300">修订稿：</p>
-          <p class="mt-1 text-slate-200">
-            <StreamingText :text="s.text ?? ''" :streaming="s.streaming ?? false" />
-          </p>
+          <div class="mt-1 text-slate-200">
+            <StreamingText :text="s.text ?? ''" :streaming="s.streaming ?? false" markdown />
+          </div>
         </section>
 
         <!-- 多智能体 -->
@@ -794,9 +794,9 @@ const ROLE_LABEL: Record<string, string> = {
         <div v-else-if="s.kind === 'message'" class="flex justify-start">
           <div class="max-w-[85%] rounded-2xl rounded-bl-sm border border-indigo-500/20 bg-indigo-500/5 px-4 py-3">
             <h4 class="mb-1.5 text-[11px] font-medium text-indigo-400">输出</h4>
-            <p class="text-sm leading-relaxed text-slate-100">
-              <StreamingText :text="s.text ?? ''" :streaming="s.streaming ?? false" placeholder="等待回答…" />
-            </p>
+            <div class="text-sm leading-relaxed text-slate-100">
+              <StreamingText :text="s.text ?? ''" :streaming="s.streaming ?? false" placeholder="等待回答…" markdown />
+            </div>
           </div>
         </div>
       </template>

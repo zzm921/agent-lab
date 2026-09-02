@@ -192,6 +192,106 @@ html[data-theme='light'] ::-webkit-scrollbar-thumb {
   background-color: #cbd5e1;
 }
 
+/* —— Markdown 正文（深色默认；卡片详情抽屉与聊天输出/修订稿共用，浅色覆盖见下方） —— */
+.markdown-body h2 {
+  margin: 1.75rem 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #fff;
+}
+.markdown-body h2:first-child {
+  margin-top: 0;
+}
+.markdown-body h3 {
+  margin: 1.25rem 0 0.375rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.markdown-body p {
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: #94a3b8;
+}
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: #94a3b8;
+}
+.markdown-body li {
+  margin: 0.25rem 0;
+}
+.markdown-body strong {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.markdown-body blockquote {
+  margin: 0.75rem 0;
+  border-left: 3px solid #6366f1;
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: rgba(99, 102, 241, 0.08);
+  padding: 0.375rem 0.75rem;
+}
+.markdown-body blockquote p {
+  margin: 0.25rem 0;
+}
+.markdown-body a {
+  color: #818cf8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-body a:hover {
+  color: #a5b4fc;
+}
+.markdown-body table {
+  margin: 0.75rem 0;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.375rem 0.625rem;
+  text-align: left;
+  color: #94a3b8;
+}
+.markdown-body th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.markdown-body code {
+  border-radius: 0.25rem;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.125rem 0.375rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125em;
+  color: #fbbf24;
+}
+.markdown-body pre.markdown-code {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.75rem;
+  background: #0d1117;
+  padding: 1rem;
+}
+.markdown-body pre.markdown-code code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.8125rem;
+  color: #e2e8f0;
+}
+.markdown-body hr {
+  margin: 1.25rem 0;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 /* —— 抽屉 Markdown 正文（覆盖 LandingView scoped 深色样式） —— */
 html[data-theme='light'] .markdown-body h2 {
   color: #0f172a;
