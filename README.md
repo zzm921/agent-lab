@@ -74,7 +74,8 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 - **沙箱**（70%）— 相关技术：OpenSandbox（Docker 服务端）或 local 子进程执行，危险命令黑名单 + 强制 HITL + 超时 / 输出截断
   - 未完成：无网络隔离（compose 注明需自补策略）；local 兜底后端在宿主 `shell=True` 执行、无文件系统 / 网络 / 资源隔离；黑名单为 20 条静态子串、无命令结构解析 / 白名单扩展；沙箱池全局持锁串行执行；`allowed_host_paths` 硬编码需人工对齐
 - **可观测性与评估** — RAGAS 语义评测（L3）与语义回归（L2）**部分实现**（`backend/eval/` + `scripts/eval_*`）；Trace 全链路追踪、指标监控完整接入 → **待实现**
-- **安全**（提示词注入防护 / 数据隔离 / 权限管控）→ **待实现**
+- **安全**（60%）— 相关技术：输入 Guardrail（规则拦截越狱/提示注入，命中短路 + 礼貌拒绝 + `guard_refused` 事件）；输出 Guardrail + 敏感数据脱敏（`StreamMasker` 流式实时脱敏手机号/身份证/银行卡/密钥 + 全文阻断提示，落库亦脱敏）；来源可信分级（web 搜索 / 命令输出 / 记忆召回 = 不可信外部来源，注入隔离指令与数据；知识库 = 受控内部语料 = 可信来源，不隔离）
+  - 未完成：记忆投毒防御（跨轮长期记忆未落地）；服务端工具白名单强制；RBAC 权限管控；敏感操作审计日志
 
 ### 记忆
 
@@ -111,11 +112,12 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ## 总结
 
-**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、SSE 85%、技术路径点选 100%、源码展示 100%。
+**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、安全防护 60%、SSE 85%、技术路径点选 100%、源码展示 100%。
 
 **待实现**：
 - 未正式启动（有雏形）：multi_agent、跨轮长期记忆
-- 实现待落地：知识图谱 RAG、智能体式 RAG（Self-RAG / CRAG）、RAG 专项增强其余插件、上下文管理与压缩、上下文缓存与渐进式披露、计算机操作代理、A2A、安全、可观测性完整接入、结构化输出独立模块
+- 实现待落地：知识图谱 RAG、智能体式 RAG（Self-RAG / CRAG）、RAG 专项增强其余插件、上下文管理与压缩、上下文缓存与渐进式披露、计算机操作代理、A2A、可观测性完整接入、结构化输出独立模块
+- 安全余量：记忆投毒防御、服务端工具白名单、RBAC 权限管控、敏感操作审计日志
 - 增强项：离线建库完整解析（OCR / PDF / 表格 / 公式）、在线混合检索参数化实验、模块级消融评估
 
 **明确暂不实现**（边界声明）：多知识库路由（D2）、结构化查询（Text-to-SQL）。
@@ -161,6 +163,11 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | `RAG_MIN_SCORE` | 否 | 最小相关度阈值，默认 `0.6`；命中相似度低于该值直接丢弃（不注入上下文），全部被丢弃则本轮不注入。naive 为 cosine、advanced 为 rerank 归一分数 |
 | `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server（本项目自带 `mcp-notes` 便签 server） |
 | `MCP_ENABLED` | 否 | 默认 `true`：服务启动时自动连接并发现已配置的 MCP Server（stdio 以子进程拉起 `mcp-notes`），无需手动启动 |
+| `SECURITY_ENABLED` | 否 | 安全防护总开关，默认 `true` |
+| `GUARD_INPUT` | 否 | 输入 Guardrail：越狱 / 提示注入特征拦截，命中短路并礼貌拒绝，默认 `true` |
+| `GUARD_OUTPUT` | 否 | 输出 Guardrail：敏感数据泄露全文扫描 + 阻断提示，默认 `true` |
+| `MASK_SENSITIVE_OUTPUT` | 否 | 输出敏感数据流式脱敏（手机号 / 身份证 / 银行卡 / 密钥），默认 `true` |
+| `MARK_UNTRUSTED` | 否 | 不可信外部来源标记（web 搜索 / 命令输出 / 记忆召回与指令隔离，Prompt 注入防御），默认 `true` |
 
 RAG 向量库数据在**线上前**通过建库脚本预建（在线服务启动时只加载、不现场入库）：
 
@@ -216,6 +223,11 @@ my-agent/
 │   │   ├── core/                # 事件协议 / 错误
 │   │   │   ├── events.py
 │   │   │   └── errors.py
+│   │   ├── security/            # 安全防护：输入/输出 Guardrail + 来源可信分级 + 脱敏
+│   │   │   ├── patterns.py      #   越狱/注入拦截 + 敏感数据脱敏 + 泄露阻断 规则
+│   │   │   ├── input_guard.py   #   输入 Guardrail（命中短路 + 礼貌拒绝）
+│   │   │   ├── output_guard.py  #   输出 Guardrail（StreamMasker 流式脱敏 + 全文扫描）
+│   │   │   └── wrap.py          #   不可信外部来源包装（提示注入防御）
 │   │   ├── llm/                 # DashScope 适配（Chat + Embedding）+ Fake
 │   │   │   ├── client.py
 │   │   │   ├── dashscope_chat.py
