@@ -181,6 +181,7 @@ async def chat_stream(req: StreamRequest, request: Request):
         req.approval_policy,
         rag_scheme=req.rag_scheme,
         rag_enabled=req.rag_enabled,
+        context_keep_rounds=req.context_keep_rounds,
     )
     return _sse(events)
 
@@ -249,6 +250,7 @@ _SOURCE_FILES: dict[str, str] = {
     "time_now": "tools/time_now.py",
     "web_search": "tools/web_search.py",
     "run_command": "tools/run_command.py",
+    "big_output": "tools/big_output.py",
     "rag": "rag/manager.py",
     "memory": "tools/memory_tool.py",
     "mcp": "capabilities/mcp.py",

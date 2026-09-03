@@ -16,6 +16,12 @@ class StreamRequest(BaseModel):
     approval_policy: str = Field(default="always", description="HITL 审批策略")
     rag_scheme: str = Field(default="naive", description="RAG 方案 id（当前仅 naive）")
     rag_enabled: bool = Field(default=True, description="本轮是否启用知识库检索（RAG）前置检索；默认开启，前端开关可关闭")
+    context_keep_rounds: int = Field(
+        default=0,
+        ge=0,
+        le=50,
+        description="「每轮压缩」演示：>0 时每轮都压缩并保留最近 N 轮对话原文（更早历史被裁剪/截断）；0 使用系统默认阈值",
+    )
 
 
 class ApproveRequest(BaseModel):

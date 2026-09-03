@@ -47,6 +47,7 @@ export type StepKind =
   | 'multi_hop' // 多跳迭代检索（modular）
   | 'multi_hop_verify' // 多跳质量闸门验证（规划-执行-验证，modular）
   | 'compress' // 上下文压缩统计（modular）
+  | 'context' // 上下文管理与压缩（snip-compact / micro-compact / auto-compact / 大文件落盘）
   | 'answerability' // 检索后答案充分性验证（跨复杂度路径质量闸门，modular）
   | 'agent_step' // 检索 Agent 单步工具执行（agentic）
   | 'grade' // CRAG 证据评审（agentic）
@@ -114,8 +115,15 @@ export interface StepEntry {
   hops?: { query: string; hits: HitItem[]; next_query?: string | null; target?: string | null; skipped?: boolean }[]
   /** multi_hop_verify：多跳质量闸门结果（covered / missing / patched） */
   verification?: { covered: string[]; missing: string[]; patched: { target: string; query: string }[] }
-  /** compress：上下文压缩统计（original / kept / truncated） */
-  metrics?: { original: number; kept: number; truncated: number }
+  /** compress / context：压缩统计（compress 用 truncated；context 用 dropped/truncated/threshold） */
+  metrics?: { original: number; kept: number; truncated?: number; dropped?: number; threshold?: number }
+  /** context：上下文管理与压缩层（snip_compact / micro_compact / auto_compact / offload） */
+  contextKind?: string
+  /** context：保留轮数（snip 每轮压缩演示模式带出） */
+  keepRounds?: number
+  /** context：落盘信息（offload），tool 复用上面的 tool 字段 */
+  chars?: number
+  file?: string
   /** answerability：检索后答案充分性验证（answerable / missing_facts / recommendation / escalated） */
   verdict?: { answerable: boolean; missing_facts: string[]; recommendation: string; escalate_to?: string | null }
   escalated?: boolean
@@ -165,6 +173,8 @@ export interface SendParams {
   ragScheme: RagSchemeId
   /** 本轮是否启用知识库检索（RAG 前置检索），后端能力默认开启，由前端开关控制 */
   ragEnabled: boolean
+  /** 「每轮压缩」演示：保留最近 N 轮对话原文，更早历史每轮被压缩；0 使用系统默认阈值 */
+  contextKeepRounds: number
   /** 覆盖会话 id（对比视图每个 runner 独立会话） */
   sessionId?: string
 }
@@ -472,6 +482,18 @@ export function useChatStream(): ChatStream {
       case 'compress':
         pushStep({ kind: 'compress', query: ev.query, scheme: ev.scheme, metrics: ev.metrics })
         break
+      case 'context':
+        // 上下文管理与压缩：对话修剪 / 旧工具结果占位 / LLM 摘要 / 大输出落盘
+        pushStep({
+          kind: 'context',
+          contextKind: ev.kind,
+          metrics: ev.metrics,
+          keepRounds: ev.keep_rounds,
+          tool: ev.tool,
+          chars: ev.chars,
+          file: ev.file,
+        })
+        break
       case 'answerability':
         // 检索后答案充分性验证：展示最终结论（可答 / 升级检索 / 追问澄清）与缺失事实
         pushStep({
@@ -617,6 +639,7 @@ export function useChatStream(): ChatStream {
         approval_policy: params.policy,
         rag_scheme: params.ragScheme,
         rag_enabled: params.ragEnabled,
+        context_keep_rounds: params.contextKeepRounds ?? 0,
       },
       controller.signal,
     )

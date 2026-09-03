@@ -13,7 +13,7 @@ export function useCapabilities() {
   const faults = ref<Record<string, string>>({})
   /** 故障注入类型目录：类型 → 重试分类（retryable=工具层直接重试，permanent=交给模型思考后重试） */
   const faultTypes = ref<Record<string, string>>({})
-  /** MCP 能力开关：默认开启；仅控制 MCP 工具是否出现在能力目录（服务连接在启动时已建立） */
+  /** MCP 能力开关：默认关闭；仅控制 MCP 工具是否出现在能力目录（服务连接在启动时已建立） */
   const mcpEnabled = ref(false)
   /** 示例提示：{cap, nonce}，HomeView watch 后填入输入框并展示提示条 */
   const exampleHint = ref<{ cap: Capability; nonce: number } | null>(null)

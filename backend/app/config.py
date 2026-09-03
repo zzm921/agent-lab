@@ -52,8 +52,9 @@ class Settings(BaseSettings):
 
     # MCP Servers（JSON 字符串，声明可用 server；stdio 子进程由服务启动时自动拉起）
     mcp_servers: str = "{}"
-    # 是否默认连接 MCP Server；默认 true，服务启动时自动发现（stdio 拉起）已配置的 server
-    mcp_enabled: bool = True
+    # 是否默认启用 MCP 能力；默认 false（关闭），服务启动仍会建立连接（discover），
+    # 但能力不进目录，需在页面开启后才进入能力选配
+    mcp_enabled: bool = False
 
     # 每日对话配额：限制「一台电脑 / 一个 IP」每天的对话次数（部署防滥用）
     quota_enabled: bool = True
@@ -68,6 +69,28 @@ class Settings(BaseSettings):
     rag_top_k: int = 3
     context_threshold: int = 12
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
+
+    # 上下文管理与压缩（context_manage.py 四层管线，详见实施方案）
+    context_mgmt_enabled: bool = True  # 总开关（关闭则整条管线与落盘全部不生效）
+    # 层1 大文件落盘（预算裁剪 Budget）：超大单条工具输出 → 写盘 + 上下文只留指针
+    context_offload_enabled: bool = True
+    context_offload_threshold: int = 3000  # 单条工具结果超过该字符数 → 落盘
+    context_offload_dir: str = "./data/offload"  # 相对 backend 根解析，自动创建
+    context_offload_preview: int = 200  # 指针文本里的开头预览长度
+    context_offload_max_per_session: int = 50  # 每会话落盘文件上限，超限删最旧
+    # 层2 snip-compact（对话修剪）：历史过长时掐头去尾，裁掉中间旧消息（只管条数，不截工具内容）
+    context_snip_enabled: bool = True
+    context_snip_max_messages: int = 50  # 触发阈值：消息总数
+    context_snip_keep_head: int = 3  # 保留开头条数（系统指令+初始目标）
+    context_snip_keep_tail: int = 47  # 保留结尾条数（与当前任务相关）
+    # 层3 micro-compact（旧工具结果体积）：更早的超长工具结果截断到头部，保留最近几条原文
+    context_micro_enabled: bool = True
+    context_micro_keep_recent: int = 6  # 保留最近几条工具结果原文，更早的超长结果截断
+    context_micro_truncate_chars: int = 300  # 旧工具结果截断到该字符数（保留头部关键信息）
+    # 层4 auto-compact（LLM 摘要，Stage 2，默认关）：万不得已时 LLM 全局摘要
+    context_auto_compact_enabled: bool = False
+    context_auto_compact_threshold: int = 100  # 摘要触发阈值
+    context_auto_compact_keep_recent: int = 20  # 摘要后保留的最近消息条数
 
     # 护栏：工具调用上限与熔断
     tool_max_calls: int =10 # 单轮最多工具调用次数，达到后拒绝后续调用

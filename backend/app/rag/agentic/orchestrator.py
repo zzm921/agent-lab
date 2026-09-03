@@ -154,6 +154,7 @@ class AgenticOrchestrator:
         multi_hop=None,
         max_hops: int = 3,
         budgets: OrchestratorBudgets | None = None,
+        hyde=None,  # HyDE 展开器：透传给工具注册表（hybrid 工具内隐式附加）
     ):
         self.budgets = budgets or OrchestratorBudgets()
         self.registry = ToolRegistry(
@@ -162,6 +163,7 @@ class AgenticOrchestrator:
             max_hops=max_hops,
             call_cap=self.budgets.call_cap,
             parallel=self.budgets.parallel,
+            hyde=hyde,
         )
         self.catalog = self.registry.catalog
         self.reranker = reranker

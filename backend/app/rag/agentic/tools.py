@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.rag.agentic.state import AgentState, ToolCallSpec
+from app.rag.retrieval.fusion import reciprocal_rank_fusion
 from app.rag.retrieval.iterative_retrieval import expand_scale_query
 from app.rag.schemes.modular import _TARGET_VOLUME_FILTERS
 
@@ -142,6 +143,7 @@ class ToolRegistry:
         call_cap: int = 3,
         parallel: int = 4,
         specs: list[ToolSpec] | None = None,
+        hyde=None,  # HyDE 展开器：隐式附加在 hybrid 工具内（Agent 无感知，不占工具位/预算）
     ):
         self.store = store
         self.multi_hop = multi_hop
@@ -149,6 +151,7 @@ class ToolRegistry:
         self.parallel = max(1, parallel)
         self.catalog = volume_catalog()
         self.specs = {s.name: s for s in (specs or default_registry_specs(call_cap))}
+        self.hyde = hyde
 
     # ---- 护栏（无状态：预算/去重状态在 per-query 的 AgentState 上，注册表可跨请求共享） ----
 
@@ -185,7 +188,15 @@ class ToolRegistry:
         if call.action == ACTION_SEARCH:
             return self.store.search(call.query, recall_k)
         if call.action == ACTION_HYBRID:
-            return self.store.hybrid_search(expand_scale_query(call.query), recall_k)
+            # hybrid 工具内隐式 HyDE：假想答案文档作一路 doc-space 稠密召回（与 semantic+keyword 路 RRF 融合）。
+            # Agent 无感知——不新增工具位、不增加决策/事件；规则回退（无 Key/失败返回原查询）时自动跳过。
+            query = expand_scale_query(call.query)
+            ranked = [self.store.hybrid_search(query, recall_k)]
+            hyde_doc = self.hyde.expand(call.query) if self.hyde is not None else ""
+            if hyde_doc and hyde_doc != call.query:
+                ranked.append(self.store.search(hyde_doc, recall_k))
+                logger.info("[registry] hybrid 隐式 HyDE：假想文档 %r → 追加一路 doc-space 召回", hyde_doc)
+            return reciprocal_rank_fusion(ranked)
         if call.action == ACTION_VOLUME:
             return self.store.search(call.query, recall_k, (call.volume,))
         if call.action == ACTION_MULTI_HOP and self.multi_hop is not None:

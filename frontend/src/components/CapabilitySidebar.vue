@@ -18,6 +18,7 @@ const props = defineProps<{
   ragScheme: RagSchemeId
   ragSchemes: RagScheme[]
   ragEnabled: boolean
+  keepRounds: number
   open?: boolean
   mcpEnabled?: boolean
   mcpCaps?: Capability[]
@@ -33,6 +34,7 @@ const emit = defineEmits<{
   'update:policy': [v: ApprovalPolicy]
   'update:rag-scheme': [v: RagSchemeId]
   'update:rag-enabled': [v: boolean]
+  'update:keep-rounds': [v: number]
   close: []
 }>()
 
@@ -84,6 +86,36 @@ function onFault(id: string, mode: string) {
           >
             {{ p === 'always' ? '执行前审批' : '自动执行' }}
           </button>
+        </div>
+      </section>
+
+      <!-- 上下文压缩：每轮压缩演示，保留最近 N 轮原文，更早历史每轮被裁剪/截断 -->
+      <section class="space-y-3 border-t border-slate-800 pt-4">
+        <div class="mb-1 flex items-center justify-between">
+          <h3 class="text-xs font-semibold text-slate-300">上下文压缩</h3>
+          <span
+            class="rounded px-1.5 py-0.5 text-[10px]"
+            :class="keepRounds > 0 ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-800 text-slate-500'"
+          >
+            {{ keepRounds > 0 ? '每轮压缩' : '默认阈值' }}
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-500">
+          每轮对话都执行压缩，保留最近 {{ keepRounds || 'N' }} 轮原文，更早历史被裁剪 / 截断（页面持续出现压缩卡片）。填 0 关闭、用系统默认阈值。
+        </p>
+        <div class="flex items-center gap-2">
+          <input
+            type="number"
+            min="0"
+            max="50"
+            :value="keepRounds"
+            class="w-20 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-emerald-500/50"
+            @input="emit('update:keep-rounds', Math.max(0, Math.min(50, Number(($event.target as HTMLInputElement).value) || 0)))"
+          />
+          <span class="text-[11px] text-slate-500">轮</span>
+          <span class="text-[11px]" :class="keepRounds > 0 ? 'text-emerald-300' : 'text-slate-500'">
+            {{ keepRounds > 0 ? `保留最近 ${keepRounds} 轮` : '系统默认阈值' }}
+          </span>
         </div>
       </section>
 

@@ -33,6 +33,7 @@ const RETRIEVE_KIND: Record<string, string> = {
   multi_hop: '多跳检索',
   multi_hop_verify: '多跳验证',
   compress: '上下文压缩',
+  context: '上下文管理',
   answerability: '答案充分性',
   retrieve: '知识库检索',
   agent_step: 'Agent 检索',
@@ -41,6 +42,14 @@ const RETRIEVE_KIND: Record<string, string> = {
   verify: '答案校验',
   memory_read: '记忆召回',
   memory_write: '记忆写入',
+}
+
+// 上下文管理与压缩各层的中文展示（snip-compact / micro-compact / auto-compact / 大文件落盘）
+const CONTEXT_KIND: Record<string, string> = {
+  snip_compact: '对话修剪',
+  micro_compact: '旧工具结果压缩',
+  auto_compact: '历史摘要',
+  offload: '大输出落盘',
 }
 
 // 路由决策各维度的中文展示与配色（modular 五维）
@@ -454,7 +463,34 @@ const ROLE_LABEL: Record<string, string> = {
           </div>
           <p v-if="s.metrics" class="mt-1.5 text-slate-300">
             {{ s.metrics.original }} 条候选 → 保留 {{ s.metrics.kept }} 条
-            <template v-if="s.metrics.truncated > 0">（截断超长 {{ s.metrics.truncated }} 条）</template>
+            <template v-if="(s.metrics.truncated ?? 0) > 0">（截断超长 {{ s.metrics.truncated }} 条）</template>
+          </p>
+        </section>
+
+        <!-- 上下文管理与压缩（snip-compact / micro-compact / auto-compact / 大文件落盘） -->
+        <section v-else-if="s.kind === 'context'" class="rounded-xl border border-sky-500/20 bg-sky-500/5 p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-sky-300">
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span class="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-normal text-sky-200">
+                {{ CONTEXT_KIND[s.contextKind ?? ''] ?? s.contextKind }}
+              </span>
+            </span>
+          </div>
+          <p v-if="s.contextKind === 'snip_compact' && s.metrics" class="mt-1.5 text-slate-300">
+            对话修剪：{{ s.metrics.original }} 条 → 保留 {{ s.metrics.kept }} 条
+            <template v-if="(s.metrics.dropped ?? 0) > 0">（丢弃 {{ s.metrics.dropped }} 条）</template>
+            <template v-if="s.metrics.threshold">阈值 {{ s.metrics.threshold }}</template>
+            <template v-if="s.keepRounds">· 保留最近 {{ s.keepRounds }} 轮</template>
+          </p>
+          <p v-else-if="s.contextKind === 'micro_compact' && s.metrics" class="mt-1.5 text-slate-300">
+            旧工具结果压缩：{{ s.metrics.truncated ?? 0 }} 条超长结果已截断保留头部（最近 {{ s.metrics.kept ?? 0 }} 条原文保留）
+          </p>
+          <p v-else-if="s.contextKind === 'auto_compact' && s.metrics" class="mt-1.5 text-slate-300">
+            历史摘要压缩：{{ s.metrics.original }} 条 → {{ s.metrics.kept }} 条
+          </p>
+          <p v-else-if="s.contextKind === 'offload'" class="mt-1.5 text-slate-300">
+            大输出落盘：{{ s.tool }} 输出 {{ s.chars }} 字符 → <code class="text-sky-200">{{ s.file }}</code>
           </p>
         </section>
 

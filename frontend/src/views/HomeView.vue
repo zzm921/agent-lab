@@ -42,8 +42,10 @@ const mode = ref<ModeId>(validModes.includes(route.query.mode as ModeId) ? (rout
 const strategy = ref<PromptStrategy>(validStrategies.includes(route.query.strategy as PromptStrategy) ? (route.query.strategy as PromptStrategy) : 'standard')
 const policy = ref<ApprovalPolicy>(validPolicies.includes(route.query.policy as ApprovalPolicy) ? (route.query.policy as ApprovalPolicy) : 'always')
 const ragScheme = ref<RagSchemeId>(validRagSchemes.includes(route.query.rag_scheme as RagSchemeId) ? (route.query.rag_scheme as RagSchemeId) : 'naive')
-/** 知识库检索开关：后端能力默认开启，此开关控制每轮是否调用（默认开，可在对话时关闭） */
-const ragEnabled = ref(true)
+/** 知识库检索开关：默认关闭，需在能力选配中手动开启；开启后每轮按所选方案前置检索并注入上下文 */
+const ragEnabled = ref(false)
+/** 「每轮压缩」演示：保留最近 N 轮对话原文，更早历史每轮被压缩；0 关闭（用系统默认阈值） */
+const keepRounds = ref(3)
 const sidebarOpen = ref(false)
 const filesOpen = ref(false)
 const filesRefreshKey = ref(0)
@@ -155,6 +157,7 @@ function send() {
     policy: policy.value,
     ragScheme: ragScheme.value,
     ragEnabled: ragEnabled.value,
+    contextKeepRounds: keepRounds.value,
   })
   task.value = '' // 发送后清空输入框
 }
@@ -175,6 +178,7 @@ function send() {
       :rag-scheme="ragScheme"
       :rag-schemes="ragSchemes"
       :rag-enabled="ragEnabled"
+      :keep-rounds="keepRounds"
       :open="sidebarOpen"
       :mcp-enabled="mcpEnabled"
       :mcp-caps="mcpCaps"
@@ -187,6 +191,7 @@ function send() {
       @update:policy="policy = $event"
       @update:rag-scheme="ragScheme = $event"
       @update:rag-enabled="ragEnabled = $event"
+      @update:keep-rounds="keepRounds = $event"
       @close="sidebarOpen = false"
     />
 

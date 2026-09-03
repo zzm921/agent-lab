@@ -117,6 +117,30 @@ def make_orchestrator(store, **budget_kw) -> AgenticOrchestrator:
     )
 
 
+class RecordingStore(MemoryStore):
+    """记录 search 调用的 MemoryStore，供 hybrid 内隐式 HyDE 一路断言。"""
+
+    def __init__(self, texts: list[str] | None = None):
+        super().__init__(FakeEmbeddings(), collection="agentic_test")
+        self.search_calls: list[str] = []
+        for t in texts or []:
+            self.add(t)
+
+    def search(self, query: str, top_k: int = 3, volume_filter: tuple[str, ...] | None = None):
+        self.search_calls.append(query)
+        return super().search(query, top_k)
+
+
+class StubHyde:
+    """测试桩：固定假想文档（与查询不同），模拟 LLM HyDE 输出。"""
+
+    def __init__(self, doc: str = "发票报销提交时限规定"):
+        self.doc = doc
+
+    def expand(self, query: str):
+        return self.doc
+
+
 def scripted_llm(**by_scenario) -> callable:
     """按场景注入不同脚本模型（未注入的场景返回 None → 规则回退）。"""
     return lambda scenario: by_scenario.get(scenario)
@@ -204,6 +228,32 @@ def test_registry_parallel_wave_executes_all():
     )
     assert all(not wr.note and wr.hits for wr in wave)
     assert state.tool_calls == {ACTION_SEARCH: 1, ACTION_HYBRID: 1}
+
+
+def test_registry_hybrid_implicit_hyde_fires():
+    """hybrid 工具内隐式 HyDE：假想文档作额外一路 doc-space 稠密召回并入 RRF（Agent 无感知）。"""
+    store = RecordingStore([DOC_REIMBURSE])
+    registry = ToolRegistry(store, hyde=StubHyde(doc="发票报销提交时限规定"))
+    state = AgentState(query="报销发票")
+    wave = registry.execute_wave([ToolCallSpec(ACTION_HYBRID, "报销发票")], k=3, recall_k=9, state=state)
+    assert not wave[0].note and wave[0].hits, "hybrid 应正常返回命中"
+    assert "发票报销提交时限规定" in store.search_calls, "HyDE 假想文档应作为一路被检索"
+
+
+def test_registry_hybrid_implicit_hyde_rule_fallback_skips():
+    """HyDE 规则回退（返回原查询）：不追加额外检索，hybrid 结果不受影响。"""
+    store = RecordingStore([DOC_REIMBURSE])
+
+    class NoopHyde:
+        def expand(self, query):
+            return query
+
+    registry = ToolRegistry(store, hyde=NoopHyde())
+    state = AgentState(query="报销发票")
+    wave = registry.execute_wave([ToolCallSpec(ACTION_HYBRID, "报销发票")], k=3, recall_k=9, state=state)
+    assert not wave[0].note and wave[0].hits, "规则回退时 hybrid 本身仍正常返回"
+    # hybrid 默认退化单路 search（仅查询本身那一次），不追加 HyDE 假想文档一路
+    assert store.search_calls == ["报销发票"], "规则回退时不追加额外 HyDE 检索"
 
 
 def test_registry_default_specs_multi_hop_tight_cap():

@@ -17,6 +17,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelResponse
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import Command, interrupt
 
+from app.agents.context_manage import maybe_offload
 from app.agents.harness import should_approve
 from app.core.errors import RetryableToolError
 from app.core.events import emit_text, event
@@ -234,11 +235,21 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=
         if isinstance(result, Command):
             return result
         content = getattr(result, "content", None)
-        emit(event("tool_end", tool=name, args=args, result=str(content), success=True))
+        text = str(content)
+        info = None
+        # 大文件落盘（预算裁剪）：单条工具输出超阈值 → 写盘 + 上下文只留指针
+        if settings is not None and getattr(settings, "context_mgmt_enabled", True) \
+                and getattr(settings, "context_offload_enabled", True):
+            text, info = maybe_offload(text, session_id=session_id, tool_name=name, settings=settings)
+            if info is not None:
+                emit(event("context", kind="offload", tool=name, chars=info["chars"], file=info["file"]))
+        emit(event("tool_end", tool=name, args=args, result=text, success=True))
         if harness is not None:
             harness.record_tool_success(session_id, name, args)
         # 来源可信分级：不可信外部内容工具（网页/命令/记忆）返回包装后再给模型，防间接注入
         mark = bool(getattr(settings, "security_enabled", True) and getattr(settings, "mark_untrusted", True))
+        if info is not None:
+            result = ToolMessage(content=text, tool_call_id=cid)
         return _maybe_wrap_tool_result(result, name, enabled=mark)
     # 失败：结构化错误文本返回给模型（Agent 层思考后重试：模型修正参数/换工具后再调）
     msg = format_tool_error(name, error, retried=retries)

@@ -6,6 +6,7 @@ from app.capabilities.mcp import McpManager
 from app.config import Settings
 from app.memory.session_store import SessionStore
 from app.rag.manager import RagManager
+from app.tools.big_output import big_output
 from app.tools.calculator import calculator
 from app.tools.memory_tool import make_memory_tools
 from app.tools.run_command import make_run_command_tool
@@ -78,6 +79,8 @@ class CapabilityRegistry:
             return web_search
         if cap_id == "run_command":
             return make_run_command_tool(self.settings)
+        if cap_id == "big_output":
+            return big_output
         if cap_id == "rag":
             # RAG 作为独立能力在前置检索阶段处理（见 runner.stream），不进入工具集
             return None

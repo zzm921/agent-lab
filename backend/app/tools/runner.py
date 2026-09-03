@@ -4,6 +4,7 @@ from __future__ import annotations
 from langchain_core.messages import ToolMessage
 from langgraph.types import interrupt
 
+from app.agents.context_manage import maybe_offload
 from app.agents.harness import should_approve
 from app.core.errors import RetryableToolError
 from app.core.events import event
@@ -127,8 +128,16 @@ def make_tools_node(tools, emit, harness=None):
             if success:
                 if harness is not None:
                     harness.record_tool_success(session_id, name, args)
-                emit(event("tool_end", tool=name, args=args, result=str(output), success=True))
-                results.append(ToolMessage(content=_wrap_untrusted_tool_output(name, str(output), settings), tool_call_id=c["id"]))
+                out = str(output)
+                info = None
+                # 大文件落盘（预算裁剪）：单条工具输出超阈值 → 写盘 + 上下文只留指针
+                if settings is not None and getattr(settings, "context_mgmt_enabled", True) \
+                        and getattr(settings, "context_offload_enabled", True):
+                    out, info = maybe_offload(out, session_id=session_id, tool_name=name, settings=settings)
+                    if info is not None:
+                        emit(event("context", kind="offload", tool=name, chars=info["chars"], file=info["file"]))
+                emit(event("tool_end", tool=name, args=args, result=out, success=True))
+                results.append(ToolMessage(content=_wrap_untrusted_tool_output(name, out, settings), tool_call_id=c["id"]))
             else:
                 any_failed = True
                 if harness is not None:

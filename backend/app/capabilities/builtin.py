@@ -36,6 +36,15 @@ BUILTIN_CAPABILITIES = [
         "desc": "在隔离沙箱中执行系统命令；无论审批策略如何，每次执行前都强制人工审批（HITL）。",
         "example": "帮我在沙箱里查看当前目录有哪些文件",
         "code_key": "run_command",
+    },
+    {
+        "id": "big_output",
+        "name": "大输出演示（落盘）",
+        "source": "builtin",
+        "requires": None,
+        "desc": "生成一段超大文本（5000+ 字符）触发「大文件落盘」演示：正文写盘、上下文只留指针，页面出现落盘卡片。",
+        "example": "用大输出演示工具生成一段大文件文本",
+        "code_key": "big_output",
     }
   
 ]

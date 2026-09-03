@@ -12,6 +12,7 @@ from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededE
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import Command
 
+from app.agents.context_manage import ContextManager
 from app.agents.harness import AgentHarness
 from app.agents.modes.multi_agent import build_multi_agent_agent
 from app.agents.modes.plan_execute import build_plan_execute_agent
@@ -62,6 +63,8 @@ class AgentRunner:
         # 跨轮 seed 复用：按会话记录上一轮最终检索命中（已含重排/压缩），
         # 供 modular 下一轮作为「候选证据」复用（经 _cross_turn_seed 分数/相关性闸门过滤）。
         self._last_hits: dict[str, list[dict]] = {}
+        # 上下文管理与压缩管线（snip/micro/auto-compact，大文件落盘在工具结果层挂钩）
+        self.context_manager = ContextManager(settings)
 
     def _scenario_llm(self, scenario: str):
         """取指定场景的模型：有 LLMService 走场景配置，否则回退单模型。"""
@@ -91,11 +94,25 @@ class AgentRunner:
             "recursion_limit": self.harness.recursion_limit(),
         }
 
-    async def _make_inputs(self, graph, config, message, strategy, rag_context=None, insufficient=False, generation_mode=None):
+    async def _make_inputs(self, graph, config, message, strategy, emit=None, rag_context=None, insufficient=False, generation_mode=None, keep_rounds=0):
         snap = await graph.aget_state(config)
         msgs = []
         if snap is not None and snap.values:
             msgs = list(snap.values.get("messages", []))
+        # 上下文管理与压缩：对历史副本执行 snip → micro → auto 管线（四模式统一生效）。
+        # 只作用于副本、不写回 checkpointer（原始历史保留可回滚）；在本轮 HumanMessage 追加前执行，
+        # 本轮消息始终原文保留。关闭总开关则整条管线不生效，行为回退现状。
+        # keep_rounds>0 时进入「每轮压缩」演示模式：保留最近 keep_rounds 轮原文，更早历史每轮都裁剪。
+        if msgs and getattr(self.settings, "context_mgmt_enabled", True):
+            msgs, ctx_events = await self.context_manager.build(
+                msgs,
+                llm=self._scenario_llm("chat"),
+                session_id=config["configurable"]["thread_id"],
+                keep_rounds=int(keep_rounds or 0),
+            )
+            if emit is not None:
+                for ev in ctx_events:
+                    emit({"type": "context", **ev})
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
             msgs.append(SystemMessage(content=f"{base}\n\n{TOOL_RETRY_HINT}"))
@@ -215,7 +232,7 @@ class AgentRunner:
                 turns.append(f"助手: {content}")
         return "\n".join(turns) if turns else None
 
-    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None, rag_enabled=True):
+    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None, rag_enabled=True, context_keep_rounds=0):
         """启动新一轮对话并产出 SSE 事件；遇 HITL 中断产出 approval_request 后暂停。
 
         rag_scheme：本轮选定的 RAG 方案 id（当前仅 naive，后续扩展），在 meta 中回显，
@@ -223,6 +240,8 @@ class AgentRunner:
         rag_enabled：本轮是否启用知识库检索（默认开启，由前端开关控制；总开关由
         settings.rag_enabled 控制，未开启时 registry.rag_manager 为 None，
         二者都满足才执行前置检索）。
+        context_keep_rounds：>0 时进入「每轮压缩」演示模式——保留最近 N 轮对话原文，
+        更早的历史每轮都被压缩（页面持续展示压缩卡片）；0 使用系统默认阈值。
         """
         queue = asyncio.Queue()
         # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
@@ -297,9 +316,11 @@ class AgentRunner:
             config,
             effective_message,
             prompt_strategy,
+            emit=emit,
             rag_context=rag_context,
             insufficient=insufficient,
             generation_mode=generation_mode,
+            keep_rounds=context_keep_rounds,
         )
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
             yield ev

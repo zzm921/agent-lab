@@ -82,6 +82,7 @@ class AgenticRagScheme(AdvancedRagScheme):
             parent_resolver=self._resolve_parents,
             multi_hop=self.multi_hop,
             max_hops=max_hops,
+            hyde=self.hyde,
             budgets=OrchestratorBudgets(
                 max_steps=max_steps,
                 correction_rounds=correction_rounds,

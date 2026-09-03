@@ -126,6 +126,17 @@ export type AgentEvent =
       metrics: { original: number; kept: number; truncated: number }
     }
   | {
+      type: 'context'
+      /** 上下文管理与压缩四层：对话修剪 / 旧工具结果占位 / LLM 摘要 / 大输出落盘 */
+      kind: 'snip_compact' | 'micro_compact' | 'auto_compact' | 'offload'
+      metrics?: { original: number; kept: number; dropped?: number; truncated?: number; threshold?: number; summary?: string }
+      /** 每轮压缩演示模式的保留轮数（snip 事件带出） */
+      keep_rounds?: number
+      tool?: string
+      chars?: number
+      file?: string
+    }
+  | {
       type: 'answerability'
       query: string
       scheme?: string
