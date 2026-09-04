@@ -3,10 +3,10 @@
  */
 import type { AgentEvent } from '../types/agent'
 
-/** 客户端设备指纹：localStorage 持久化，用于后端「每日对话配额」按「一台电脑」精确计数 */
+/** 客户端设备指纹：localStorage 持久化，用于后端按「一台电脑」隔离常驻记忆与统计每日对话配额 */
 const CLIENT_ID_KEY = 'agent_lab_client_id'
 
-function getClientId(): string {
+export function getClientId(): string {
   try {
     let id = localStorage.getItem(CLIENT_ID_KEY)
     if (!id) {

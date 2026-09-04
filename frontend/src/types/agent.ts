@@ -193,8 +193,9 @@ export type AgentEvent =
       missing_facts: string[]
       thought?: string
     }
-  | { type: 'memory_write'; content: string }
+  | { type: 'memory_write'; content: string; kind?: string; importance?: number; scope?: string; source?: string }
   | { type: 'memory_read'; query: string; hits: HitItem[] }
+  | { type: 'memory_constant'; count: number }
   | { type: 'approval_request'; approval_id: string; tool_calls: ToolCallInfo[] }
   | { type: 'reflect'; stage?: string; critique?: string }
   | { type: 'revise'; delta: string }

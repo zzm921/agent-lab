@@ -20,6 +20,7 @@ from app.agents.modes.react import build_react_agent
 from app.agents.modes.reflection import build_reflection_agent
 from app.agents.tools_builder import build_tools
 from app.llm.service import LLMService
+from app.memory.consolidate import maybe_consolidate
 from app.security import InputGuard
 
 STRATEGY_PROMPTS = {
@@ -63,6 +64,8 @@ class AgentRunner:
         # 跨轮 seed 复用：按会话记录上一轮最终检索命中（已含重排/压缩），
         # 供 modular 下一轮作为「候选证据」复用（经 _cross_turn_seed 分数/相关性闸门过滤）。
         self._last_hits: dict[str, list[dict]] = {}
+        # 后台静默任务（轮末记忆提取等）：持句柄防 GC 取消，完成即移除
+        self._bg_tasks: set[asyncio.Task] = set()
         # 上下文管理与压缩管线（snip/micro/auto-compact，大文件落盘在工具结果层挂钩）
         self.context_manager = ContextManager(settings)
 
@@ -94,7 +97,43 @@ class AgentRunner:
             "recursion_limit": self.harness.recursion_limit(),
         }
 
-    async def _make_inputs(self, graph, config, message, strategy, emit=None, rag_context=None, insufficient=False, generation_mode=None, keep_rounds=0):
+    def _constant_memory_block(self, memory_enabled: bool = True, client_key: str = "default") -> tuple[str | None, int]:
+        """常驻记忆块：从当前客户端的常驻库取高重要记忆（importance ≥ 阈值）top-k 组装为 system 块。
+
+        返回 (注入块, 注入条数)；记忆未启用 / 无 embedding / 常驻库为空时返回 (None, 0)。
+        仅在首轮（无历史）时注入；后续轮次沿用 checkpointer 内已有 system 消息，不重复注入。
+        client_key 由请求层判定（设备指纹优先、IP 兜底），保证每个试用者只见自己的常驻记忆。
+        """
+        if not memory_enabled:
+            return None, 0
+        if not getattr(self.settings, "memory_enabled", True):
+            return None, 0
+        if not getattr(self.settings, "memory_constant_enabled", True):
+            return None, 0
+        if self.registry.embeddings is None:
+            return None, 0
+        try:
+            constant = self.sessions.constant_memory(self.registry.embeddings, client_key)
+            items = constant.constant_memories(
+                self.settings.memory_constant_top_k,
+                min_importance=self.settings.memory_constant_min_importance,
+            )
+        except Exception:  # noqa: BLE001 — 常驻注入失败绝不影响主链路
+            return None, 0
+        if not items:
+            return None, 0
+        lines = [
+            f"- [{meta.get('kind', 'fact')}] {text}"
+            for text, meta in items
+        ]
+        return (
+            "## 用户记忆（来自历史会话，仅供参考）\n"
+            "以下记忆可能过时或不准确，请作为背景参考；若与用户本次说明冲突，以本次说明为准：\n"
+            + "\n".join(lines),
+            len(items),
+        )
+
+    async def _make_inputs(self, graph, config, message, strategy, emit=None, rag_context=None, insufficient=False, generation_mode=None, keep_rounds=0, memory_enabled=True, client_key="default"):
         snap = await graph.aget_state(config)
         msgs = []
         if snap is not None and snap.values:
@@ -115,7 +154,13 @@ class AgentRunner:
                     emit({"type": "context", **ev})
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
-            msgs.append(SystemMessage(content=f"{base}\n\n{TOOL_RETRY_HINT}"))
+            content = f"{base}\n\n{TOOL_RETRY_HINT}"
+            block, count = self._constant_memory_block(memory_enabled, client_key)
+            if block:
+                content = f"{content}\n\n{block}"
+                if emit is not None:
+                    emit({"type": "memory_constant", "count": count})
+            msgs.append(SystemMessage(content=content))
         msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient, generation_mode)))
         return {"messages": msgs}
 
@@ -232,7 +277,40 @@ class AgentRunner:
                 turns.append(f"助手: {content}")
         return "\n".join(turns) if turns else None
 
-    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None, rag_enabled=True, context_keep_rounds=0):
+    async def _consolidate_memory_bg(self, graph, config, session_id, memory_enabled: bool = True, client_key: str = "default"):
+        """轮末自动提取巩固（后台静默）：把本轮对话提炼为长期记忆写入库。
+
+        由 stream 以 asyncio.create_task 在后台启动，不阻塞 SSE 事件流、不产
+        memory_write 事件（静默）；提取出的 global 长期偏好/约束写入当前客户端
+        的常驻库（跨会话生效），session 临时上下文写入会话库；任何异常被吞掉。
+        """
+        if not memory_enabled:
+            return
+        if not getattr(self.settings, "memory_enabled", True):
+            return
+        if self.registry.embeddings is None:
+            return
+        try:
+            snap = await graph.aget_state(config)
+        except Exception:  # noqa: BLE001
+            return
+        msgs = (snap.values.get("messages") or []) if snap is not None and snap.values else []
+        if not msgs:
+            return
+        store = self.sessions.long_memory(session_id, self.registry.embeddings)
+        constant = self.sessions.constant_memory(self.registry.embeddings, client_key)
+        # 提取用独立轻量场景（memory_consolidate：关闭思考）而非 chat 主模型——实测 thinking 使提取慢到 40s+，关闭后 ~2s
+        await maybe_consolidate(store, constant, msgs, self._scenario_llm("memory_consolidate"), self.settings, session_id)
+
+    def _schedule_consolidate(self, graph, config, session_id, memory_enabled: bool = True, client_key: str = "default"):
+        """后台静默启动轮末记忆提取：不 await、不产事件，任务句柄登记防 GC 取消。"""
+        task = asyncio.create_task(
+            self._consolidate_memory_bg(graph, config, session_id, memory_enabled, client_key)
+        )
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None, rag_enabled=True, memory_enabled=True, context_keep_rounds=0, client_key="default"):
         """启动新一轮对话并产出 SSE 事件；遇 HITL 中断产出 approval_request 后暂停。
 
         rag_scheme：本轮选定的 RAG 方案 id（当前仅 naive，后续扩展），在 meta 中回显，
@@ -247,6 +325,9 @@ class AgentRunner:
         # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
         tool_count = self.harness.new_tool_counter(session_id)
         emit = self._make_emit(queue, tool_count)
+        # 本轮关闭记忆时：从能力清单剔除 memory，常驻注入/轮末巩固一并关闭
+        if not memory_enabled:
+            enabled = [c for c in enabled if c != "memory"]
         tools = build_tools(self.registry, enabled, session_id, emit)
         try:
             graph = self._build_graph(mode, tools, emit)
@@ -321,8 +402,13 @@ class AgentRunner:
             insufficient=insufficient,
             generation_mode=generation_mode,
             keep_rounds=context_keep_rounds,
+            memory_enabled=memory_enabled,
+            client_key=client_key,
         )
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
+            if ev["type"] == "done":
+                # 轮末记忆提取改后台静默：不阻塞 done 下发、不产事件（记忆是增强项，写入失败也不影响本轮）
+                self._schedule_consolidate(graph, config, session_id, memory_enabled, client_key)
             yield ev
 
     async def resume(self, approval_id, decision, modified_args):

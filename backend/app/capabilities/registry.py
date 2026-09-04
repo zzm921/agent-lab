@@ -88,7 +88,8 @@ class CapabilityRegistry:
             if self.embeddings is None:
                 return None
             store = self.sessions.long_memory(session_id, self.embeddings)
-            return make_memory_tools(store, self.settings.rag_top_k, emit)
+            constant = self.sessions.constant_memory(self.embeddings)
+            return make_memory_tools(store, constant, self.settings, emit)
         return self.mcp.tool(cap_id)
 
     def rag_schemes(self) -> list[dict]:

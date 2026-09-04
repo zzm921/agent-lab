@@ -47,6 +47,12 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.7, "enable_thinking": True},
     },
     {
+        "scenario": "memory_consolidate",  # 轮末记忆提取：结构化小 JSON，关闭思考以加速（实测 thinking 40s+ / 关闭 2s）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": False},
+    },
+    {
         "scenario": "planner",  # plan_execute 的任务规划/重规划：低随机性，输出精炼
         "provider": "dashscope",
         "model": "qwen3.5-flash",

@@ -13,15 +13,26 @@ def test_builtin_available(settings, sessions, rag_manager, embeddings):
     assert caps["run_command"]["availability"] == "available"
 
 
-def test_rag_memory_not_in_directory(settings, sessions):
-    """rag/memory 已从内置能力目录移除（重构 RAG 为独立检索阶段后）：
-    rag 由 runner 前置检索 + 方案目录（rag_schemes）承接，memory 未作为能力卡片暴露，
-    因此不再以「未配 Embedding → 不适配」的形式出现在目录中。"""
+def test_rag_not_in_directory(settings, sessions):
+    """rag 已从内置能力目录移除（重构 RAG 为独立检索阶段后）：
+    rag 由 runner 前置检索 + 方案目录（rag_schemes）承接，因此不再以能力卡片形式出现在目录中。"""
     registry = CapabilityRegistry(settings, sessions, McpManager("{}"), None, None)
     caps = {c["id"]: c for c in registry.list()}
     assert caps["calculator"]["availability"] == "available"
     assert "rag" not in caps
-    assert "memory" not in caps
+
+
+def test_memory_in_directory(settings, sessions, embeddings):
+    """memory 能力卡收录目录：有 embeddings 时可用（工具可解析），无 embeddings 时不可用。"""
+    registry = CapabilityRegistry(settings, sessions, McpManager("{}"), None, embeddings)
+    caps = {c["id"]: c for c in registry.list()}
+    assert caps["memory"]["availability"] == "available"
+    assert registry.tool_for("memory", "s1", lambda e: None) is not None
+
+    no_emb = CapabilityRegistry(settings, sessions, McpManager("{}"), None, None)
+    caps2 = {c["id"]: c for c in no_emb.list()}
+    assert caps2["memory"]["availability"] == "unavailable"
+    assert no_emb.tool_for("memory", "s1") is None
 
 
 def test_tool_for_unavailable_returns_none(settings, sessions):

@@ -22,6 +22,7 @@ const props = defineProps<{
   open?: boolean
   mcpEnabled?: boolean
   mcpCaps?: Capability[]
+  memoryEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -35,6 +36,8 @@ const emit = defineEmits<{
   'update:rag-scheme': [v: RagSchemeId]
   'update:rag-enabled': [v: boolean]
   'update:keep-rounds': [v: number]
+  'update:memory-enabled': [v: boolean]
+  'open-memory': []
   close: []
 }>()
 
@@ -153,6 +156,43 @@ function onFault(id: string, mode: string) {
             @update:model-value="emit('update:rag-scheme', $event)"
           />
         </div>
+      </section>
+
+      <!-- 长期记忆：独立于 RAG 的跨会话记忆能力；开关控制本轮工具/常驻注入/轮末巩固 -->
+      <section class="space-y-3 border-t border-slate-800 pt-4">
+        <div class="mb-1 flex items-center justify-between">
+          <h3 class="text-xs font-semibold text-slate-300">长期记忆</h3>
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="memoryEnabled"
+            :title="memoryEnabled ? '关闭长期记忆（本轮不再注入常驻记忆/启用记忆工具）' : '开启长期记忆（记忆工具 + 常驻记忆注入 + 轮末巩固）'"
+            class="flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition"
+            :class="memoryEnabled ? 'bg-amber-500' : 'bg-slate-700'"
+            @click="emit('update:memory-enabled', !memoryEnabled)"
+          >
+            <span class="h-4 w-4 rounded-full bg-white transition" :class="memoryEnabled ? 'translate-x-4' : ''"></span>
+          </button>
+        </div>
+
+        <p class="text-[11px] text-slate-500">
+          跨会话长期记忆（memory_write / memory_recall）；全局常驻记忆会话启动注入 system，轮末自动巩固。
+        </p>
+
+        <div v-if="!memoryEnabled" class="rounded-xl border border-dashed border-slate-700/70 px-3 py-3 text-center">
+          <p class="text-[11px] text-slate-500">长期记忆已关闭 — 不注入常驻记忆、不启用记忆工具</p>
+        </div>
+
+        <button
+          type="button"
+          class="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-xs text-slate-300 transition hover:border-amber-500/50 hover:text-amber-200"
+          @click="emit('open-memory')"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          记忆管理
+        </button>
       </section>
 
       <!-- MCP 能力：服务连接在启动时已建立；开关仅控制 MCP 工具是否在能力目录中使用 -->

@@ -8,6 +8,7 @@ import type { Capability, ModeId, PromptStrategy, ApprovalPolicy, RagSchemeId } 
 import CapabilitySidebar from '../components/CapabilitySidebar.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import ExampleFillHint from '../components/ExampleFillHint.vue'
+import MemoryPanel from '../components/MemoryPanel.vue'
 import SandboxFilesPanel from '../components/SandboxFilesPanel.vue'
 
 const route = useRoute()
@@ -44,6 +45,10 @@ const policy = ref<ApprovalPolicy>(validPolicies.includes(route.query.policy as 
 const ragScheme = ref<RagSchemeId>(validRagSchemes.includes(route.query.rag_scheme as RagSchemeId) ? (route.query.rag_scheme as RagSchemeId) : 'naive')
 /** 知识库检索开关：默认关闭，需在能力选配中手动开启；开启后每轮按所选方案前置检索并注入上下文 */
 const ragEnabled = ref(false)
+/** 长期记忆开关：默认开启（记忆工具 + 常驻注入 + 轮末巩固） */
+const memoryEnabled = ref(true)
+/** 记忆管理面板开关 */
+const memoryOpen = ref(false)
 /** 「每轮压缩」演示：保留最近 N 轮对话原文，更早历史每轮被压缩；0 关闭（用系统默认阈值） */
 const keepRounds = ref(3)
 const sidebarOpen = ref(false)
@@ -157,6 +162,7 @@ function send() {
     policy: policy.value,
     ragScheme: ragScheme.value,
     ragEnabled: ragEnabled.value,
+    memoryEnabled: memoryEnabled.value,
     contextKeepRounds: keepRounds.value,
   })
   task.value = '' // 发送后清空输入框
@@ -182,6 +188,7 @@ function send() {
       :open="sidebarOpen"
       :mcp-enabled="mcpEnabled"
       :mcp-caps="mcpCaps"
+      :memory-enabled="memoryEnabled"
       @toggle="toggle"
       @example="onExample"
       @fault="setFault"
@@ -192,6 +199,8 @@ function send() {
       @update:rag-scheme="ragScheme = $event"
       @update:rag-enabled="ragEnabled = $event"
       @update:keep-rounds="keepRounds = $event"
+      @update:memory-enabled="memoryEnabled = $event"
+      @open-memory="memoryOpen = true"
       @close="sidebarOpen = false"
     />
 
@@ -246,6 +255,12 @@ function send() {
       :open="filesOpen"
       :refresh-key="filesRefreshKey"
       @close="filesOpen = false"
+    />
+
+    <MemoryPanel
+      :open="memoryOpen"
+      :session-id="stream.sessionId"
+      @close="memoryOpen = false"
     />
   </div>
 </template>

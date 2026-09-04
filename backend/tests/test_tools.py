@@ -231,3 +231,65 @@ def test_vector_store_search_topk(embeddings):
 def test_vector_store_empty(embeddings):
     vs = VectorStore(embeddings)
     assert vs.search("任意") == []
+
+
+# ---------- 长期记忆工具（T2：写入/召回 + 注入模板） ----------
+
+
+def _memory_tools(embeddings, tmp_path, settings):
+    from app.memory.long_memory import LongMemoryStore
+    from app.tools.memory_tool import make_memory_tools
+
+    store = LongMemoryStore("s1", embeddings, str(tmp_path / "m.jsonl"))
+    constant = LongMemoryStore("_global", embeddings, str(tmp_path / "g.jsonl"))
+    tools = {t.name: t for t in make_memory_tools(store, constant, settings, None)}
+    return store, constant, tools
+
+
+def test_memory_write_recall_injection_block(embeddings, tmp_path, settings):
+    """写入会话库 + 召回返回规范化注入块（3.5 模板）。"""
+    settings.memory_threshold = 0.0  # 关闭阈值，聚焦注入块格式
+    store, constant, tools = _memory_tools(embeddings, tmp_path, settings)
+    tools["memory_write"].invoke(
+        {"fact": "用户喜欢深色主题", "kind": "preference", "importance": 0.9}
+    )
+    assert len(store) == 1
+
+    result = tools["memory_recall"].invoke({"query": "主题配色"})
+    assert "【长期记忆检索结果】" in result
+    assert "(preference·重要度0.9)" in result
+    assert "记录于" in result
+    assert "请优先参考以上记忆回答；若与本次说明矛盾，以本次说明为准。" in result
+
+
+def test_memory_write_scope_global(embeddings, tmp_path, settings):
+    """scope=global 写入全局（常驻）库而非会话库。"""
+    store, constant, tools = _memory_tools(embeddings, tmp_path, settings)
+    tools["memory_write"].invoke(
+        {"fact": "用户喜欢深色主题", "kind": "preference", "importance": 0.9, "scope": "global"}
+    )
+    assert len(constant) == 1
+    assert len(store) == 0
+
+
+def test_memory_recall_stale_hint(embeddings, tmp_path, settings):
+    """命中超过 memory_old_days_hint 天的记忆附「可能过时」老化提示。"""
+    import time
+
+    store, constant, tools = _memory_tools(embeddings, tmp_path, settings)
+    store.add("用户旧偏好的记忆内容")
+    store._store.metadatas[0]["created_at"] = time.time() - 3 * 86400
+    result = tools["memory_recall"].invoke({"query": "偏好"})
+    assert "可能已过时" in result
+    assert "使用前请与当前实际情况核对" in result
+
+
+def test_memory_recall_kind_filter(embeddings, tmp_path, settings):
+    """按 kind 过滤召回：只返回该类型记忆。"""
+    store, constant, tools = _memory_tools(embeddings, tmp_path, settings)
+    store.add("用户生日是 1995-08-20", kind="fact")
+    store.add("用户喜欢深色主题", kind="preference")
+    result = tools["memory_recall"].invoke({"query": "用户信息", "kind": "preference"})
+    assert "深色主题" in result
+    assert "生日" not in result
+

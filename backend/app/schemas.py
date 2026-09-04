@@ -16,6 +16,7 @@ class StreamRequest(BaseModel):
     approval_policy: str = Field(default="always", description="HITL 审批策略")
     rag_scheme: str = Field(default="naive", description="RAG 方案 id（当前仅 naive）")
     rag_enabled: bool = Field(default=True, description="本轮是否启用知识库检索（RAG）前置检索；默认开启，前端开关可关闭")
+    memory_enabled: bool = Field(default=True, description="本轮是否启用长期记忆能力（工具/常驻注入/轮末巩固）；默认开启")
     context_keep_rounds: int = Field(
         default=0,
         ge=0,
@@ -49,3 +50,11 @@ class SourceRequest(BaseModel):
 
 class McpToggleRequest(BaseModel):
     enabled: bool = Field(description="是否开启 MCP 服务（连接注册的 MCP Server 并发现工具）")
+
+
+class MemoryWriteRequest(BaseModel):
+    text: str = Field(description="要记住的事实文本")
+    kind: str = Field(default="fact", description="记忆分类：fact | preference | episodic | procedural")
+    importance: float = Field(default=0.5, ge=0, le=1, description="重要度 0~1")
+    scope: str = Field(default="session", description="写入范围：session（会话）| global（全局常驻）")
+    session_id: str = Field(default="", description="scope=session 时的目标会话")

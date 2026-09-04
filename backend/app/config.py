@@ -92,6 +92,21 @@ class Settings(BaseSettings):
     context_auto_compact_threshold: int = 100  # 摘要触发阈值
     context_auto_compact_keep_recent: int = 20  # 摘要后保留的最近消息条数
 
+    # 长期记忆（memory 能力，独立于 RAG：跨会话事实/偏好，走工具按需召回）
+    memory_enabled: bool = True  # 总开关（关闭则记忆工具/常驻注入/自动巩固全部不生效）
+    memory_dir: str = "./data/memory"  # 记忆库落盘目录（每会话一个 {session_id}.jsonl + 全局 _global.jsonl）
+    memory_top_k: int = 3  # 召回条数上限（注入预算）
+    memory_threshold: float = 0.3  # 召回相似度阈值（不达标不注入，命中率低则零注入）
+    memory_dedup_threshold: float = 0.92  # 语义去重阈值（相似则更新而非追加）
+    memory_max_per_namespace: int = 500  # 每命名空间记录上限，超限按最近访问 LRU 淘汰
+    memory_ttl_days: int = 0  # 记忆 TTL（天），0 表示不启用过期清理
+    memory_consolidate_enabled: bool = True  # 轮末自动提取巩固开关
+    memory_consolidate_min_importance: float = 0.5  # 巩固提取的重要性下限，低于则丢弃
+    memory_constant_enabled: bool = True  # 常驻记忆注入 system（会话启动默认开启）
+    memory_constant_min_importance: float = 0.7  # 常驻注入的重要性下限
+    memory_constant_top_k: int = 5  # 常驻注入条数上限
+    memory_old_days_hint: int = 2  # 召回命中超过该天数的记忆附「可能过时」老化提示
+
     # 护栏：工具调用上限与熔断
     tool_max_calls: int =10 # 单轮最多工具调用次数，达到后拒绝后续调用
     circuit_fail_threshold: int = 3  # 同一会话内“同一工具+相同参数”连续失败次数，达到即熔断该参数调用（换参重试放行）

@@ -61,7 +61,14 @@ def _build_registry(sessions):
 
 def get_sessions() -> SessionStore:
     if _RUNTIME["sessions"] is None:
-        _RUNTIME["sessions"] = SessionStore()
+        _RUNTIME["sessions"] = SessionStore(
+            memory_dir=settings.memory_dir,
+            top_k=settings.memory_top_k,
+            threshold=settings.memory_threshold,
+            dedup_threshold=settings.memory_dedup_threshold,
+            max_per_namespace=settings.memory_max_per_namespace,
+            ttl_days=settings.memory_ttl_days,
+        )
     return _RUNTIME["sessions"]
 
 
@@ -181,7 +188,10 @@ async def chat_stream(req: StreamRequest, request: Request):
         req.approval_policy,
         rag_scheme=req.rag_scheme,
         rag_enabled=req.rag_enabled,
+        memory_enabled=req.memory_enabled,
         context_keep_rounds=req.context_keep_rounds,
+        # 常驻记忆按客户端隔离：设备指纹优先、IP 兜底（同一台电脑/同一 IP 各一份记忆）
+        client_key=_client_key(request),
     )
     return _sse(events)
 

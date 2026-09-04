@@ -42,6 +42,7 @@ const RETRIEVE_KIND: Record<string, string> = {
   verify: '答案校验',
   memory_read: '记忆召回',
   memory_write: '记忆写入',
+  memory_constant: '常驻记忆',
 }
 
 // 上下文管理与压缩各层的中文展示（snip-compact / micro-compact / auto-compact / 大文件落盘）
@@ -782,6 +783,26 @@ const ROLE_LABEL: Record<string, string> = {
           <p v-else class="mt-2 text-slate-500">未生成假想文档（回退原查询，跳过 HyDE 一路）</p>
         </section>
 
+        <!-- 常驻记忆注入 system（会话首轮） -->
+        <section
+          v-else-if="s.kind === 'memory_constant'"
+          class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 font-medium text-amber-300">
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+              </svg>
+              {{ RETRIEVE_KIND[s.kind] }}
+              <span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-normal text-amber-200">system 注入</span>
+            </span>
+            <span class="text-slate-400">注入 {{ s.count ?? 0 }} 条</span>
+          </div>
+          <p class="mt-1.5 text-slate-400">
+            会话启动时从全局常驻库取高重要度记忆注入 system（供首轮模型调用参考，不额外调工具）
+          </p>
+        </section>
+
         <!-- 知识库检索（RAG） -->
         <section
           v-else-if="s.kind === 'retrieve' || s.kind === 'memory_read' || s.kind === 'memory_write'"
@@ -790,6 +811,18 @@ const ROLE_LABEL: Record<string, string> = {
           <div class="flex items-center justify-between gap-2">
             <span class="flex items-center gap-1.5 font-medium text-cyan-300">
               {{ RETRIEVE_KIND[s.kind] }}
+              <span
+                v-if="s.kind === 'memory_write' && s.memoryKind"
+                class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-normal text-amber-200"
+              >
+                {{ s.memoryKind }}·重要度{{ s.memoryImportance?.toFixed(1) }}
+              </span>
+              <span
+                v-if="s.kind === 'memory_write' && s.memoryScope"
+                class="rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-normal text-slate-300"
+              >
+                {{ s.memoryScope === 'global' ? '全局常驻' : '会话' }}
+              </span>
               <span
                 v-if="s.kind === 'retrieve' && s.scheme"
                 class="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-normal text-cyan-200"

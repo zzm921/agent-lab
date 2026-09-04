@@ -55,6 +55,7 @@ export type StepKind =
   | 'verify' // Self-RAG 答案校验（agentic）
   | 'memory_read' // 记忆召回
   | 'memory_write' // 记忆写入
+  | 'memory_constant' // 常驻记忆注入 system（首轮）
   | 'reflect' // 反思意见
   | 'agent_event' // 多智能体 worker 事件
 
@@ -149,6 +150,13 @@ export interface StepEntry {
   answerable?: boolean
   /** memory_write */
   content?: string
+  /** memory_constant：常驻记忆注入条数 */
+  count?: number
+  /** memory_write：记忆分类 / 重要度 / 写入范围（session|global） */
+  memoryKind?: string
+  memoryImportance?: number
+  memoryScope?: string
+  memorySource?: string
   /** reflect */
   stage?: string
   critique?: string
@@ -173,6 +181,8 @@ export interface SendParams {
   ragScheme: RagSchemeId
   /** 本轮是否启用知识库检索（RAG 前置检索），后端能力默认开启，由前端开关控制 */
   ragEnabled: boolean
+  /** 本轮是否启用长期记忆能力（工具/常驻注入/轮末巩固），默认开启 */
+  memoryEnabled: boolean
   /** 「每轮压缩」演示：保留最近 N 轮对话原文，更早历史每轮被压缩；0 使用系统默认阈值 */
   contextKeepRounds: number
   /** 覆盖会话 id（对比视图每个 runner 独立会话） */
@@ -549,10 +559,20 @@ export function useChatStream(): ChatStream {
         })
         break
       case 'memory_write':
-        pushStep({ kind: 'memory_write', content: ev.content })
+        pushStep({
+          kind: 'memory_write',
+          content: ev.content,
+          memoryKind: ev.kind,
+          memoryImportance: ev.importance,
+          memoryScope: ev.scope,
+          memorySource: ev.source,
+        })
         break
       case 'memory_read':
         pushStep({ kind: 'memory_read', query: ev.query, hits: ev.hits })
+        break
+      case 'memory_constant':
+        pushStep({ kind: 'memory_constant', count: ev.count })
         break
       case 'reflect':
         pushStep({ kind: 'reflect', stage: ev.stage, critique: ev.critique })
@@ -639,6 +659,7 @@ export function useChatStream(): ChatStream {
         approval_policy: params.policy,
         rag_scheme: params.ragScheme,
         rag_enabled: params.ragEnabled,
+        memory_enabled: params.memoryEnabled,
         context_keep_rounds: params.contextKeepRounds ?? 0,
       },
       controller.signal,
