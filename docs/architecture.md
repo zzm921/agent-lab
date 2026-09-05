@@ -15,6 +15,7 @@
 └───────────────────────────┬──────────────────────────────────────┘
         GET /api/capabilities   POST /api/stream   POST /api/approve
         GET /api/source/{m}     GET /api/health
+        GET /api/telemetry/runs[/{run_id}]（运行记录回放）
 ┌───────────────────────────▼──────────────────────────────────────┐
 │  Backend（FastAPI + Uvicorn）                                     │
 │  capabilities/registry.py：能力目录（内置 + MCP 发现 + 可用性探测）  │
@@ -152,6 +153,22 @@ RAG（`rag`）与长期记忆（`memory`）**已移出内置能力目录**：RAG
 - `memory/session_store.py`：`MemorySaver` 检查点（多轮/恢复）+ 每会话长期记忆。
 - 工具：`memory_tool`（写/读长期记忆，Embedding 可用时注入）。
 
+### 2.9 运行记录（可观测性演示）
+
+每次对话（一次 `stream`，含审批 `resume` 续写）自动落盘一条 **run** 记录，前端**右上角「运行记录」按钮**进入面板，按会话分组回放。
+
+- **数据三件套**：完整 SSE 事件流（delta 类已合并为完整文本，逐条带 seq/ts）+ 每次 LLM 调用明细（场景 / 模型 / 时延 / token / 成本 / 成败，成功失败都记录）+ 聚合统计（工具调用与失败、重试、审批、RAG 检索、记忆读写、护栏拦截、大输出落盘）。
+- **token 记账**：DashScope 适配层把用量写在消息/chunk 的 `usage_metadata`（input/output/total_tokens）；`LoggedChatModel` 四个入口（`_generate/_agenerate/_stream/_astream`）统一用 `_usage_tokens()` 提取（优先 `usage_metadata`，兼容回退 `response_metadata.usage`），避免读空 `llm_output` 导致全 0。
+- **埋点链路**：`ACTIVE_SINK`（ContextVar）在 runner 的 `stream/resume` yield 边界挂载 sink → 事件经 `observe()` 入库、LLM 调用经 `record_llm()` 入库；`finally` 收口落盘并复位 ContextVar（防跨请求泄漏）。
+- **同一轮对话一条记录**：遇审批暂停以 `status=pending` 落盘；resume 时 `RunStore.resume_run` 续写同一 `run_id`，保证一轮对话（含多次审批）只有一条完整记录。
+- **隔离与治理**：按 `client_key`（设备指纹优先、IP 兜底）读写隔离，只能看本人本机的 run；TTL 7 天 + 全库上限 500 条 LRU 自动清理。
+- **API**：`GET /api/telemetry/runs`（列表，可按会话过滤）、`GET /api/telemetry/runs/{run_id}`（详情）。
+
+**演示边界（企业级差距明示）**
+- 观测范围 = 单进程内一次会话 run；不含跨服务分布式链路追踪（traceID 贯通多进程）、指标聚合看板（Prometheus / Grafana）、告警与采样治理。
+- 跨进程调用（如 MCP 工具）仅记录发起与结果，不深入远端内部。
+- **模型分级**：生产环境轻量语义判断（语义路由 / 查询改写 / 记忆选择 / CRAG 评审等）应由低成本小模型承担、复杂生成由大模型承担（小模型 + 大模型混合调度）；演示为简化统一用 `qwen3.5-flash` 跑全链路，仅作形态演示。
+
 ## 3. 前端结构
 
 - 视图：`HomeView`（能力池 + 模式 + 对话一体）、`ModuleView`（单模式深研：流式运行 + 审批 + 代码 + 原理）、`CompareView`（同任务多模式并排对比）。
@@ -174,4 +191,10 @@ RAG（`rag`）与长期记忆（`memory`）**已移出内置能力目录**：RAG
 | 重试退避基础秒数 | `TOOL_RETRY_BASE_DELAY` | 1.5 |
 | 重试最长退避秒数 | `TOOL_RETRY_MAX_DELAY` | 8.0 |
 | Agent 层重试上限 | `AGENT_RETRY_MAX` | 3 |
+| 运行记录总开关 | `TELEMETRY_ENABLED` | True |
+| 运行记录目录 | `TELEMETRY_DIR` | `./data/telemetry` |
+| 运行记录 TTL | `TELEMETRY_TTL_DAYS` | 7 |
+| 运行记录上限 | `TELEMETRY_MAX_RUNS` | 500 |
+| LLM 输入单价 | `LLM_PRICE_INPUT_PER_1M` | 0.3 |
+| LLM 输出单价 | `LLM_PRICE_OUTPUT_PER_1M` | 0.6 |
 | CORS 来源 | `CORS_ORIGINS` | `["http://localhost:5173","http://localhost:8000"]` |

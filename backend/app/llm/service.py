@@ -23,6 +23,7 @@ from app.config import settings
 from app.core.errors import ConfigError, LLMError
 from app.llm.dashscope_chat import DashScopeChatModel
 from app.llm.fake_model import FakeChatModel
+from app.telemetry.sink import ACTIVE_SINK
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,43 @@ def _build_fake(profile: LLMProfile) -> BaseChatModel:
     return FakeChatModel(model_name=profile.model or "fake-chat")
 
 
+def _usage_tokens(obj) -> dict[str, int] | None:
+    """从一次调用的结果对象提取 token 用量；无则 None。
+
+    优先级：
+    1. usage_metadata（input_tokens/output_tokens/total_tokens）——本项目 DashScope
+       适配层统一写入此字段（非流式设在消息上、流式设在末块上），是记账的权威来源；
+    2. response_metadata.usage / token_usage（prompt_tokens/completion_tokens/total_tokens）
+       ——兼容其他供应商习惯。
+    入参可为 ChatResult / ChatGenerationChunk / BaseMessage(Chunk)。
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, ChatResult):
+        gens = getattr(obj, "generations", None) or []
+        msg = gens[0].message if gens else None
+    else:
+        msg = getattr(obj, "message", obj)  # ChatGenerationChunk → .message；裸消息/块原样
+    if msg is None:
+        return None
+    meta = getattr(msg, "usage_metadata", None) or {}
+    if meta.get("total_tokens") is not None or meta.get("input_tokens") is not None:
+        return {
+            "input": int(meta.get("input_tokens", 0) or 0),
+            "output": int(meta.get("output_tokens", 0) or 0),
+            "total": int(meta.get("total_tokens", 0) or 0),
+        }
+    rmeta = getattr(msg, "response_metadata", None) or {}
+    usage = rmeta.get("usage") or rmeta.get("token_usage")
+    if not usage:
+        return None
+    return {
+        "input": int(usage.get("prompt_tokens", 0) or 0),
+        "output": int(usage.get("completion_tokens", 0) or 0),
+        "total": int(usage.get("total_tokens", 0) or 0),
+    }
+
+
 class LoggedChatModel(BaseChatModel):
     """带日志与错误包装的聊天模型：委托真实模型，记录调用过程并统一异常。"""
 
@@ -230,6 +268,28 @@ class LoggedChatModel(BaseChatModel):
         )
         return LLMError(scenario=self.scenario, model=self.model_name, params=self.params, method=method, cause=exc)
 
+    def _record(self, method: str, latency_ms: float, success: bool, tokens: dict | None = None, error: str = "") -> None:
+        """把一次 LLM 调用写入当前活动的运行记录（TelemetrySink）；无 sink 时静默跳过。
+
+        success=False 也会记录（失败是最需要观测的调用）：观测优先，不影响主流程。
+        """
+        sink = ACTIVE_SINK.get()
+        if sink is None:
+            return
+        call: dict[str, Any] = {
+            "scenario": self.scenario,
+            "model": self.model_name,
+            "method": method,
+            "latency_ms": latency_ms,
+            "success": success,
+        }
+        if tokens:
+            call["tokens"] = tokens
+        if error:
+            call["error"] = error[:200]
+        sink.record_llm(call)
+
+
     def bind(self, **kwargs: Any) -> "LoggedChatModel":
         """把附加参数绑定到底层模型并保持包装（保留日志/错误能力）。"""
         return LoggedChatModel(inner=self._inner.bind(**kwargs), scenario=self.scenario, params=self.params)
@@ -249,22 +309,34 @@ class LoggedChatModel(BaseChatModel):
         try:
             result = self._inner._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
         except Exception as exc:  # noqa: BLE001 — 统一包装为 LLMError
+            self._record("invoke", (time.perf_counter() - start) * 1000, False, error=str(exc))
             raise self._wrap_error(exc, "invoke") from exc
+        usage = _usage_tokens(result)
+        self._record(
+            "invoke",
+            (time.perf_counter() - start) * 1000,
+            True,
+            tokens=usage,
+        )
         logger.info("[llm:%s] invoke 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
         return result
 
     def _stream(self, messages, stop=None, run_manager=None, **kwargs):
         self._log_start("stream")
         start = time.perf_counter()
+        last = None
         try:
             # 公开 stream() 已按 _should_stream 分流：流式模型逐块产出，非流式回退整条消息；
             # 统一转成 ChatGenerationChunk（整条消息需转成 AIMessageChunk）。
             for chunk in self._inner.stream(messages, stop=stop, **kwargs):
                 if not isinstance(chunk, BaseMessageChunk):
                     chunk = AIMessageChunk(**chunk.model_dump(exclude={"type"}))
+                last = chunk
                 yield ChatGenerationChunk(message=chunk)
         except Exception as exc:  # noqa: BLE001
+            self._record("stream", (time.perf_counter() - start) * 1000, False, error=str(exc))
             raise self._wrap_error(exc, "stream") from exc
+        self._record("stream", (time.perf_counter() - start) * 1000, True, tokens=_usage_tokens(last))
         logger.info("[llm:%s] stream 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
 
     # ---- 异步调用 ----
@@ -274,20 +346,32 @@ class LoggedChatModel(BaseChatModel):
         try:
             result = await self._inner._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
         except Exception as exc:  # noqa: BLE001
+            self._record("ainvoke", (time.perf_counter() - start) * 1000, False, error=str(exc))
             raise self._wrap_error(exc, "ainvoke") from exc
+        usage = _usage_tokens(result)
+        self._record(
+            "ainvoke",
+            (time.perf_counter() - start) * 1000,
+            True,
+            tokens=usage,
+        )
         logger.info("[llm:%s] ainvoke 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
         return result
 
     async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
         self._log_start("astream")
         start = time.perf_counter()
+        last = None
         try:
             async for chunk in self._inner.astream(messages, stop=stop, **kwargs):
                 if not isinstance(chunk, BaseMessageChunk):
                     chunk = AIMessageChunk(**chunk.model_dump(exclude={"type"}))
+                last = chunk
                 yield ChatGenerationChunk(message=chunk)
         except Exception as exc:  # noqa: BLE001
+            self._record("astream", (time.perf_counter() - start) * 1000, False, error=str(exc))
             raise self._wrap_error(exc, "astream") from exc
+        self._record("astream", (time.perf_counter() - start) * 1000, True, tokens=_usage_tokens(last))
         logger.info("[llm:%s] astream 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
 
 

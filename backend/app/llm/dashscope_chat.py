@@ -333,7 +333,22 @@ class DashScopeChatModel(BaseChatModel):
                 raise RuntimeError(self._friendly_error(resp))
             output = getattr(resp, "output", None)
             choices = output.get("choices") if isinstance(output, dict) else []
+            usage = getattr(resp, "usage", None)
+            usage_meta = None
+            # token 用量：非流式在 resp.usage；流式通常附着在末块，偶见独立尾块（无内容）。
+            # 统一提取后写入 chunk.usage_metadata，供上层记账（_usage_tokens 只认 usage_metadata）。
+            if usage is not None and usage.get("total_tokens", 0):
+                usage_meta = {
+                    "input_tokens": int(usage.get("input_tokens", 0) or 0),
+                    "output_tokens": int(usage.get("output_tokens", 0) or 0),
+                    "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                }
             if not choices:
+                # 无内容块：携带用量则产出空块（下游合并/记账会用到），否则跳过
+                if usage_meta is not None:
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(content="", usage_metadata=usage_meta)
+                    )
                 continue
             msg = choices[0].get("message") or {}
             reasoning = _content_text(msg.get("reasoning_content") or "")
@@ -344,12 +359,6 @@ class DashScopeChatModel(BaseChatModel):
                 additional_kwargs=extra,
                 tool_call_chunks=_to_tool_call_chunks(msg.get("tool_calls") or []),
             )
-            # 流式末块通常携带 usage（dict）：写入 chunk 供 LangChain 聚合时回填 usage_metadata
-            usage = getattr(resp, "usage", None)
-            if usage is not None and usage.get("total_tokens", 0):
-                chunk.usage_metadata = {
-                    "input_tokens": int(usage.get("input_tokens", 0) or 0),
-                    "output_tokens": int(usage.get("output_tokens", 0) or 0),
-                    "total_tokens": int(usage.get("total_tokens", 0) or 0),
-                }
+            if usage_meta is not None:
+                chunk.usage_metadata = usage_meta
             yield ChatGenerationChunk(message=chunk)

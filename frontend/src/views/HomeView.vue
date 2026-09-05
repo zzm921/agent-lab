@@ -9,6 +9,7 @@ import CapabilitySidebar from '../components/CapabilitySidebar.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import ExampleFillHint from '../components/ExampleFillHint.vue'
 import MemoryPanel from '../components/MemoryPanel.vue'
+import RunRecordsPanel from '../components/RunRecordsPanel.vue'
 import SandboxFilesPanel from '../components/SandboxFilesPanel.vue'
 
 const route = useRoute()
@@ -50,6 +51,8 @@ const ragEnabled = ref(hasRagScheme)
 const memoryEnabled = ref(true)
 /** 记忆管理面板开关 */
 const memoryOpen = ref(false)
+/** 运行记录面板开关（可观测性演示） */
+const runsOpen = ref(false)
 /** 「每轮压缩」演示：保留最近 N 轮对话原文，更早历史每轮被压缩；0 关闭（用系统默认阈值） */
 const keepRounds = ref(3)
 const sidebarOpen = ref(false)
@@ -172,6 +175,19 @@ function send() {
 
 <template>
   <div class="flex h-full w-full">
+    <!-- 运行记录：可观测性演示入口（右上角常驻，显眼） -->
+    <button
+      type="button"
+      class="fixed right-4 top-4 z-40 flex items-center gap-1.5 rounded-xl border border-indigo-500/40 bg-slate-900/90 px-3 py-2 text-xs font-semibold text-indigo-200 shadow-lg backdrop-blur transition hover:border-indigo-400 hover:text-white"
+      title="查看本次及历史对话的运行记录（SSE 事件流 + LLM 调用明细 + 聚合统计）"
+      @click="runsOpen = true"
+    >
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 7V5a1 1 0 011-1h2m10 0h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2m-10 0H5a1 1 0 01-1-1v-2m2-6h4v4H7v-4zm6 0h4v4h-4v-4z" />
+      </svg>
+      运行记录
+    </button>
+
     <CapabilitySidebar
       :caps="builtinCaps"
       :enabled-ids="enabled"
@@ -262,6 +278,12 @@ function send() {
       :open="memoryOpen"
       :session-id="stream.sessionId"
       @close="memoryOpen = false"
+    />
+
+    <RunRecordsPanel
+      :open="runsOpen"
+      :session-id="stream.sessionId"
+      @close="runsOpen = false"
     />
   </div>
 </template>

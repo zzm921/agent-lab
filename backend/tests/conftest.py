@@ -20,6 +20,18 @@ from app.memory.vector_store import VectorStore  # noqa: E402
 from app.rag.manager import RagManager  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_telemetry(monkeypatch):
+    """默认关闭运行记录落盘：避免测试跑写 data/telemetry；telemetry 专项测试自行开启并注入 tmp 目录。"""
+    from app.config import settings
+    from app.telemetry import store as telemetry_store
+
+    monkeypatch.setattr(settings, "telemetry_enabled", False)
+    telemetry_store.set_run_store(None)
+    yield
+    telemetry_store.set_run_store(None)
+
+
 def make_settings(**kw) -> Settings:
     defaults = {
         "llm_api_key": "test-key",

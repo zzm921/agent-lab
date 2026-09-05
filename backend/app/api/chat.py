@@ -215,10 +215,18 @@ async def quota_info(request: Request):
 
 
 @router.post("/approve")
-async def approve(req: ApproveRequest):
-    """HITL 审批：批准/拒绝/修改工具参数后恢复执行。"""
+async def approve(req: ApproveRequest, request: Request):
+    """HITL 审批：批准/拒绝/修改工具参数后恢复执行。
+
+    传 client_key（设备指纹/IP）供运行记录续写同一 run（审批前后一条完整记录）。
+    """
     runner = get_runner()
-    events = runner.resume(req.approval_id, req.decision, req.modified_args)
+    events = runner.resume(
+        req.approval_id,
+        req.decision,
+        req.modified_args,
+        client_key=_client_key(request),
+    )
     return _sse(events)
 
 

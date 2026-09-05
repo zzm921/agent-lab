@@ -213,3 +213,63 @@ export type AgentEvent =
   | { type: 'done'; summary: string; stats: Record<string, unknown> }
   | { type: 'error'; message: string; detail?: string }
   | { type: 'guard_refused'; reason: string; matched?: string }
+
+/* ---------- 运行记录（telemetry）：一次 stream（或 stream+resume 合并）的完整观测数据 ---------- */
+
+export type RunStatus = 'done' | 'pending' | 'interrupted' | 'error'
+
+export interface RunStats {
+  tool_calls: Record<string, number>
+  tool_failures: Record<string, number>
+  retries: number
+  approvals: number
+  llm_calls: number
+  tokens: { input: number; output: number; total: number }
+  cost_yuan: number
+  rag_retrieves: number
+  rag_hits: number
+  memory_reads: number
+  memory_writes: number
+  guards: number
+  offloads: number
+}
+
+/** 列表项：run 的元信息（不带事件流，轻量） */
+export interface RunMeta {
+  run_id: string
+  session_id: string
+  client_key: string
+  message?: string
+  mode?: string
+  rag_scheme?: string
+  rag_enabled?: boolean
+  prompt_strategy?: string
+  approval_policy?: string
+  resume_of?: string
+  start_ts: string
+  end_ts: string
+  duration_ms: number
+  status: RunStatus
+  summary: string
+  error: string
+  stats: RunStats
+}
+
+/** 入库事件：SSE 原始事件 + 序号/时间戳；delta 类已合并为完整 text；LLM 调用为 type=llm_call */
+export interface RunEvent {
+  seq: number
+  ts: number
+  type: string
+  [k: string]: unknown
+}
+
+/** 详情：一次 run 的完整记录 */
+export interface RunRecord {
+  meta: RunMeta
+  events: RunEvent[]
+}
+
+export interface RunListResponse {
+  runs: RunMeta[]
+  enabled: boolean
+}

@@ -1,39 +1,109 @@
 ---
 id: observability-eval
 name: 可观测性与评估
-shortDesc: Trace 全链路追踪 + 指标监控 + 离线评测集，让 Agent 从黑盒变为可调试可优化。
+shortDesc: 企业级可观测性 = 日志 + 指标 + 链路追踪三支柱；本项目以「运行记录」演示单进程全链路回放，并明示企业级差距。
 icon: chart-bar
 difficulty: int
-tags: [Observability, Tracing, Evaluation, LangSmith, RAGAS]
+tags: [Observability, Tracing, Metrics, Evaluation, Run Records]
 techFilters: [FastAPI]
 accent: '#8b5cf6'
 experience: false
 ---
 ## 为什么需要它
 
-Agent 自主执行让"复盘"变得困难。可观测性用 Tracing 记录每一步思考、工具调用与中间结果，配合 Token / 成本监控、工具失败率统计、循环异常检测定位问题；评估（Evals）用离线回归测试集持续打分，任何 Prompt / 模型 / Harness 调整都先过评测再上线。代表工具：LangSmith、LangFuse、Arize Phoenix、RAGAS、Braintrust。
+Agent 自主执行让"复盘"变得困难。一次对话里可能发生：多次 LLM 调用、工具审批与执行、记忆召回、RAG 多路检索——任何一个环节出错都难定位。可观测性把每次运行变成可回放的证据：每一步思考、每次调用、每个中间结果都有记录；配合指标与评测，任何 Prompt / 模型 / Harness 调整都先量化评估再上线。
 
-## 怎么解决
+## 一、企业级可观测性做法
 
-难点在链路与质量的量化——LLM 输出无固定标准，需定义评估维度（准确性 / 相关性 / 忠实度）；离线评测集需持续回流真实失败样本。业界做法：把 Prompt 当代码做版本管理，评测集接入 CI/CD 回归。
+企业级可观测性不是单个面板，而是 **Logging（日志）+ Metrics（指标）+ Tracing（链路追踪）** 三支柱，再叠加**离线评测（Evals）**，形成"可看 → 可量 → 可优化 → 可回归"的闭环。落地顺序建议：先打通 Tracing 看清调用链，再以日志落证据、以指标出视图，最后用评测锁质量。
 
-## 核心实现
-
-```python
-# 评估闭环：离线评测集 + Trace 采样 + 失败样本回流
-def evaluate(agent, eval_set):
-    for case in eval_set:
-        trace = agent.run_traced(case.query)   # 记录每一步
-        score = RAGAS({
-            "faithfulness": faithfulness(case, trace.answer),
-            "relevancy": relevancy(case.query, trace.answer),
-        })
-        if score < threshold:
-            collect(case)                      # 失败样本回流训练集
 ```
+三支柱 + 评测闭环
+┌──────────────────────────────────────────────────────────┐
+│  一次请求进入 → 生成 trace_id，全链路贯穿              │
+│                                                         │
+│  Tracing  │  Logging   │  Metrics  │  Evals            │
+│  span 树   │  结构化     │  RED +     │  离线评测集        │
+│  跨进程传播 │  日志       │  业务指标   │  CI/CD 回归       │
+│           │            │  SLO 告警  │  失败样本回流       │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 支柱一 · 结构化日志（Logging）
+
+日志不是给人 grep 的字符串，而是**机器可查询的结构化事件**。每条日志统一携带运行上下文，从任意一条反查单次运行全貌。
+
+- **必备字段**：`timestamp / level / trace_id / session_id / run_id / client_key`；事件维度再补 `scene / model / tool / cost`。
+- **日志分级**：`DEBUG`（详细入参出参，默认采样关闭）、`INFO`（调用与事件）、`WARN`（重试/降级）、`ERROR`（失败，必须带 trace_id 可追踪）。
+- **采样治理**：高 QPS 场景对 DEBUG/INFO 做 Head Sampling（按 trace_id 哈希采样），ERROR 全量保留——日志总量可控，排障证据不丢。
+
+```
+log(level=INFO, event="llm_call", {
+  trace_id, session_id, run_id, client_key,
+  scene="route", model="small-model",
+  latency_ms=120, tokens_in=80, tokens_out=20, cost=0.0003,
+  ok=true
+})
+```
+
+### 支柱二 · 指标（Metrics）
+
+指标回答"服务现在健康吗、钱花在哪、质量是否劣化"。用 **RED** 定义服务健康：Rate（请求量）/ Errors（错误率）/ Duration（时延分位 p50/p95/p99）；再叠加**业务指标**：Token 成本、工具失败率、审批通过率、RAG 检索命中率、记忆召回率。
+
+- **SLO 定义**：如"月度 p95 首 token 时延 < 1.5s 达 99.5%"，把可观测性变成可承诺的契约。
+- **成本与配额告警**：单日 Token 成本超阈值即熔断；模型 QPS 配额剩余不足告警，防成本失控。
+- **告警分级**：页面不可用（P0 立即响应）→ 错误率超标（P1 当日）→ 成本趋势（P2 周级观察），避免告警疲劳。
+
+### 支柱三 · 链路追踪（Tracing）
+
+以 OpenTelemetry 为骨架：一次请求生成 `trace_id`，跨进程通过 W3C `tracecontext` 头传播，每个模块一个 span，形成可下钻的 span 树。span 记录模块名 / 场景 / 入参摘要 / 结果 / 时延 / token 用量。
+
+```
+run(一次对话)                        trace_id=T-9f2a
+├─ span: llm_call(语义路由)            场景/模型/时延/token/成本
+├─ span: retrieve(检索)               方案/召回条数/命中
+├─ span: memory_read(记忆召回)         命中/来源/阈值
+├─ span: tool_call(工具执行)           工具名/参数/结果/重试
+└─ span: llm_call(主模型生成)          时延/token/成本/是否流式
+```
+
+MCP / HTTP / DB 等跨进程调用自动生成子 span，远端内部细节一并贯通；span 与日志用 `trace_id` 关联，"点开调用链 → 查对应日志 → 定位根因"三步完成排障。
+
+### 评测闭环（Evals）
+
+把 Prompt 当代码做版本管理，离线评测集接入 CI/CD 回归：任何调整（Prompt / 模型 / 路由策略 / RAG 参数）先跑评测再上线，失败样本自动回流评测集——让每一次优化"可证、可回滚"。
+
+## 二、本项目演示的做法：运行记录
+
+本项目在单进程内实现"**一条对话 = 一条 run 记录**"，覆盖三支柱中的 Tracing 主体，以运行记录演示"可回放、可量化"，并用前端面板做回放展示：
+
+- **数据三件套**：完整 SSE 事件流（delta 合并为完整文本）+ 每次 LLM 调用明细（场景 / 模型 / 时延 / token / 成本 / 成败）+ 聚合统计（工具调用与失败、重试、审批、RAG 检索、记忆读写、护栏拦截）。
+- **埋点机制**：runner 在流式 yield 边界挂载 sink 捕获事件；LLM 服务在四个调用入口（同步/异步 × 流式/非流式）统一记账，token 以 `usage_metadata` 为权威来源（流式在末块提取，非流式在响应体提取）；ContextVar 隔离单次运行，`finally` 收口防跨请求泄漏。
+- **连续性**：审批暂停时以 `pending` 落盘，用户批准后续写同一 `run_id`——一轮带审批的对话仍是完整一条记录。
+- **隔离与治理**：按设备指纹（X-Client-Id）隔离，只能看本人本机的 run；TTL 7 天 + 全库上限 500 条自动清理。
+- **演示入口**：页面右上角「运行记录」按钮 → 按会话分组 → 点击进入事件流回放 + LLM 明细 + 统计。
+
+演示可用的示例提问：
+
+- 「对比一下火车票与日常报销的流程差异，各自涉及哪些审批环节与额度标准？」——触发 agentic RAG 多轮检索与引用
+- 「我的主管是谁？」——触发主动记忆召回
+- 「帮我写一份项目周报，然后交给财务审批」——触发审批暂停 → 续写同一 run
+
+## 三、企业级还需要做啥（差距清单）
+
+| 差距 | 现状（本项目） | 企业级做法 |
+| --- | --- | --- |
+| 分布式链路追踪 | 单进程内 span 级事件流 | OpenTelemetry span 树 + trace_id 跨进程传播，MCP 远端内部可见 |
+| 日志检索平台 | run 记录落本地文件，前端面板查看 | ELK / Loki 集中检索，trace_id 一键关联日志 |
+| 指标聚合 | run 内聚合统计 | Prometheus + Grafana RED 仪表盘，全服务维度聚合 |
+| SLO 与告警 | 无 | 定义 SLO（时延/错误率/成本），分级告警 + Tail Sampling 控制采集成本 |
+| 模型分级 | 统一 `qwen3.5-flash` 跑全链路 | 语义判断（路由/改写/记忆选择/CRAG 评审）用小模型，复杂生成用大模型 |
+| 离线评测闭环 | 已有：金标评测集 + L1 确定性回归 + RAGAS 生成质量评测 + 回归门禁 | 补后半段：线上样本回流、用户反馈驱动、Prompt 版本化 |
+| 多租户与合规 | run 按设备隔离 | 企业级多租户隔离、访问审计、保留策略、敏感信息脱敏，对接合规 |
 
 ## 收益与边界
 
-- 全链路 Trace：思考 / 工具 / 中间结果全程可视化
-- 指标监控：Token 成本、失败率、循环异常自动告警
-- 离线评测集 + CI 回归，调整不回归
+- 全链路回放：事件流 + LLM 明细，单次运行从黑盒变证据
+- 成本可见：token 与成本逐次记账，驱动模型分级优化
+- 审批连续性：HITL 场景下记录不拆条
+- 边界明示：演示覆盖"单进程可观测"，跨进程追踪 / 指标看板 / 告警采样 / 评测在线回流为企业级待补项

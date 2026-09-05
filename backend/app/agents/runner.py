@@ -23,6 +23,8 @@ from app.llm.service import LLMService
 from app.memory.consolidate import maybe_consolidate
 from app.memory.proactive import maybe_recall as proactive_recall
 from app.security import InputGuard
+from app.telemetry.sink import ACTIVE_SINK
+from app.telemetry.store import get_run_store
 
 STRATEGY_PROMPTS = {
     "standard": "你是专业的 AI 助手，请直接、准确地回答用户的问题。",
@@ -457,7 +459,12 @@ class AgentRunner:
         store = self.sessions.long_memory(session_id, self.registry.embeddings)
         constant = self.sessions.constant_memory(self.registry.embeddings, client_key)
         # 提取用独立轻量场景（memory_consolidate：关闭思考）而非 chat 主模型——实测 thinking 使提取慢到 40s+，关闭后 ~2s
-        await maybe_consolidate(store, constant, msgs, self._scenario_llm("memory_consolidate"), self.settings, session_id)
+        # 提取是后台静默副作用：显式摘除 ACTIVE_SINK，避免其 LLM 调用污染本轮运行记录
+        token = ACTIVE_SINK.set(None)
+        try:
+            await maybe_consolidate(store, constant, msgs, self._scenario_llm("memory_consolidate"), self.settings, session_id)
+        finally:
+            ACTIVE_SINK.reset(token)
 
     def _schedule_consolidate(self, graph, config, session_id, memory_enabled: bool = True, client_key: str = "default"):
         """后台静默启动轮末记忆提取：不 await、不产事件，任务句柄登记防 GC 取消。"""
@@ -477,7 +484,52 @@ class AgentRunner:
         二者都满足才执行前置检索）。
         context_keep_rounds：>0 时进入「每轮压缩」演示模式——保留最近 N 轮对话原文，
         更早的历史每轮都被压缩（页面持续展示压缩卡片）；0 使用系统默认阈值。
+
+        可观测性：本轮全程挂载 TelemetrySink（ACTIVE_SINK 上下文变量贯穿 async 子任务），
+        SSE 事件流 + LLM 调用明细统一落盘为一条 run 记录；断连/异常/审批暂停也在 finally
+        中收口落盘，不丢记录（客户端中断标记 interrupted，审批暂停标记 pending 供 resume 续写）。
         """
+        store = get_run_store()
+        gen = self._stream_impl(
+            session_id, message, mode, enabled, prompt_strategy, approval_policy,
+            rag_scheme=rag_scheme, rag_enabled=rag_enabled, memory_enabled=memory_enabled,
+            context_keep_rounds=context_keep_rounds, client_key=client_key,
+        )
+        if store is None:
+            async for ev in gen:
+                yield ev
+            return
+        sink = store.new_run(
+            session_id,
+            client_key,
+            {
+                "message": message,
+                "mode": mode,
+                "rag_scheme": rag_scheme,
+                "rag_enabled": rag_enabled,
+                "prompt_strategy": prompt_strategy,
+                "approval_policy": approval_policy,
+            },
+        )
+        token = ACTIVE_SINK.set(sink)
+        try:
+            async for ev in gen:
+                sink.observe(ev)
+                yield ev
+        finally:
+            # A3: 无论正常结束、断连、审批暂停还是异常，都收口落盘并复位上下文变量，
+            # 避免 ACTIVE_SINK 泄漏到同 event loop 的下一个请求；同时显式关闭内层
+            # 生成器，确保后台图任务在客户端中断时被取消。
+            ACTIVE_SINK.reset(token)
+            if not sink.closed:
+                sink.close(status="pending" if sink.paused else "")
+            try:
+                await gen.aclose()
+            except Exception:  # noqa: BLE001 — 内层收尾失败不影响运行记录
+                pass
+
+    async def _stream_impl(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None, rag_enabled=True, memory_enabled=True, context_keep_rounds=0, client_key="default"):
+        """stream 的主体实现：仅产出原始 SSE 事件，不感知运行记录（由 stream 包装挂载）。"""
         queue = asyncio.Queue()
         # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
         tool_count = self.harness.new_tool_counter(session_id)
@@ -573,8 +625,12 @@ class AgentRunner:
                 self._schedule_consolidate(graph, config, session_id, memory_enabled, client_key)
             yield ev
 
-    async def resume(self, approval_id, decision, modified_args):
-        """通过审批号找到暂停的会话，恢复图执行并继续产出 SSE 事件。"""
+    async def resume(self, approval_id, decision, modified_args, client_key="default"):
+        """通过审批号找到暂停的会话，恢复图执行并继续产出 SSE 事件。
+
+        client_key：审批方客户端标识（设备指纹/IP），用于定位并续写该会话 pending 的
+        运行记录（同一 run_id，保证一轮对话只有一条完整记录）；与 stream 同源。
+        """
         session_id = self.harness.resolve_approval(approval_id)
         spec = self._specs.get(session_id)
         config = self._configs.get(session_id)
@@ -595,8 +651,24 @@ class AgentRunner:
             command = Command(resume={iid: decision_value for iid in interrupt_ids})
         else:
             command = Command(resume=decision_value)
-        async for ev in self._run_graph(session_id, graph, config, command, queue, tool_count):
-            yield ev
+        store = get_run_store()
+        if store is None:
+            async for ev in self._run_graph(session_id, graph, config, command, queue, tool_count):
+                yield ev
+            return
+        # B4: 审批续写同一 run——找到该会话最近一条 pending 记录，事件续接、同 run_id 覆盖写回
+        sink = store.resume_run(session_id, client_key)
+        if sink is None:
+            sink = store.new_run(session_id, client_key, {"mode": mode, "resume_of": approval_id})
+        token = ACTIVE_SINK.set(sink)
+        try:
+            async for ev in self._run_graph(session_id, graph, config, command, queue, tool_count):
+                sink.observe(ev)
+                yield ev
+        finally:
+            ACTIVE_SINK.reset(token)
+            if not sink.closed:
+                sink.close(status="pending" if sink.paused else "")
 
     def stop(self, session_id: str) -> None:
         """取消指定会话正在运行的后台图任务（委托护栏层止损）。"""

@@ -112,6 +112,17 @@ class Settings(BaseSettings):
     memory_proactive_top_k: int = 3  # 主动召回每轮注入条数上限
     memory_proactive_max_chars: int = 400  # 主动召回注入字符预算（超预算截断）
 
+    # 运行记录（telemetry）可观测性：每轮对话的 SSE 事件流 + LLM 调用明细落盘，
+    # 供前端「运行记录」面板查看与回放（企业级 Trace 最小闭环）。
+    telemetry_enabled: bool = True  # 总开关（关闭则不落盘、API 返回空）
+    telemetry_dir: str = "./data/telemetry"  # 运行记录根目录（相对 backend 根解析）
+    telemetry_ttl_days: int = 7  # 运行记录 TTL（天），超期清理
+    telemetry_max_runs: int = 500  # 全库最大运行记录数，超限删最旧
+    # LLM 成本估算单价（元 / 百万 token）：仅用于运行记录成本展示，可按实际价格调整；
+    # 未配置时按 0 计（展示 token 数但成本为 0）
+    llm_price_input_per_1m: float = 0.3
+    llm_price_output_per_1m: float = 0.6
+
     # 护栏：工具调用上限与熔断
     tool_max_calls: int =10 # 单轮最多工具调用次数，达到后拒绝后续调用
     circuit_fail_threshold: int = 3  # 同一会话内“同一工具+相同参数”连续失败次数，达到即熔断该参数调用（换参重试放行）
