@@ -7,8 +7,11 @@ import type {
   ApprovalRequest,
   HitItem,
   ModeId,
+  PipelineDetail,
   PromptStrategy,
   RagSchemeId,
+  TaskGraphNode,
+  TaskGraphSummary,
 } from '../types/agent'
 
 export type StreamStatus = 'idle' | 'streaming' | 'waiting_approval' | 'done' | 'error'
@@ -53,11 +56,32 @@ export type StepKind =
   | 'grade' // CRAG 证据评审（agentic）
   | 'correct' // CRAG 纠错决策（agentic）
   | 'verify' // Self-RAG 答案校验（agentic）
+  | 'seed_reuse' // 跨轮 seed 复用（agentic 下一轮复用上轮命中）
   | 'memory_read' // 记忆召回
   | 'memory_write' // 记忆写入
   | 'memory_constant' // 常驻记忆注入 system（首轮）
   | 'reflect' // 反思意见
   | 'agent_event' // 多智能体 worker 事件
+  | 'task_graph' // 检索任务图（agentic knowledge_task：节点 DAG + 逐节点执行状态）
+
+/** 检索任务图节点执行状态（task_plan 建立 / task_retry / task_node 更新） */
+export interface TaskNodeState {
+  state: 'pending' | 'running' | 'resolved' | 'gap'
+  query: string
+  confidence?: number
+  hits_count?: number
+  retries?: number
+  missing_facts?: string[]
+  note?: string
+  /** 缺口改写重查记录（task_retry 事件追加） */
+  rewrites?: { from: string; to: string; retries: number; reason?: string }[]
+  /** 节点检索记录（内层 retrieve 事件按 node_id 聚合，展示每次检索命中的具体证据） */
+  retrieves?: { query: string; hits_count: number; hits: HitItem[] }[]
+  /** 节点答案充分性判定（内层 answerability 事件按 node_id 聚合） */
+  answerability?: { answerable: boolean; confidence: number; missing_facts: string[] }
+  /** 节点内层决策日志（grade/correct/verify/agent_step 摘要） */
+  innerLog?: { label: string; detail: string }[]
+}
 
 export interface StepEntry {
   id: number
@@ -93,6 +117,8 @@ export interface StepEntry {
   rewrites?: string[]
   /** retrieve：是否经过重排 */
   reranked?: boolean
+  /** retrieve：检索链路完整明细（agentic pipeline：触发/查询向量生成/每路策略/筛选/排序） */
+  pipeline?: PipelineDetail
   /** classify：五维路由决策（D1 是否检索 / D3 检索策略 / D4 复杂度 / D5 生成模式 + 置信度） */
   retrieval_need?: boolean
   retrieval_mode?: string
@@ -169,6 +195,14 @@ export interface StepEntry {
   agentStatus?: string
   task?: string
   agentResult?: string
+  /** task_graph：检索任务图（agentic knowledge_task） */
+  taskId?: string
+  taskNodes?: TaskGraphNode[]
+  taskThought?: string
+  taskNote?: string
+  nodeStates?: Record<string, TaskNodeState>
+  taskCompletion?: string
+  taskSummary?: TaskGraphSummary
 }
 
 export interface ErrorInfo {
@@ -263,6 +297,37 @@ export function useChatStream(): ChatStream {
   function closeStreamingStep() {
     const prev = stream.steps[stream.steps.length - 1]
     if (prev && prev.streaming) prev.streaming = false
+  }
+
+  /** 取最近的检索任务图步骤（agentic knowledge_task 整棵任务图卡片） */
+  function lastTaskGraphStep(): StepEntry | undefined {
+    for (let i = stream.steps.length - 1; i >= 0; i--) {
+      if (stream.steps[i].kind === 'task_graph') return stream.steps[i]
+    }
+    return undefined
+  }
+
+  /** 内层事件携带 node_id 时，把对应任务图节点标记为「执行中」（未定终态前） */
+  function markTaskNodeRunning(nodeId?: string) {
+    if (!nodeId) return
+    const s = lastTaskGraphStep()
+    if (!s) return
+    const ns = s.nodeStates ?? {}
+    const cur = ns[nodeId]
+    if (cur && cur.state !== 'resolved' && cur.state !== 'gap') {
+      cur.state = 'running'
+    }
+  }
+
+  /** 取任务图某节点状态：内层中间结果（检索证据/判定/决策）按 node_id 聚合进对应节点 */
+  function nodeStateFor(nodeId?: string): TaskNodeState | undefined {
+    if (!nodeId) return undefined
+    const s = lastTaskGraphStep()
+    if (!s) return undefined
+    const ns = s.nodeStates ?? {}
+    const cur = ns[nodeId] ?? { state: 'running' as const, query: '' }
+    ns[nodeId] = cur
+    return cur
   }
 
   /** 追加流式文本：与当前正在流的同类步骤合并，否则新开一步（流水线） */
@@ -401,7 +466,26 @@ export function useChatStream(): ChatStream {
         break
       }
       case 'retrieve':
-        pushStep({ kind: 'retrieve', query: ev.query, hits: ev.hits, scheme: ev.scheme, reranked: ev.reranked })
+        markTaskNodeRunning(ev.node_id)
+        {
+          const ns = nodeStateFor(ev.node_id)
+          if (ns) {
+            // 节点检索记录：展示每次检索命中的具体证据（knowledge_task 中间结果）
+            ns.retrieves = [...(ns.retrieves ?? []), { query: ev.query, hits_count: ev.hits.length, hits: ev.hits }]
+          }
+        }
+        pushStep({
+          kind: 'retrieve',
+          query: ev.query,
+          hits: ev.hits,
+          scheme: ev.scheme,
+          reranked: ev.reranked,
+          pipeline: ev.pipeline,
+        })
+        break
+      case 'seed_reuse':
+        // agentic：跨轮 seed 复用（下一轮复用上轮命中，供 RRF 融合与轨迹展示）
+        pushStep({ kind: 'seed_reuse', query: ev.query, scheme: ev.scheme, count: ev.count })
         break
       case 'rewrite':
         pushStep({ kind: 'rewrite', query: ev.query, scheme: ev.scheme, rewrites: ev.rewrites, reason: ev.reason })
@@ -508,8 +592,20 @@ export function useChatStream(): ChatStream {
           file: ev.file,
         })
         break
-      case 'answerability':
+      case 'answerability': {
         // 检索后答案充分性验证：展示最终结论（可答 / 升级检索 / 追问澄清）与缺失事实
+        markTaskNodeRunning(ev.node_id)
+        {
+          const ns = nodeStateFor(ev.node_id)
+          if (ns) {
+            // 节点充分性判定（knowledge_task 中间结果）
+            ns.answerability = {
+              answerable: !!ev.verdict?.answerable,
+              confidence: ev.confidence ?? 0,
+              missing_facts: [...(ev.verdict?.missing_facts ?? [])],
+            }
+          }
+        }
         pushStep({
           kind: 'answerability',
           query: ev.query,
@@ -518,8 +614,16 @@ export function useChatStream(): ChatStream {
           escalated: ev.escalated,
         })
         break
+      }
       case 'agent_step': {
         // agentic：检索 Agent 单步工具执行，逐步流式追加到同一张卡片（保持流水线原始位置）
+        markTaskNodeRunning(ev.node_id)
+        {
+          const ns = nodeStateFor(ev.node_id)
+          if (ns && ev.step?.tool) {
+            ns.innerLog = [...(ns.innerLog ?? []), { label: '内层工具', detail: ev.step.tool }]
+          }
+        }
         const lastStep = stream.steps[stream.steps.length - 1]
         if (lastStep && lastStep.kind === 'agent_step') {
           lastStep.agentSteps = [...(lastStep.agentSteps ?? []), ev.step]
@@ -530,6 +634,16 @@ export function useChatStream(): ChatStream {
       }
       case 'grade':
         // agentic：CRAG 证据评审（保留相关证据数 / 候选总数 / 缺口）
+        markTaskNodeRunning(ev.node_id)
+        {
+          const ns = nodeStateFor(ev.node_id)
+          if (ns) {
+            ns.innerLog = [
+              ...(ns.innerLog ?? []),
+              { label: '证据评审', detail: `保留 ${ev.kept}/${ev.total} 条证据${ev.missing_facts?.length ? `，缺：${ev.missing_facts.join('；')}` : ''}` },
+            ]
+          }
+        }
         pushStep({
           kind: 'grade',
           query: ev.query,
@@ -542,6 +656,16 @@ export function useChatStream(): ChatStream {
         break
       case 'correct':
         // agentic：CRAG 纠错决策（纠错轮次 + 下一波工具调用）
+        markTaskNodeRunning(ev.node_id)
+        {
+          const ns = nodeStateFor(ev.node_id)
+          if (ns) {
+            ns.innerLog = [
+              ...(ns.innerLog ?? []),
+              { label: '纠错决策', detail: `第 ${ev.round} 轮，下一波调用 ${ev.calls?.length ?? 0} 个工具` },
+            ]
+          }
+        }
         pushStep({
           kind: 'correct',
           query: ev.query,
@@ -553,6 +677,16 @@ export function useChatStream(): ChatStream {
         break
       case 'verify':
         // agentic：Self-RAG 答案校验（可答 / 缺口）
+        markTaskNodeRunning(ev.node_id)
+        {
+          const ns = nodeStateFor(ev.node_id)
+          if (ns) {
+            ns.innerLog = [
+              ...(ns.innerLog ?? []),
+              { label: '答案校验', detail: ev.answerable ? '支持度足够，可答' : `证据不足${ev.missing_facts?.length ? `：${ev.missing_facts.join('；')}` : ''}` },
+            ]
+          }
+        }
         pushStep({
           kind: 'verify',
           query: ev.query,
@@ -597,6 +731,73 @@ export function useChatStream(): ChatStream {
           agentResult: ev.result,
         })
         break
+      case 'task_plan': {
+        // 检索任务图：首次创建整张卡片（节点 DAG + 逐节点执行状态），后续事件就地更新
+        const last = lastTaskGraphStep()
+        if (last && last.taskId === ev.task_id) {
+          last.taskNodes = ev.nodes
+          last.taskThought = ev.thought
+          last.taskNote = ev.note
+        } else {
+          const nodeStates: Record<string, TaskNodeState> = {}
+          for (const n of ev.nodes) nodeStates[n.id] = { state: 'pending', query: n.query }
+          pushStep({
+            kind: 'task_graph',
+            taskId: ev.task_id,
+            query: ev.query,
+            taskNodes: ev.nodes,
+            taskThought: ev.thought,
+            taskNote: ev.note,
+            nodeStates,
+          })
+        }
+        break
+      }
+      case 'task_retry': {
+        // 节点缺口改写重查：节点标记「执行中」并记录改写轨迹
+        const s = lastTaskGraphStep()
+        if (s) {
+          const ns = s.nodeStates ?? {}
+          const cur = ns[ev.node_id] ?? { state: 'running' as const, query: ev.query_prev }
+          cur.state = 'running'
+          cur.query = ev.rewrite_query
+          cur.rewrites = [...(cur.rewrites ?? []), { from: ev.query_prev, to: ev.rewrite_query, retries: ev.retries, reason: ev.reason }]
+          ns[ev.node_id] = cur
+        }
+        break
+      }
+      case 'task_node': {
+        // 节点终态落定：resolved / gap + 置信度 / 命中数 / 缺口 / 备注
+        const s = lastTaskGraphStep()
+        if (s) {
+          const ns = s.nodeStates ?? {}
+          ns[ev.node_id] = {
+            state: ev.state,
+            query: ev.node_query,
+            confidence: ev.confidence,
+            hits_count: ev.hits_count,
+            retries: ev.retries,
+            missing_facts: ev.missing_facts,
+            note: ev.note,
+            rewrites: ns[ev.node_id]?.rewrites,
+          }
+        }
+        break
+      }
+      case 'task_done': {
+        // 任务完成：整图汇总（完成度 / 可答节点数 / 缺口数 / 置信度）
+        const s = lastTaskGraphStep()
+        if (s) {
+          s.taskCompletion = ev.result.completion
+          s.taskSummary = {
+            completion: ev.result.completion,
+            resolved: ev.result.resolved,
+            gaps: ev.result.gaps,
+            confidence: ev.result.confidence,
+          }
+        }
+        break
+      }
       case 'approval_request':
         stream.approval = { approval_id: ev.approval_id, tool_calls: ev.tool_calls }
         break

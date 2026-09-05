@@ -26,6 +26,8 @@ class RetrieveResult:
     plan: dict[str, Any] | None = None  # 多跳检索计划（规划-执行-验证：steps+reason，非多跳为空）
     verification: dict[str, Any] | None = None  # 多跳质量闸门结果（{"covered","missing","patched"}，非多跳为空）
     answerability: dict[str, Any] | None = None  # 答案充分性验证（{"answerable","missing_facts","recommendation","escalate_to"}）
+    confidence: float | None = None  # 充分性置信度（0~1，agentic 契约；其他方案为 None）
+    cost: dict[str, Any] | None = None  # 检索成本（{"tokens","calls","latency_ms"}，agentic 契约；其他方案为 None）
     trace: dict[str, Any] | None = None  # agentic 检索 Agent 轨迹（{"steps","tool_calls"}，其他方案为 None）
 
 

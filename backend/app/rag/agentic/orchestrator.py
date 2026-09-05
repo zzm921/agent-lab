@@ -42,6 +42,7 @@ from app.rag.agentic.roles import (
     PlannerAgent,
     RoleOutcome,
     RouterAgent,
+    RouteOutcome,
     VerifierAgent,
 )
 from app.rag.agentic.state import (
@@ -73,7 +74,11 @@ class OrchestratorBudgets:
 
 @dataclass
 class OrchResult:
-    """编排结果：最终证据 + 闸门结论 + 轨迹（方案层包装为 RetrieveResult）。"""
+    """编排结果：最终证据 + 闸门结论 + 契约字段 + 轨迹（方案层包装为 RetrieveResult）。
+
+    层间结构化契约（L1 内层 → L2 外层）：verdict/missing_facts 供上层做决策，
+    confidence 供上层评估可信度，cost 供上层记账/审计——外层只读契约、不替内层判断证据够不够。
+    """
 
     hits: list[dict[str, Any]] = field(default_factory=list)
     reranked: bool = False
@@ -84,7 +89,10 @@ class OrchResult:
     retrieval_need: bool = True
     facts: list[str] = field(default_factory=list)
     corrections: int = 0
+    confidence: float = 0.0  # 充分性置信度（0~1，确定性口径）
+    cost: dict[str, Any] = field(default_factory=dict)  # 检索成本 {"tokens","calls","latency_ms"}
     trace: dict[str, Any] = field(default_factory=dict)
+    pipeline: dict[str, Any] = field(default_factory=dict)  # 检索链路完整明细（触发/变换/策略/筛选/排序）
 
     @property
     def verdict(self) -> dict[str, Any]:
@@ -131,6 +139,7 @@ class _GraphState(TypedDict, total=False):
     verdict: dict[str, Any] | None  # 末轮校验结论 {"answerable","missing_facts"}
     retrieve_ran: bool  # 本波是否实际执行检索（预算/超时短路）
     has_correct: bool  # 纠错波是否产出可用调用
+    pre_route: dict[str, Any] | None  # 主循环外前置路由决策（复用则跳过 RouterAgent，避免二次路由）
 
 
 class AgenticOrchestrator:
@@ -209,6 +218,33 @@ class AgenticOrchestrator:
         )
         return outcome
 
+    # ---- 层间契约：置信度 / 成本（确定性口径，供外层消费与记账） ----
+
+    @staticmethod
+    def _confidence(agent: AgentState, answerable: bool, missing: list[str]) -> float:
+        """充分性置信度（0~1，确定性）：证据覆盖事实比例打底，规则回退/无证据降权。
+
+        口径：可答时 0.5+0.5×覆盖比；缺口时 0.2+0.4×覆盖比（覆盖部分仍可先答）；
+        任一角色发生规则回退（fail_streak>0）减 0.1；无检索证据直接折半。
+        """
+        facts = agent.facts or [agent.query]
+        cov = max(0.0, min(1.0, (len(facts) - len(missing)) / max(1, len(facts))))
+        conf = (0.5 + 0.5 * cov) if answerable else (0.2 + 0.4 * cov)
+        if not agent.evidence:
+            conf *= 0.5
+        if any(streak > 0 for streak in agent.fail_streak.values()):
+            conf -= 0.1
+        return round(max(0.0, min(1.0, conf)), 2)
+
+    @staticmethod
+    def _cost(agent: AgentState) -> dict[str, Any]:
+        """检索成本口径：token 记账（已有）+ 工具调用数（含护栏拦截）+ 墙钟时延。"""
+        return {
+            "tokens": dict(agent.tokens),
+            "calls": agent.total_tool_exec + sum(agent.role_llm_calls.values()),
+            "latency_ms": round((time.monotonic() - agent.started) * 1000, 1) if agent.started else 0.0,
+        }
+
     # ---- 证据管线（每波共享） ----
 
     @staticmethod
@@ -268,12 +304,24 @@ class AgenticOrchestrator:
         outbox: list[dict] = [
             {"type": "classify", "query": agent.query, "scheme": "agentic", "status": "running"},
         ]
-        route = await asyncio.to_thread(
-            self._stage, agent, ROLE_ROUTE, "route",
-            lambda: self.router.run(agent.query, agent, use_llm=self._use_llm(agent, ROLE_ROUTE)),
-        )
+        pre = state.get("pre_route")
+        if pre:
+            # 复用主循环外前置的轻量路由决策（route_only 产出）：跳过 RouterAgent，
+            # 省一次 LLM 调用，且保证前后生成策略一致（同一 query 不重复路由）。
+            route = RouteOutcome(
+                retrieval_need=bool(pre.get("retrieval_need", True)),
+                generation_mode=str(pre.get("generation_mode") or "citation"),
+                thought=str(pre.get("reason") or "前置语义路由"),
+            )
+            logger.info("[orchestrator] 路由：复用前置决策 need=%s mode=%s", route.retrieval_need, route.generation_mode)
+        else:
+            route = await asyncio.to_thread(
+                self._stage, agent, ROLE_ROUTE, "route",
+                lambda: self.router.run(agent.query, agent, use_llm=self._use_llm(agent, ROLE_ROUTE)),
+            )
         agent.retrieval_need = route.retrieval_need
         agent.generation_mode = route.generation_mode
+        agent.route_thought = route.thought or ""  # pipeline.trigger.reason（完整链路日志）
         outbox.append({
             "type": "classify", "query": agent.query, "scheme": "agentic", "status": "done",
             "retrieval_need": route.retrieval_need,
@@ -325,16 +373,34 @@ class AgenticOrchestrator:
         calls = (state.get("calls") or [])[:remaining]
         wave = await asyncio.to_thread(self.registry.execute_wave, calls, state.get("k"), self._recall_k(state.get("k") or 3), agent)
         agent.total_tool_exec += len(calls)
+        recall_k = self._recall_k(state.get("k") or 3)
+        guarded = 0
         for wr in wave:
             params = {"query": wr.call.query, "reason": wr.call.reason}
             if wr.call.volume:
                 params["volume"] = wr.call.volume
+            if wr.note:
+                guarded += 1  # 护栏拦截/降级计数（pipeline.filters）
             agent.add_event(
                 TraceEvent(
                     seq=agent.next_seq(), role="retriever", action=wr.call.action,
                     params=params, hits=len(wr.hits), note=wr.note or "",
                 )
             )
+            # 每路检索明细（pipeline.strategy）：命中分数分布 + 查询变换方法
+            scores = [round(float(h.get("score") or 0.0), 3) for h in wr.hits]
+            scores.sort(reverse=True)
+            agent.recall_meta.append({
+                "tool": wr.call.action,
+                "query": wr.call.query,
+                "volume": wr.call.volume or None,
+                "reason": wr.call.reason or "",
+                "guarded": wr.note or None,
+                "recall_k": recall_k,
+                "hits": len(wr.hits),
+                "scores": scores[:3],
+                "query_pipeline": wr.query_pipeline,
+            })
             outbox.append({
                 "type": "agent_step", "query": agent.query, "scheme": "agentic",
                 "step": {
@@ -347,13 +413,23 @@ class AgenticOrchestrator:
                 "[orchestrator] 检索 [%s] %r → %d 条%s",
                 wr.call.action, wr.call.query, len(wr.hits), f"（{wr.note}）" if wr.note else "",
             )
+        if guarded:
+            agent.filters_meta.append({"name": "guard", "dropped": guarded})
         fused, keep = await asyncio.to_thread(
             self._fuse_wave, wave, state.get("seed_hits"), state.get("k") or 3, len(agent.facts)
         )
+        agent.ranking_meta["fusion"] = {
+            "method": "RRF(K=60)", "fused": len(fused), "keep": keep,
+        }
         reranked = False
         if fused:
+            before = len(fused)
             fused = await asyncio.to_thread(lambda: self.reranker.rerank(agent.query, fused)[:keep])
             reranked = True
+            agent.ranking_meta["rerank"] = {
+                "model": getattr(self.reranker, "model", "lexical"),
+                "before": before, "after": len(fused),
+            }
         return {"outbox": outbox, "fused": fused, "reranked": reranked, "retrieve_ran": True}
 
     def _after_retrieve(self, state: _GraphState) -> str:
@@ -371,11 +447,14 @@ class AgenticOrchestrator:
         )
         kept = [h for i, h in enumerate(fused) if i in set(grade.keep)] if grade.keep else []
         logger.info("[orchestrator] 评审：%d/%d 条相关（%s）", len(kept), len(fused), grade.thought or "规则回退")
+        agent.filters_meta.append({"name": "grade", "kept": len(kept), "total": len(fused)})
         compress_metrics: dict[str, int] | None = None
         if kept:
             # 压缩只做去重 + 超长截断，不按 top_k 硬截断：Grader 确认的相关证据全部保留
             # （硬截断会丢掉先前确认的事实，导致 Verifier 误判缺口、Corrector 重复检索）
             kept, compress_metrics = await asyncio.to_thread(self.compressor.compress, agent.query, kept, len(kept))
+            if compress_metrics:
+                agent.filters_meta.append({"name": "compress", **compress_metrics})
         # 证据跨轮累积（子块，供 Grader/Verifier 精准判断；父块回填延后到最终结果）
         agent.evidence = self._merge_evidence(agent.evidence, kept)
         outbox: list[dict] = [{
@@ -493,8 +572,8 @@ class AgenticOrchestrator:
         return builder.compile()
 
     @staticmethod
-    def _initial_state(query: str, k: int | None, seed_hits: list[dict[str, Any]] | None, budgets) -> dict:
-        agent = AgentState(query=query, deadline=time.monotonic() + budgets.timeout_s)
+    def _initial_state(query: str, k: int | None, seed_hits: list[dict[str, Any]] | None, budgets, pre_route: dict[str, Any] | None = None) -> dict:
+        agent = AgentState(query=query, deadline=time.monotonic() + budgets.timeout_s, started=time.monotonic())
         return {
             "agent": agent,
             "outbox": [],
@@ -503,13 +582,20 @@ class AgenticOrchestrator:
             "reranked": False,
             "compress_metrics": None,
             "verdict": None,
+            "pre_route": pre_route,
         }
 
     def _build_result(self, agent: AgentState, final: dict) -> OrchResult:
-        """终态 → OrchResult（父块回填：Verifier 基于精准子块判断，注入生成 LLM 用父块全文）。"""
+        """终态 → OrchResult（父块回填：Verifier 基于精准子块判断，注入生成 LLM 用父块全文）。
+
+        层间契约：confidence（充分性置信度）与 cost（token/调用/时延）随结果下发，
+        供外层决策/记账；非检索路径（寒暄）只记成本，不评置信度。
+        """
         if not agent.retrieval_need:
             result = OrchResult(retrieval_need=False, generation_mode=agent.generation_mode)
+            result.cost = self._cost(agent)
             result.trace = agent.trace(0)
+            result.pipeline = agent.build_pipeline()
             return result
         verdict = final.get("verdict") or {}
         answerable = bool(verdict.get("answerable"))
@@ -523,19 +609,31 @@ class AgenticOrchestrator:
             generation_mode=agent.generation_mode,
             facts=agent.facts,
             corrections=agent.correction_rounds,
+            confidence=self._confidence(agent, answerable, missing),
+            cost=self._cost(agent),
         )
         result.trace = agent.trace(agent.correction_rounds)
+        result.pipeline = agent.build_pipeline()
         return result
 
     # ---- 主入口（同步） ----
 
-    def run(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None) -> OrchResult:
+    def route_only(self, query: str) -> RouteOutcome:
+        """轻量路由（不进图）：只跑 Router 角色（LLM + 规则回退），供主循环外前置
+        做生成策略决策，产出可复用于检索的 pre_route（避免工具内二次路由）。"""
+        agent = AgentState(query=query, deadline=time.monotonic() + self.budgets.timeout_s, started=time.monotonic())
+        return self._stage(
+            agent, ROLE_ROUTE, "route",
+            lambda: self.router.run(query, agent, use_llm=self._use_llm(agent, ROLE_ROUTE)),
+        )
+
+    def run(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None, pre_route: dict[str, Any] | None = None) -> OrchResult:
         """同步编排：编译图 ainvoke 一次跑完状态机（评测脚本/同步上下文用）。
 
         当前线程已处运行中事件循环时（异步 handler 内同步调用 retrieve_full），
         转交独立线程执行，保持同步语义不变。
         """
-        initial = self._initial_state(query, k, seed_hits, self.budgets)
+        initial = self._initial_state(query, k, seed_hits, self.budgets, pre_route)
         config = {"recursion_limit": self._recursion_limit}
         coro = self._graph.ainvoke(initial, config=config)
         try:
@@ -548,14 +646,17 @@ class AgenticOrchestrator:
 
     # ---- 主入口（异步流式：逐事件下发） ----
 
-    async def astream(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None):
+    async def astream(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None, pre_route: dict[str, Any] | None = None):
         """异步流式编排：编译图 astream 逐 super-step 排空 outbox 事件。
 
         事件序列：classify(running/done) → plan(running/done) → [agent_step* → grade →
         verify →（不足则 correct → 下一波）] → retrieve(含 trace) → compress → answerability。
         决策与工具执行均为同步阻塞调用，统一放线程池不阻塞事件循环（项目硬约束）。
+
+        pre_route：主循环外前置的路由决策（{retrieval_need, generation_mode, reason}），
+        传入则 route 节点跳过 RouterAgent 直接复用（省一次 LLM、保证生成策略前后一致）。
         """
-        initial = self._initial_state(query, k, seed_hits, self.budgets)
+        initial = self._initial_state(query, k, seed_hits, self.budgets, pre_route)
         agent = initial["agent"]
         sent = 0
         final = initial
@@ -574,6 +675,8 @@ class AgenticOrchestrator:
         yield {
             "type": "retrieve", "query": agent.query, "scheme": "agentic",
             "hits": result.hits, "reranked": result.reranked, "trace": result.trace,
+            "pipeline": result.pipeline,
+            "confidence": result.confidence, "cost": result.cost,
         }
         if result.compressed and (
             result.compressed["kept"] < result.compressed["original"] or result.compressed["truncated"] > 0
@@ -582,4 +685,5 @@ class AgenticOrchestrator:
         yield {
             "type": "answerability", "query": agent.query, "scheme": "agentic",
             "verdict": result.verdict, "escalated": result.corrections > 0,
+            "confidence": result.confidence, "cost": result.cost,
         }

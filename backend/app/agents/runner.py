@@ -19,6 +19,9 @@ from app.agents.modes.plan_execute import build_plan_execute_agent
 from app.agents.modes.react import build_react_agent
 from app.agents.modes.reflection import build_reflection_agent
 from app.agents.tools_builder import build_tools
+from app.rag.task.graph import SessionLedger
+from app.rag.task.rag_task_tool import make_knowledge_task_tool
+from app.tools.rag_tool import rag_block_payload
 from app.llm.service import LLMService
 from app.memory.consolidate import maybe_consolidate
 from app.memory.proactive import maybe_recall as proactive_recall
@@ -65,6 +68,8 @@ class AgentRunner:
         # 跨轮 seed 复用：按会话记录上一轮最终检索命中（已含重排/压缩），
         # 供 modular 下一轮作为「候选证据」复用（经 _cross_turn_seed 分数/相关性闸门过滤）。
         self._last_hits: dict[str, list[dict]] = {}
+        # 会话账本（P3）：跨任务累计内层触发/token，与任务账本叠加防级联超支
+        self._task_ledgers: dict[str, SessionLedger] = {}
         # L2 主动语义召回：会话级「已见记忆 id 集合」——同一记忆不重复注入（跨轮去重）
         self._injected_memory_ids: dict[str, set[str]] = {}
         # 后台静默任务（轮末记忆提取等）：持句柄防 GC 取消，完成即移除
@@ -225,21 +230,6 @@ class AgentRunner:
         return {"messages": msgs}
 
     @staticmethod
-    def _build_sources(hits: list[dict]) -> list[str]:
-        """从命中元数据生成来源清单：卷/章/节 → 文件 → 兜底「知识库」。"""
-        sources = []
-        for i, h in enumerate(hits, start=1):
-            meta = h.get("metadata") or {}
-            parts = [x for x in (meta.get("volume"), meta.get("chapter"), meta.get("section")) if x]
-            if parts:
-                label = " / ".join(parts)
-            else:
-                src = meta.get("source")
-                label = src if src and src != "builtin" else "知识库"
-            sources.append(f"[{i}] {label}")
-        return sources
-
-    @staticmethod
     def _augment_query(
         message: str,
         rag_context: dict | None,
@@ -253,8 +243,10 @@ class AgentRunner:
         只有用户消息能保证被所有模式的首次模型调用看到。
 
         generation_mode：语义路由产出的生成策略（direct / citation / comparison）；
-        无路由事件（naive / advanced）时默认 citation；检索结果不足（insufficient）时
-        强制模型如实说明缺失信息并向用户追问澄清（指令优先级最高，不依赖自身知识编造）。
+        naive/advanced/modular 前置检索命中时据此拼装注入指令；agentic 走主循环内检索
+        工具（knowledge_retrieve）时，前置只注入生成策略提示（检索结果由工具回传）；
+        检索结果不足（insufficient）时强制模型如实说明缺失信息并向用户追问澄清
+        （指令优先级最高，不依赖自身知识编造）。
 
         memory_block：L2 主动语义召回注入块（由 proactive 模块生成），叠加在 RAG 注入之后；
         均注入 user 消息，确保首轮模型调用可见。
@@ -264,7 +256,7 @@ class AgentRunner:
         """
         content = message
         if rag_context and rag_context.get("hits"):
-            content = AgentRunner._rag_block(rag_context, message, insufficient, generation_mode)
+            content = f"{message}\n\n{rag_block_payload(rag_context, insufficient, generation_mode, message)}"
         elif insufficient:
             content = (
                 f"{message}\n\n"
@@ -273,49 +265,19 @@ class AgentRunner:
                 "并礼貌地向用户追问补充依据（如具体文件、部门名称等）；"
                 "不要编造、不要依赖自身知识臆测内部数据，也不要声称工具不可用。"
             )
+        elif generation_mode:
+            # 循环内检索方案（modular/agentic）：前置只产出生成策略，检索结果由
+            # knowledge_retrieve 工具回传；先注入策略提示引导组织方式。
+            hint = {
+                "direct": "请直接回答用户问题，无需标注引用来源。",
+                "comparison": "请用 Markdown 对比表格组织回答，并标注对比项来源。",
+                "citation": "请基于知识库来源回答，关键事实标注引用。",
+            }.get(generation_mode)
+            if hint:
+                content = f"{content}\n\n【生成策略】{hint}"
         if memory_block:
             content = f"{content}\n\n{memory_block}"
         return content
-
-    @staticmethod
-    def _rag_block(rag_context: dict, message: str, insufficient: bool, generation_mode: str | None) -> str:
-        """组装 RAG 注入块（保留原 _augment_query 的 RAG 分支逻辑）。"""
-        hits = rag_context["hits"]
-        name = rag_context["name"]
-        if insufficient:
-            return (
-                f"{message}\n\n"
-                f"【知识库检索结果（{name}）】\n"
-                + "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
-                + "\n请严格基于以上检索内容如实回答；若检索内容不足以回答用户问题，"
-                "请明确说明缺失的关键信息，并礼貌地向用户追问补充，不要编造、"
-                "不要依赖自身知识臆测内部人事数据。"
-            )
-        mode = generation_mode or "citation"
-        if mode == "direct":
-            blocks = "\n".join(h["text"] for h in hits)
-            instruction = "请直接回答用户问题，无需标注引用来源。"
-        elif mode == "comparison":
-            blocks = "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
-            instruction = (
-                "请基于以上检索内容，用 Markdown 对比表格结构化回答：每一行一个对比维度，"
-                "每一列一个对比对象；表格内关键结论在句末标注上方编号 [1]/[2] 的来源。"
-                "表格之后用一段话总结差异，末尾附「引用来源」清单（编号 → 出处）。"
-            )
-        else:  # citation
-            blocks = "\n".join(f"[{i}] {h['text']}" for i, h in enumerate(hits, start=1))
-            instruction = (
-                "请优先基于以上检索内容回答；每个关键事实在句末标注上方编号 [1]/[2] 的来源。"
-                "回答末尾附「引用来源」清单（编号 → 出处）。"
-                "若检索内容不足以回答，再结合自身知识补充，并注明哪些属于推测。"
-            )
-        sources = "\n".join(AgentRunner._build_sources(hits)) if mode != "direct" else ""
-        return (
-            f"{message}\n\n"
-            f"【知识库检索结果（{name}）】\n{blocks}\n"
-            + (f"来源：\n{sources}\n" if sources else "")
-            + instruction
-        )
 
     @staticmethod
     def _make_emit(queue, tool_count):
@@ -345,32 +307,47 @@ class AgentRunner:
                 turns.append(f"助手: {content}")
         return "\n".join(turns) if turns else None
 
-    async def _run_rag_stage(self, session_id, message, graph, config, rag_scheme, result: dict):
-        """RAG 前置检索阶段：按选定方案流式检索并逐条转发事件，同时提取主 LLM 所需信号。
+    async def _run_rag_stage(self, session_id, message, graph, config, scheme, result: dict, context_holder: dict | None = None):
+        """RAG 前置检索阶段（Agent 主循环外），按方案分流：
 
-        作为异步生成器运行：runner.stream 用 `async for` 消费并逐条转发 RAG 过程事件
-        （rewrite/classify/retrieve/answerability）给前端，保持检索过程实时可见；
-        事件消费、信号提取与跨轮 seed 缓存更新全部内聚于此，stream 只取结果。
+        - naive / advanced / modular：全量前置检索（L0/L1，不进入工具集），命中注入
+          user 消息，过程事件逐条转发给前端；跨轮 seed 缓存在本阶段维护。
+        - agentic：主循环内检索方案（L2）——检索封装为 knowledge_retrieve 工具，
+          由主 Agent 按需触发（可与其他工具协同），跨轮 seed 由该工具维护；前置只做
+          轻量语义路由（消费到 classify 即停止，不触发检索），产出 generation_mode 注入
+          提示，并把最近会话上下文写入 context_holder 供工具内指代消解使用。
 
-        结束时把提取结果写入 result（生成器无独立返回值通道）：
+        作为异步生成器运行：runner.stream 用 `async for` 消费并逐条转发 naive/advanced
+        的检索过程事件给前端；结束时把提取结果写入 result（生成器无独立返回值通道）：
         - rag_context：{name, hits} 命中上下文，注入主 LLM；
-        - effective_message：指代消解/查询改写后的 query，替换主 LLM 输入，避免主 LLM
-          对「他/这…」二次解析（把指代词误指回上轮问题主语）导致答非所问；
+        - effective_message：指代消解/查询改写后的 query，替换主 LLM 输入；
         - generation_mode：语义路由产出的生成策略（citation/comparison/direct）；
         - insufficient：检索结果不足 → 强制模型追问澄清，不编造内部数据。
         """
-        scheme = self.registry.rag_manager.resolve(rag_scheme)
-        # 最近会话上下文（用户/助手回合）：RAG 是独立检索阶段，只有当前消息；
-        # 传入上下文供 modular 前置「指代消解」把「他/这…」替换为具体实体。
+        # 最近会话上下文（用户/助手回合）：供 naive/advanced 检索改写、modular/agentic
+        # 前置指代消解；modular/agentic 还写入 context_holder 供主循环内工具做指代消解。
         context = await self._recent_context(graph, config)
-        # 跨轮 seed 复用：modular/agentic 方案支持（共享 _cross_turn_seed 闸门）；
-        # 传入上一轮最终命中，由方案内按分数/相关性过滤后作候选证据
-        # （省重复检索、不注入查询文本）。
+        if context_holder is not None:
+            context_holder["recent"] = context
+        if getattr(scheme, "id", None) == "agentic":
+            # 循环内工具方案：前置只做轻量语义路由——走独立 classify 接口（不进入完整
+            # 检索链路、不做指代消解），产出 generation_mode 注入提示；路由结果写入
+            # context_holder 供主循环内 knowledge_retrieve 工具复用（跳过二次路由）。
+            route = await asyncio.to_thread(scheme.classify, message, context)
+            if context_holder is not None:
+                context_holder["route"] = route
+            result.update(
+                rag_context=None,
+                effective_message=message,
+                generation_mode=route.get("generation_mode"),
+                insufficient=False,
+            )
+            return
+        # naive / advanced / modular：全量前置检索（L0/L1）；modular 支持跨轮 seed 复用
         prev_hits = self._last_hits.get(session_id)
         stream_kwargs = {"context": context}
-        if getattr(scheme, "id", None) in ("modular", "agentic") and prev_hits:
+        if getattr(scheme, "id", None) == "modular" and prev_hits:
             stream_kwargs["seed_hits"] = prev_hits
-
         rag_context = None
         effective_message = message
         generation_mode = None
@@ -378,13 +355,12 @@ class AgentRunner:
         async for ev in scheme.astream(message, self.settings.rag_top_k, **stream_kwargs):
             yield ev
             if ev["type"] == "rewrite" and ev.get("reason") == "指代消解" and ev.get("rewrites"):
-                # rewrite 事件：modular 指代消解后的 query 作为主 LLM 输入
+                # rewrite 事件：指代消解后的 query 作为主 LLM 输入
                 effective_message = ev["rewrites"][0]
             elif ev["type"] == "classify":
                 generation_mode = ev.get("generation_mode") or generation_mode
             elif ev["type"] == "retrieve":
-                # retrieve 事件携带实际用于检索的 query（modular 已含指代消解结果），
-                # 作为无 rewrite 事件场景的兜底（如未消解但有查询改写时保持原文）。
+                # retrieve 事件携带实际用于检索的 query，作为无 rewrite 事件场景的兜底
                 effective_message = ev.get("query") or effective_message
                 if ev.get("hits"):
                     rag_context = {"name": scheme.name, "hits": ev["hits"]}
@@ -441,11 +417,12 @@ class AgentRunner:
     async def stream(self, session_id, message, mode, enabled, prompt_strategy, approval_policy, rag_scheme=None, rag_enabled=True, memory_enabled=True, context_keep_rounds=0, client_key="default"):
         """启动新一轮对话并产出 SSE 事件；遇 HITL 中断产出 approval_request 后暂停。
 
-        rag_scheme：本轮选定的 RAG 方案 id（当前仅 naive，后续扩展），在 meta 中回显，
-        并用于前置检索——RAG 是独立检索阶段，不进入工具集。
+        rag_scheme：本轮选定的 RAG 方案 id，在 meta 中回显。naive/advanced/modular
+        为前置检索（L0/L1，不进入工具集）；agentic 把检索封装为 knowledge_task 工具
+        进入主循环（L2），由 Agent 按需调用，前置仅做轻量语义路由。
         rag_enabled：本轮是否启用知识库检索（默认开启，由前端开关控制；总开关由
         settings.rag_enabled 控制，未开启时 registry.rag_manager 为 None，
-        二者都满足才执行前置检索）。
+        二者都满足才执行前置检索/注入检索工具）。
         context_keep_rounds：>0 时进入「每轮压缩」演示模式——保留最近 N 轮对话原文，
         更早的历史每轮都被压缩（页面持续展示压缩卡片）；0 使用系统默认阈值。
         """
@@ -458,6 +435,26 @@ class AgentRunner:
             enabled = [c for c in enabled if c != "memory"]
             
         tools = build_tools(self.registry, enabled, session_id, emit)
+        # 主循环内检索工具：仅 agentic 把检索封装为 knowledge_task 工具交给主 Agent
+        # 按需调用（L2，可与其他工具协同决策）；naive/advanced/modular 维持前置检索
+        # （L0/L1，不进入工具集）。工具须在构建图之前注入，否则不在本轮工具集中。
+        # context_holder 供工具做指代消解：由 _run_rag_stage 前置阶段填充最近会话上下文。
+        rag_scheme_obj = None
+        rag_ctx_holder: dict = {}
+        if self.registry.rag_manager is not None and rag_enabled:
+            rag_scheme_obj = self.registry.rag_manager.resolve(rag_scheme)
+            if getattr(rag_scheme_obj, "id", None) == "agentic":
+                # 单一检索入口（合并后）：knowledge_task 内先规则粗筛——简单问题单节点
+                # 直通内层（零额外 LLM 成本），复合/链式才走任务图状态机；不再并列
+                # knowledge_retrieve，消灭「两个工具让模型自觉二选一」的重复入口。
+                ledger = self._task_ledgers.setdefault(session_id, SessionLedger(
+                    max_inner_calls=self.settings.rag_agent_task_session_max_inner_calls,
+                    token_budget=self.settings.rag_agent_task_session_token_budget,
+                ))
+                tools = [*tools, make_knowledge_task_tool(
+                    rag_scheme_obj, self.settings, emit, session_id, self._last_hits, rag_ctx_holder,
+                    ledger,
+                )]
         try:
             graph = self._build_graph(mode, tools, emit)
         except Exception as exc:
@@ -477,22 +474,21 @@ class AgentRunner:
             yield {"type": "guard_refused", "reason": verdict.reason, "matched": verdict.matched}
             yield {"type": "done", "summary": "已按安全策略拒绝", "stats": {"tool_calls": 0}}
             return
-        # RAG 前置检索：启用 rag 能力时按选定方案自动召回并注入上下文（不依赖模型调用工具）。
-        # 需总开关开启（rag_manager 非 None）且本轮请求开启（rag_enabled=True）才执行。
-        # 方案经 astream 流式产出事件（rewrite→retrieve），runner 逐条直发前端保持解耦；
-        # 最后一条 retrieve 事件里的 hits 用于上下文注入。
+        # RAG 前置阶段：naive/advanced/modular 全量检索并注入 user 消息（L0/L1）；agentic 只做
+        # 轻量语义路由（产出 generation_mode 注入提示），检索由主循环内 knowledge_retrieve
+        # 工具按需触发。需总开关开启（rag_manager 非 None）且本轮开启（rag_enabled=True）
+        # 才执行；naive/advanced 的过程事件经生成器逐条直发前端保持解耦。
         rag_context = None
         insufficient = False
         generation_mode = None  # 语义路由产出的生成策略（citation/comparison/direct），注入主 LLM 时使用
-        # 注入给主 LLM 的用户消息：默认原消息；modular 指代消解后用它产出的消解 query 替换，
-        # 避免主 LLM 对「他/这…」二次解析（把指代词误指回上轮问题主语）导致答非所问。
+        # 注入给主 LLM 的用户消息：默认原消息；naive/advanced 改写后用它产出的 query 替换。
         effective_message = message
         if self.registry.rag_manager is not None and rag_enabled:
-            # RAG 前置检索整体收敛到 _run_rag_stage：流式转发过程事件给前端，并在内部完成
-            # 信号提取（effective_message/generation_mode/rag_context/insufficient）
-            # 与跨轮 seed 缓存更新；这里只逐条转发并取回结果。
+            # RAG 前置阶段整体收敛到 _run_rag_stage：流式转发 naive/advanced 过程事件给前端，
+            # 并在内部完成信号提取（effective_message/generation_mode/rag_context/insufficient）
+            # 与跨轮 seed 缓存更新（modular/agentic 由工具维护）；这里只逐条转发并取回结果。
             rag_result = {}
-            async for ev in self._run_rag_stage(session_id, message, graph, config, rag_scheme, rag_result):
+            async for ev in self._run_rag_stage(session_id, message, graph, config, rag_scheme_obj, rag_result, rag_ctx_holder):
                 yield ev
             rag_context = rag_result.get("rag_context")
             effective_message = rag_result.get("effective_message") or message

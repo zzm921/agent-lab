@@ -13,6 +13,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.runner import AgentRunner
+from app.tools.rag_tool import make_knowledge_retrieve_tool
 from app.core.errors import ConfigError
 from app.llm.fake_model import FakeChatModel, FakeEmbeddings
 from app.memory.stores.memory_store import MemoryStore
@@ -263,16 +264,16 @@ async def test_recent_context_none_when_no_messages():
     assert await AgentRunner._recent_context(FakeGraph(), {}) is None
 
 
-async def test_runner_injects_resolved_query_to_llm(settings, sessions):
-    """runner：指代消解后注入给主 LLM 的用户消息应为消解后 query，而非含指代词的原文
-    （回归：曾注入原文「他…」，主 LLM 二次解析把「他」误指回上轮问题主语「张三」，答非所问）。"""
+async def test_runner_modular_pre_loop_full_retrieval(settings, sessions):
+    """runner：modular 维持前置全量检索（L0/L1，不进入工具集）——命中注入 user 消息，
+    检索块含生成策略指令，指代消解后的 query 替换主 LLM 输入；跨轮 seed 缓存随之更新。"""
     class FakeScheme:
+        id = "modular"
         name = "模块化 RAG"
 
-        async def astream(self, query, top_k=None, context=None):  # noqa: ARG002
-            yield {"type": "rewrite", "query": query, "scheme": "modular",
-                   "rewrites": ["王刚有多少天年假"], "reason": "指代消解"}
-            yield {"type": "classify", "query": "王刚有多少天年假", "scheme": "modular",
+        async def astream(self, query, top_k=None, context=None, seed_hits=None):  # noqa: ARG002
+            assert seed_hits is None, "首轮无跨轮 seed"
+            yield {"type": "classify", "query": query, "scheme": "modular", "status": "done",
                    "retrieval_need": True, "retrieval_mode": "vector", "complexity": "simple",
                    "generation_mode": "citation", "confidence": 0.95, "reason": "单点事实"}
             yield {"type": "retrieve", "query": "王刚有多少天年假", "scheme": "modular",
@@ -315,11 +316,12 @@ async def test_runner_injects_resolved_query_to_llm(settings, sessions):
     ):
         pass
 
-    injected = [c for c in captured if "知识库检索结果" in c]
-    assert injected, "应有注入检索结果的用户消息"
-    latest = injected[-1]
-    assert "王刚有多少天年假" in latest
-    assert "他有多少天年假" not in latest, "注入给主 LLM 的消息不应再含指代词"
+    assert captured, "应有用户消息"
+    latest = captured[-1]
+    assert "知识库检索结果" in latest, "modular 前置应全量检索并注入检索块（循环外 L0/L1）"
+    assert "王刚有多少天年假" in latest, "modular 前置应使用消解后 query 作为主 LLM 输入"
+    assert "员工年假按工龄计算" in latest, "检索命中文本应注入"
+    assert runner._last_hits.get("s1"), "modular 前置应更新跨轮 seed 缓存（供下一轮复用）"
 
 
 # ---- 执行计划：路由决策 → 模块组合 ----
@@ -1305,15 +1307,15 @@ async def test_astream_clarify_recommendation_does_not_escalate(settings):
     assert verifier.calls == 1, "不应触发升级后的二次验证"
 
 
-async def test_runner_insufficient_injects_clarify_directive(settings, sessions):
-    """runner：答案充分性验证判定不足 → 注入给主 LLM 的消息携带「追问澄清、不编造」指令。"""
-    class FakeScheme:
+async def test_knowledge_retrieve_tool_insufficient_returns_clarify(settings):
+    """knowledge_retrieve 工具：答案充分性判定不足时，工具返回值携带「追问澄清、不编造」指令。"""
+    class InsufficientScheme:
+        id = "modular"
         name = "模块化 RAG"
 
-        async def astream(self, query, top_k=None, context=None):  # noqa: ARG002
-            yield {"type": "classify", "query": query, "scheme": "modular",
-                   "retrieval_need": True, "retrieval_mode": "vector", "complexity": "simple",
-                   "generation_mode": "citation", "confidence": 0.9, "reason": "单点事实"}
+        async def astream(self, query, top_k=None, context=None, seed_hits=None):  # noqa: ARG002
+            yield {"type": "classify", "query": query, "scheme": "modular", "status": "done",
+                   "retrieval_need": True, "generation_mode": "citation"}
             yield {"type": "retrieve", "query": query, "scheme": "modular",
                    "hits": [{"text": "王刚是研发部部门主管，负责年假初审。", "score": 0.3}]}
             yield {"type": "answerability", "query": query, "scheme": "modular",
@@ -1321,46 +1323,10 @@ async def test_runner_insufficient_injects_clarify_directive(settings, sessions)
                                "recommendation": "clarify", "escalate_to": None},
                    "escalated": False}
 
-    class FakeRagManager:
-        def resolve(self, rag_scheme):  # noqa: ARG002
-            return FakeScheme()
-
-    class FakeRegistry:
-        def __init__(self):
-            self.rag_manager = FakeRagManager()
-            self.embeddings = None  # 无向量能力：记忆常驻注入/轮末巩固自动跳过
-
-    captured: list[str] = []
-
-    class RecordingLLM(FakeChatModel):
-        def _record(self, messages):
-            for m in messages:
-                if isinstance(m, HumanMessage):
-                    captured.append(str(m.content))
-
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            self._record(messages)
-            return super()._generate(messages, stop, run_manager, **kwargs)
-
-        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-            self._record(messages)
-            return await super()._agenerate(messages, stop, run_manager, **kwargs)
-
-    runner = AgentRunner(
-        settings,
-        RecordingLLM(script=[AIMessage(content="抱歉，检索结果缺少王刚的在岗工龄，无法计算具体年假。")]),
-        FakeRegistry(),
-        sessions,
-    )
-    async for _ in runner.stream(
-        "s2", "王刚的年假有多少天", "react", [], "standard", "never",
-        rag_scheme="modular", rag_enabled=True,
-    ):
-        pass
-    injected = [c for c in captured if "知识库检索结果" in c]
-    assert injected, "应有注入检索结果的用户消息"
-    latest = injected[-1]
-    assert "追问" in latest and "不要编造" in latest, "不足时注入的指令应强制追问澄清、不编造"
+    tool = make_knowledge_retrieve_tool(InsufficientScheme(), settings, None, "s2", {}, {"recent": None})
+    out = await tool.ainvoke({"query": "王刚的年假有多少天"})
+    assert "知识库检索结果" in out
+    assert "追问" in out and "不要编造" in out, "不足时工具应返回追问澄清、不编造指令"
 
 
 # ---- 生成控制：generation_mode 定制注入指令 ----
@@ -1622,8 +1588,8 @@ async def test_astream_uses_cross_turn_seed_in_first_plan(settings):
     )
 
 
-async def test_runner_reuses_last_hits_as_next_seed(settings, sessions):
-    """runner 跨轮：上一轮最终命中存入 _last_hits，下一轮作为 seed_hits 传入 modular 方案。"""
+async def test_knowledge_retrieve_tool_reuses_last_hits_as_next_seed(settings):
+    """knowledge_retrieve 跨调用：首次检索命中存入 _last_hits，第二次作为 seed_hits 传入。"""
     class CrossTurnScheme:
         id = "modular"
         name = "模块化 RAG"
@@ -1641,36 +1607,16 @@ async def test_runner_reuses_last_hits_as_next_seed(settings, sessions):
             }
 
     scheme = CrossTurnScheme()
-
-    class FakeRagManager:
-        def resolve(self, rag_scheme):  # noqa: ARG002
-            return scheme
-
-    class FakeRegistry:
-        def __init__(self):
-            self.rag_manager = FakeRagManager()
-            self.embeddings = None  # 无向量能力：记忆常驻注入/轮末巩固自动跳过
-
-    llm = FakeChatModel(
-        script=[
-            AIMessage(content="张三在研发部。"),
-            AIMessage(content="研发部130人。"),
-        ]
+    last_hits: dict = {}
+    tool = make_knowledge_retrieve_tool(scheme, settings, None, "s1", last_hits, {"recent": None})
+    # 第 1 次调用：无既有 seed
+    await tool.ainvoke({"query": "张三是什么部门的"})
+    assert last_hits["s1"] == [{"text": "张三 研发部 算法工程师", "score": 0.9}], (
+        "工具应更新跨轮 seed 缓存"
     )
-    runner = AgentRunner(settings, llm, FakeRegistry(), sessions)
-    # 第 1 轮：无既有 seed
-    async for _ in runner.stream(
-        "s1", "张三是什么部门的", "react", [], "standard", "never",
-        rag_scheme="modular", rag_enabled=True,
-    ):
-        pass
-    # 第 2 轮：应把上一轮命中作为 seed_hits 传入（供方案内过滤后复用）
-    async for _ in runner.stream(
-        "s1", "他的部门有多少人", "react", [], "standard", "never",
-        rag_scheme="modular", rag_enabled=True,
-    ):
-        pass
-    assert scheme.received[0] is None, "首轮不应有 seed"
+    # 第 2 次调用：应把上一轮命中作为 seed_hits 传入（供方案内过滤后复用）
+    await tool.ainvoke({"query": "他的部门有多少人"})
+    assert scheme.received[0] is None, "首次调用不应有 seed"
     assert scheme.received[1] == [{"text": "张三 研发部 算法工程师", "score": 0.9}], (
         "次轮应收到上一轮命中作为 seed_hits"
     )
@@ -1710,3 +1656,41 @@ def test_context_compress_semantic_dedup():
     plain = ExtractiveContextCompressor()
     _, m2 = plain.compress("考勤", hits, top_k=5)
     assert m2["kept"] == 3, "未提供 embeddings 时仅精确去重，不触发语义去重"
+
+
+def test_context_compress_keeps_relevant_sentence_behind_cut():
+    """超长块截断：query 相关句（落在硬截断点之后）按相关度被保留，不从头硬切。
+
+    覆盖需求2：直接截断（取前 max_chars 字）会把「关键条款/差异点落在截断点之后而丢失」；
+    相关句保留按 query 相关度选取句子、原文顺序输出，关键句在截断点之后仍进入最终上下文，
+    原文存 metadata.raw_text 供溯源。
+    """
+    filler = "本规定系根据公司管理需要制定，适用于全体在职员工，具体条款由人事部门负责解释。" * 20
+    key = "发票报销必须附上发票原件，逾期未报销的发票一律作废。"
+    text = filler + key  # key 落在 max_chars=80 的硬截断点之后
+    compressor = ExtractiveContextCompressor(max_chars=80)
+    kept, metrics = compressor.compress("报销发票", [{"text": text, "score": 0.9}], top_k=1)
+    assert metrics["truncated"] == 1
+    assert "逾期未报销的发票一律作废" in kept[0]["text"], "相关句在截断点后仍应保留"
+    assert kept[0]["metadata"]["raw_text"] == text, "原文应存 raw_text 供溯源"
+
+
+def test_context_compress_summarizer_used_when_configured():
+    """超长块截断（LLM 摘要方案）：配置 summarizer 时先生成 query 针对性摘要（默认关闭）。
+
+    覆盖需求2：摘要生成作为可选扩展点——summarizer 提供时对超长命中先摘要、失败回退
+    相关句保留；未提供时（默认）走纯本地的相关句保留。
+    """
+    text = "第一条（报销时限）员工应在费用发生后三个月内提交报销申请。" * 60
+    seen: dict = {}
+
+    def fake_summarizer(query, body):
+        seen["query"] = query
+        return "发票报销须在三个月内提交申请，逾期不予受理。"
+
+    compressor = ExtractiveContextCompressor(max_chars=200, summarizer=fake_summarizer)
+    kept, metrics = compressor.compress("报销时限", [{"text": text, "score": 0.9}], top_k=1)
+    assert metrics["truncated"] == 1
+    assert seen.get("query") == "报销时限", "摘要应针对 query 生成"
+    assert "三个月内提交申请" in kept[0]["text"], "摘要应进入上下文"
+    assert kept[0]["metadata"]["raw_text"] == text, "原文仍存 raw_text 供溯源"

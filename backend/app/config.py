@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     rag_agent_token_budget: int = 0  # 角色 LLM 累计 token 预算（0=不限），达阈值后续角色规则回退；暂放开便于排查多轮遗忘
     rag_agent_tool_call_cap: int = 3  # 单工具整轮调用上限（multi_hop 固定更紧）
     rag_agent_parallel: int = 4  # 一波内并行工具调用数（首发按事实清单并行）
+    # Agentic 检索任务编排层（外层任务闭环）预算治理：节点/重查/内层触发/任务 token
+    rag_agent_task_max_nodes: int = 4  # 单任务子查询节点上限（拆解器输出封顶）
+    rag_agent_task_max_retries: int = 1  # 单节点缺口「改写重查」次数上限
+    rag_agent_task_max_inner_calls: int = 6  # 全任务内层触发上限（含节点与重查，防级联超支）
+    rag_agent_task_token_budget: int = 0  # 任务级角色 LLM 累计 token 预算（0=不限）
+    # 会话账本（P3，与任务账本叠加）：跨任务累计，防「每任务各自达标、跨任务叠加超支」
+    rag_agent_task_session_max_inner_calls: int = 20  # 会话级内层触发总上限（跨任务累计）
+    rag_agent_task_session_token_budget: int = 0  # 会话级 token 累计上限（0=不限）
 
     # MCP Servers（JSON 字符串，声明可用 server；stdio 子进程由服务启动时自动拉起）
     mcp_servers: str = "{}"

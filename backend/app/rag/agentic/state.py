@@ -68,6 +68,7 @@ class AgentState:
 
     query: str
     deadline: float = 0.0  # 墙钟截止（time.monotonic 基准；预算治理用）
+    started: float = 0.0  # 墙钟起点（monotonic；成本核算 latency_ms 用）
     # 阶段产物
     retrieval_need: bool = True  # 路由结论
     generation_mode: str = "citation"  # 生成策略（direct/citation/comparison，注入主 LLM）
@@ -84,6 +85,11 @@ class AgentState:
     tokens: dict[str, int] = field(default_factory=lambda: {"prompt": 0, "completion": 0})
     # 可观测
     events: list[TraceEvent] = field(default_factory=list)
+    # 检索链路明细（pipeline）：触发/查询变换/每路策略/筛选/排序，支撑完整链路日志
+    route_thought: str = ""  # 路由决策理由（trigger.reason）
+    recall_meta: list[dict] = field(default_factory=list)  # 每路检索明细（strategy）
+    filters_meta: list[dict] = field(default_factory=list)  # 筛选统计（filters：护栏/评审/压缩）
+    ranking_meta: dict = field(default_factory=dict)  # 融合/重排信息（ranking）
 
     def next_seq(self) -> int:
         return len(self.events) + 1
@@ -116,5 +122,34 @@ class AgentState:
             "corrections": corrections,
             "role_llm_calls": roles,
             "tokens": dict(self.tokens),
+            "pipeline": self.build_pipeline(),
             "steps": [e.to_dict() for e in self.events],
+        }
+
+    def build_pipeline(self) -> dict[str, Any]:
+        """检索链路完整明细（pipeline）：触发条件 → 查询变换 → 每路策略 → 筛选 → 排序。
+
+        retrieve 事件与 trace 共用：支撑前端渲染「查询 → 召回 → 融合 → 评审 → 压缩」完整漏斗。
+        - trigger：检索触发条件（路由决策：要不要检索/生成策略/理由）；
+        - query_pipeline：查询向量生成方法（是否 HyDE 展开、dense/sparse 检索类型）；
+        - strategy：每路工具调用明细（动作/查询/卷/理由/护栏拦截/放宽召回数/命中数与分数分布）；
+        - filters：实际应用的筛选规则（护栏拦截/评审剔除/压缩去重截断）；
+        - ranking：最终结果排序依据（RRF 融合分/重排模型/前后保留数）。
+        """
+        hyde = any((m.get("query_pipeline") or {}).get("hyde") for m in self.recall_meta)
+        embedding = (
+            "dense+sparse"
+            if any("sparse" in ((m.get("query_pipeline") or {}).get("embedding") or "") for m in self.recall_meta)
+            else "dense"
+        )
+        return {
+            "trigger": {
+                "retrieval_need": self.retrieval_need,
+                "mode": self.generation_mode,
+                "reason": self.route_thought or "",
+            },
+            "query_pipeline": {"hyde": hyde, "embedding": embedding},
+            "strategy": self.recall_meta,
+            "filters": self.filters_meta,
+            "ranking": self.ranking_meta,
         }

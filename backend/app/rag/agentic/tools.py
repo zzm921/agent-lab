@@ -26,11 +26,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WaveResult:
-    """一波中单个调用的执行记录：调用 + 护栏备注 + 命中（RRF 融合与轨迹用）。"""
+    """一波中单个调用的执行记录：调用 + 护栏备注 + 命中（RRF 融合与轨迹用）。
+
+    query_pipeline：本次调用的查询变换明细（检索类型/是否 HyDE/展开后查询），
+    供 pipeline 完整链路日志（查询向量生成方法）展示。
+    """
 
     call: ToolCallSpec
     note: str = ""  # 空 = 正常执行；非空 = 被护栏拦截/降级的原因
     hits: list[dict[str, Any]] = field(default_factory=list)
+    query_pipeline: dict[str, Any] = field(default_factory=dict)
 
 # 工具白名单（注册表内置 4 个库内检索工具；扩展 web/SQL 在此登记）
 ACTION_SEARCH = "search"
@@ -182,26 +187,40 @@ class ToolRegistry:
 
     # ---- 执行 ----
 
-    def _execute_one(self, call: ToolCallSpec, k: int, recall_k: int) -> list[dict[str, Any]]:
-        """执行单个工具调用（同步阻塞；并行波次在线程池内运行）。k/recall_k 走参数不落实例，防跨请求竞态。"""
+    def _execute_one(self, call: ToolCallSpec, k: int, recall_k: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """执行单个工具调用（同步阻塞；并行波次在线程池内运行）。k/recall_k 走参数不落实例，防跨请求竞态。
+
+        返回 (hits, query_pipeline)：query_pipeline 记录本次调用的查询变换明细——
+        检索类型/向量体系（dense|dense+sparse）/是否隐式 HyDE/展开后查询，供完整链路日志。
+        """
         call = self._degrade(call)
         if call.action == ACTION_SEARCH:
-            return self.store.search(call.query, recall_k)
+            meta = {"type": "search", "embedding": "dense"}
+            return self.store.search(call.query, recall_k), meta
         if call.action == ACTION_HYBRID:
             # hybrid 工具内隐式 HyDE：假想答案文档作一路 doc-space 稠密召回（与 semantic+keyword 路 RRF 融合）。
             # Agent 无感知——不新增工具位、不增加决策/事件；规则回退（无 Key/失败返回原查询）时自动跳过。
             query = expand_scale_query(call.query)
             ranked = [self.store.hybrid_search(query, recall_k)]
+            meta: dict[str, Any] = {
+                "type": "hybrid", "embedding": "dense+sparse",
+                "hyde": False, "expanded": query,
+            }
             hyde_doc = self.hyde.expand(call.query) if self.hyde is not None else ""
             if hyde_doc and hyde_doc != call.query:
                 ranked.append(self.store.search(hyde_doc, recall_k))
+                meta["hyde"] = True
+                meta["hyde_doc"] = hyde_doc[:120]
                 logger.info("[registry] hybrid 隐式 HyDE：假想文档 %r → 追加一路 doc-space 召回", hyde_doc)
-            return reciprocal_rank_fusion(ranked)
+            return reciprocal_rank_fusion(ranked), meta
         if call.action == ACTION_VOLUME:
-            return self.store.search(call.query, recall_k, (call.volume,))
+            meta = {"type": "volume_search", "embedding": "dense", "volume": call.volume}
+            return self.store.search(call.query, recall_k, (call.volume,)), meta
         if call.action == ACTION_MULTI_HOP and self.multi_hop is not None:
-            return self.multi_hop.retrieve(call.query, self.store, k, self.max_hops, recall_k).hits
-        return []
+            res = self.multi_hop.retrieve(call.query, self.store, k, self.max_hops, recall_k)
+            meta = {"type": "multi_hop", "embedding": "dense", "hops": len(getattr(res, "trace", []) or [])}
+            return res.hits, meta
+        return [], {"type": call.action}
 
     def execute_wave(self, calls: list[ToolCallSpec], k: int, recall_k: int, state: AgentState) -> list[WaveResult]:
         """执行一波工具调用：护栏过滤 → 线程池并行 → 逐调用结果（含拦截备注）。
@@ -227,12 +246,13 @@ class ToolRegistry:
                 futures = {ex.submit(self._execute_one, c, k, recall_k): i for i, c in runnable}
                 for fut, i in futures.items():
                     try:
-                        results[i].hits = fut.result()
+                        results[i].hits, results[i].query_pipeline = fut.result()
                     except Exception as exc:  # noqa: BLE001 — 单工具失败不中断整波
                         logger.warning(
                             "[registry] 工具执行失败（%s %r）: %s", calls[i].action, calls[i].query, exc
                         )
                         results[i].note = f"工具执行失败: {exc}"
+                        results[i].query_pipeline = {"type": calls[i].action, "error": type(exc).__name__}
         for r in results:
             if not r.note and r.hits:
                 state.executed_keys.add((r.call.action, r.call.query, r.call.volume))

@@ -95,14 +95,38 @@ class AgenticRagScheme(AdvancedRagScheme):
 
     # ---- 接口实现：同步 ----
 
+    def classify(self, query: str, context: str | None = None) -> dict:
+        """轻量语义路由（主循环外前置专用）：只跑 Router 角色，不做指代消解、不检索。
+
+        返回 {retrieval_need, generation_mode, reason}，供前置注入生成策略提示；
+        同一结果作为 pre_route 传给主循环内 knowledge_retrieve 工具复用——
+        route 节点跳过 RouterAgent，省一次 LLM 且保证生成策略前后一致。
+
+        同步 LLM 调用由调用方决定是否放线程池（runner 前置用 asyncio.to_thread）。
+        """
+        outcome = self.orchestrator.route_only(query)
+        logger.info(
+            "[agentic] classify：need=%s mode=%s（%s）",
+            outcome.retrieval_need, outcome.generation_mode, outcome.thought or "规则回退",
+        )
+        return {
+            "retrieval_need": outcome.retrieval_need,
+            "generation_mode": outcome.generation_mode,
+            "reason": outcome.thought,
+        }
+
     def retrieve_full(
         self,
         query: str,
         top_k: int | None = None,
         context: str | None = None,
         seed_hits: list[dict[str, Any]] | None = None,
+        pre_route: dict[str, Any] | None = None,
     ) -> RetrieveResult:
-        """同步完整检索：指代消解 → 跨轮 seed 闸门 → 状态机编排。"""
+        """同步完整检索：指代消解 → 跨轮 seed 闸门 → 状态机编排。
+
+        pre_route：前置路由决策，传入则 route 节点跳过 RouterAgent 直接复用。
+        """
         k = top_k or self.top_k
         resolved = self.deictic.resolve(query, context) or query
         if resolved != query:
@@ -110,7 +134,7 @@ class AgenticRagScheme(AdvancedRagScheme):
         seed = cross_turn_seed(resolved, seed_hits) if seed_hits else []
         if seed:
             logger.info("[agentic] 执行：跨轮 seed 复用 → %d 条候选证据", len(seed))
-        result = self.orchestrator.run(resolved, k=k, seed_hits=seed)
+        result = self.orchestrator.run(resolved, k=k, seed_hits=seed, pre_route=pre_route)
         logger.info(
             "[agentic] 执行：编排完成 → 命中 %d 条 answerable=%s 纠错 %d 轮",
             len(result.hits), result.answerable, result.corrections,
@@ -121,6 +145,8 @@ class AgenticRagScheme(AdvancedRagScheme):
             reranked=result.reranked,
             compressed=result.compressed,
             answerability=result.verdict,
+            confidence=result.confidence,
+            cost=result.cost,
             trace=result.trace,
         )
 
@@ -135,11 +161,13 @@ class AgenticRagScheme(AdvancedRagScheme):
         top_k: int | None = None,
         context: str | None = None,
         seed_hits: list[dict[str, Any]] | None = None,
+        pre_route: dict[str, Any] | None = None,
     ):
         """异步流式：前置消解/seed 事件 → 编排器逐事件（classify/plan/agent_step/grade/
         correct/verify/retrieve/compress/answerability）。
 
         指代消解为同步 LLM 调用，放线程池（不阻塞事件循环，项目硬约束）。
+        pre_route：前置路由决策（classify 产出），传入则编排器跳过 RouterAgent 复用。
         """
         k = top_k or self.top_k
         resolved = (await asyncio.to_thread(self.deictic.resolve, query, context)) or query
@@ -154,5 +182,5 @@ class AgenticRagScheme(AdvancedRagScheme):
         if seed:
             logger.info("[agentic] 流式：跨轮 seed 复用 → %d 条候选证据", len(seed))
             yield {"type": "seed_reuse", "query": query, "scheme": self.id, "count": len(seed)}
-        async for ev in self.orchestrator.astream(query, k=k, seed_hits=seed):
+        async for ev in self.orchestrator.astream(query, k=k, seed_hits=seed, pre_route=pre_route):
             yield ev

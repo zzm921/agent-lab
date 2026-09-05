@@ -24,6 +24,70 @@ export interface HitItem {
   metadata?: Record<string, unknown>
 }
 
+/** 单路检索的查询变换明细（pipeline.strategy[].query_pipeline）：检索类型 / 向量体系 / 是否 HyDE / 展开后查询 */
+export interface PipelineQueryTransform {
+  type?: string
+  embedding?: string
+  hyde?: boolean
+  expanded?: string | null
+  hyde_doc?: string | null
+}
+
+/** 每路检索策略明细（pipeline.strategy）：动作 / 查询 / 卷 / 护栏备注 / 召回数与命中分数分布 */
+export interface PipelineStrategyEntry {
+  tool: string
+  query: string
+  volume?: string | null
+  reason?: string
+  guarded?: string | null
+  recall_k?: number
+  hits: number
+  scores?: number[]
+  query_pipeline?: PipelineQueryTransform
+}
+
+/** 实际应用的筛选规则（pipeline.filters）：guard 护栏拦截 / grade 评审剔除 / compress 压缩去重截断 */
+export interface PipelineFilter {
+  name: string
+  dropped?: number
+  kept?: number
+  total?: number
+  original?: number
+  truncated?: number
+}
+
+/** 最终结果排序依据（pipeline.ranking）：RRF 融合 + 重排模型与前后保留数 */
+export interface PipelineRanking {
+  fusion?: { method: string; fused: number; keep: number }
+  rerank?: { model: string; before: number; after: number }
+}
+
+/** 检索链路完整明细（pipeline）：触发条件 → 查询向量生成 → 每路策略 → 筛选 → 排序（agentic） */
+export interface PipelineDetail {
+  trigger: { retrieval_need: boolean; mode: string; reason: string }
+  query_pipeline: { hyde: boolean; embedding: string }
+  strategy: PipelineStrategyEntry[]
+  filters: PipelineFilter[]
+  ranking: PipelineRanking
+}
+
+/** 检索任务图节点（agentic knowledge_task：拆解器产出的子查询节点 DAG） */
+export interface TaskGraphNode {
+  id: string
+  query: string
+  /** 依赖节点 id（须先执行） */
+  deps: string[]
+  reason?: string
+}
+
+/** 检索任务图完成度（task_done 事件载荷汇总） */
+export interface TaskGraphSummary {
+  completion: string
+  resolved: number
+  gaps: number
+  confidence: number
+}
+
 /** RAG 方案目录项（GET /api/rag/schemes） */
 export interface RagScheme {
   id: string
@@ -53,8 +117,9 @@ export type AgentEvent =
   | { type: 'tool_end'; tool: string; args?: Record<string, unknown>; result: string; success: boolean }
   | { type: 'tool_retry'; tool: string; attempt: number; max: number; delay: number; base_delay?: number; reason: string }
   | { type: 'plan'; steps: string[]; current_step: number; status: string }
-  | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean }
+  | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean; pipeline?: PipelineDetail; task_id?: string; node_id?: string }
   | { type: 'rewrite'; query: string; scheme?: string; rewrites: string[]; reason?: string }
+  | { type: 'seed_reuse'; query: string; scheme?: string; count: number }
   | {
       type: 'classify'
       query: string
@@ -140,6 +205,8 @@ export type AgentEvent =
       type: 'answerability'
       query: string
       scheme?: string
+      task_id?: string
+      node_id?: string
       /** 检索后答案充分性验证（跨复杂度路径的质量闸门）：可答 / 升级检索 / 追问澄清 */
       verdict: {
         answerable: boolean
@@ -149,11 +216,15 @@ export type AgentEvent =
       }
       /** 是否为检索不足后升级检索再验证的最终结论 */
       escalated?: boolean
+      /** 该轮检索答案置信度 [0,1] */
+      confidence?: number
     }
   | {
       type: 'agent_step'
       query: string
       scheme?: string
+      task_id?: string
+      node_id?: string
       /** agentic：检索 Agent 单步工具执行（逐步流式，index 递增） */
       step: {
         index: number
@@ -169,6 +240,8 @@ export type AgentEvent =
       type: 'grade'
       query: string
       scheme?: string
+      task_id?: string
+      node_id?: string
       /** agentic：CRAG 证据评审结果（保留相关证据数 / 候选总数 / 缺口） */
       kept: number
       total: number
@@ -179,6 +252,8 @@ export type AgentEvent =
       type: 'correct'
       query: string
       scheme?: string
+      task_id?: string
+      node_id?: string
       /** agentic：CRAG 纠错决策（纠错轮次 + 下一波工具调用） */
       round: number
       thought?: string
@@ -188,6 +263,8 @@ export type AgentEvent =
       type: 'verify'
       query: string
       scheme?: string
+      task_id?: string
+      node_id?: string
       /** agentic：Self-RAG 答案校验结论（可答 / 缺口） */
       answerable: boolean
       missing_facts: string[]
@@ -210,6 +287,57 @@ export type AgentEvent =
   | { type: 'revise'; delta: string }
   | { type: 'critique'; delta: string }
   | { type: 'agent_event'; worker: string; status: string; task?: string; result?: string }
+  | {
+      type: 'task_plan'
+      task_id: string
+      query: string
+      /** 拆解器产出的子查询节点 DAG */
+      nodes: TaskGraphNode[]
+      thought?: string
+      note?: string
+    }
+  | {
+      type: 'task_retry'
+      task_id: string
+      query: string
+      node_id: string
+      query_prev: string
+      rewrite_query: string
+      retries: number
+      gap_type?: string
+      reason?: string
+    }
+  | {
+      type: 'task_node'
+      task_id: string
+      query: string
+      node_id: string
+      node_query: string
+      state: 'resolved' | 'gap'
+      verdict?: { answerable?: boolean }
+      missing_facts: string[]
+      confidence: number
+      cost?: Record<string, unknown>
+      hits_count?: number
+      retries?: number
+      note?: string
+    }
+  | {
+      type: 'task_done'
+      task_id: string
+      query: string
+      result: {
+        task_id: string
+        query: string
+        nodes: TaskGraphNode[]
+        completion: string
+        resolved: number
+        gaps: number
+        confidence: number
+        cost?: Record<string, unknown>
+        gap_list?: { node_id: string; query: string; gap_type: string; action: string; note: string }[]
+      }
+    }
   | { type: 'done'; summary: string; stats: Record<string, unknown> }
   | { type: 'error'; message: string; detail?: string }
   | { type: 'guard_refused'; reason: string; matched?: string }

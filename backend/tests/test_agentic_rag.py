@@ -13,8 +13,9 @@
 import json
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
+from app.agents.runner import AgentRunner
 from app.llm.fake_model import FakeChatModel, FakeEmbeddings
 from app.llm.service import DEFAULT_PROFILES
 from app.memory.stores.memory_store import MemoryStore
@@ -46,6 +47,12 @@ from app.rag.routing.deictic_resolver import RuleDeicticResolver
 from app.rag.routing.query_rewrite import RuleQueryRewriter
 from app.rag.schemes.agentic import AgenticRagScheme
 from app.rag.schemes.modular import _TARGET_VOLUME_FILTERS
+from app.rag.task.decomposer import SCENARIO_DECOMPOSE, TaskDecomposer
+from app.rag.task.executor import TaskExecutor
+from app.rag.task.gap_center import GapClassifier, GapDecision, GapStrategyCenter
+from app.rag.task.graph import NS_RESOLVED, TC_CLARIFIED, TC_COMPLETE, TC_PARTIAL, SessionLedger, TaskBudgets, TaskNode
+from app.rag.task.rag_task_tool import make_knowledge_task_tool
+from app.tools.rag_tool import _MAX_BLOCK_CHARS, make_knowledge_retrieve_tool, rag_block_payload
 
 # 语料：与查询「报销发票」共现 ≥2 个 2 字词，规则评审/校验确定性通过
 DOC_REIMBURSE = "员工报销需要附上发票，随报销单一并提交给财务。"
@@ -816,3 +823,731 @@ def test_budget_settings_defaults(settings):
     assert settings.rag_agent_token_budget == 0  # 暂放开（0=不限），排查多轮遗忘后应恢复预算值
     assert settings.rag_agent_tool_call_cap == 3
     assert settings.rag_agent_parallel == 4
+
+
+# ---- runner 接入：agentic 循环内工具 vs 循环外前置 ----
+
+async def test_runner_agentic_in_loop_tool_light_route(settings, sessions):
+    """runner：agentic 前置走独立 classify 接口（轻量语义路由）——不进入完整链路
+    （astream 不被前置调用）、不注入检索块；knowledge_retrieve 工具注入主循环工具集（L2）。"""
+    class FakeScheme:
+        id = "agentic"
+        name = "Agentic RAG"
+
+        def classify(self, query, context=None):  # noqa: ARG002
+            return {"retrieval_need": True, "generation_mode": "citation", "reason": "单点事实"}
+
+        async def astream(self, *args, **kwargs):  # noqa: ARG002
+            raise AssertionError("agentic 前置不应调用完整链路 astream（路由已由 classify 独立完成）")
+
+    class FakeRagManager:
+        def resolve(self, rag_scheme):  # noqa: ARG002
+            return FakeScheme()
+
+    class FakeRegistry:
+        def __init__(self):
+            self.rag_manager = FakeRagManager()
+            self.embeddings = None  # 无向量能力：记忆常驻注入/轮末巩固自动跳过
+
+    captured: list[str] = []
+
+    class RecordingLLM(FakeChatModel):
+        def _record(self, messages):
+            for m in messages:
+                if isinstance(m, HumanMessage):
+                    captured.append(str(m.content))
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            self._record(messages)
+            return super()._generate(messages, stop, run_manager, **kwargs)
+
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            self._record(messages)
+            return await super()._agenerate(messages, stop, run_manager, **kwargs)
+
+    runner = AgentRunner(
+        settings,
+        RecordingLLM(script=[AIMessage(content="按知识库来源回答。")]),
+        FakeRegistry(),
+        sessions,
+    )
+    async for _ in runner.stream(
+        "s1", "报销发票流程", "react", [], "standard", "never",
+        rag_scheme="agentic", rag_enabled=True,
+    ):
+        pass
+
+    assert captured, "应有用户消息"
+    latest = captured[-1]
+    assert "生成策略" in latest, "agentic 前置应注入 generation_mode 策略提示"
+    assert "知识库检索结果" not in latest, "agentic 前置不应注入检索块（检索由工具负责）"
+    assert "报销发票流程" in latest, "前置不替换原文 query（指代消解在工具内完成）"
+    # 主循环工具集应只含 knowledge_task（单一检索入口：合并后不并列 knowledge_retrieve）
+    _, tools = runner._specs["s1"]
+    names = {getattr(t, "name", None) for t in tools}
+    assert "knowledge_task" in names, "agentic 应把 knowledge_task 注入主循环工具集"
+    assert "knowledge_retrieve" not in names, "agentic 单一检索入口：不并列 knowledge_retrieve"
+
+
+def test_scheme_classify_light_route_only(monkeypatch):
+    """scheme.classify：只产出路由决策（不检索、不消解），恰消费一次路由 LLM。"""
+    llm = FakeChatModel(script=[role_msg({
+        "retrieval_need": True, "generation_mode": "comparison", "reason": "多实体对比",
+    })])
+    monkeypatch.setattr("app.rag.agentic.roles.get_chat_model", lambda scenario: llm)
+    scheme = make_scheme(make_store([DOC_REIMBURSE]))
+    decision = scheme.classify(QUERY_REIMBURSE)
+    assert decision["retrieval_need"] is True
+    assert decision["generation_mode"] == "comparison"
+    assert decision["reason"] == "多实体对比"
+    assert len(llm.script) == 0, "classify 应只消费一次路由 LLM（不触发 plan/verify 等角色）"
+
+
+async def test_orchestrator_pre_route_skips_router(no_role_llm, monkeypatch):
+    """pre_route 注入：route 节点跳过 RouterAgent（路由场景无脚本即证明未走 LLM），
+    classify 事件直接采用前置决策，检索仍正常执行。"""
+    monkeypatch.setattr(
+        "app.rag.agentic.roles.get_chat_model",
+        scripted_llm(**{
+            "rag_agent_plan": FakeChatModel(script=[PLAN_MSG]),
+            "rag_agent_grade": FakeChatModel(script=[GRADE_MSG]),
+            "rag_agent_verify": FakeChatModel(script=[VERIFY_OK]),
+        }),
+    )
+    orch = make_orchestrator(make_store([DOC_REIMBURSE]))
+    pre = {"retrieval_need": True, "generation_mode": "comparison", "reason": "前置语义路由"}
+    events = [ev async for ev in orch.astream(QUERY_REIMBURSE, k=3, pre_route=pre)]
+    classify_done = next(e for e in events if e["type"] == "classify" and e["status"] == "done")
+    # route 场景未注入脚本：若走 RouterAgent 会规则回退为 citation；得到 comparison 即证明复用了 pre_route
+    assert classify_done["generation_mode"] == "comparison"
+    assert classify_done["reason"] == "前置语义路由"
+    retrieve = next(e for e in events if e["type"] == "retrieve")
+    assert retrieve["hits"], "复用前置路由后检索仍正常执行"
+
+
+async def test_rag_tool_reuses_pre_route(settings):
+    """knowledge_retrieve：从 context_holder 读取前置路由并作为 pre_route 透传给完整链路。"""
+    seen: dict = {}
+
+    class FakeScheme:
+        id = "agentic"
+        name = "Agentic RAG"
+
+        async def astream(self, query, top_k=None, context=None, seed_hits=None, pre_route=None):  # noqa: ARG002
+            seen["pre_route"] = pre_route
+            yield {"type": "classify", "status": "done", "generation_mode": "comparison"}
+            yield {"type": "retrieve", "hits": [{"text": "发票报销时限为费用发生后三个月内。", "score": 0.9}]}
+            yield {"type": "answerability", "verdict": {"answerable": True}}
+
+    route = {"retrieval_need": True, "generation_mode": "comparison", "reason": "前置语义路由"}
+    holder = {"recent": None, "route": route}
+    tool = make_knowledge_retrieve_tool(FakeScheme(), settings, None, "s1", {}, holder)
+    result = await tool.ainvoke({"query": "报销发票"})
+    assert seen["pre_route"] == route, "工具应把前置路由作为 pre_route 传给完整链路（跳过二次路由）"
+    assert "三个月内" in result, "检索命中应正常返回"
+
+
+def test_rag_block_payload_budgeted_clip():
+    """rag_block_payload：长命中按预算句末截断（总块 ≤ _MAX_BLOCK_CHARS），短命中不截断，
+    来源编号保留供引用——检索结果不再全量进上下文。"""
+    long = "差旅报销须在15日内提交，逾期作废；海外需三重审批并提前5日报备。" * 120
+    short = "日常报销仅需发票。"
+    ctx = {
+        "name": "Agentic RAG",
+        "hits": [
+            {"text": long, "metadata": {"source": "汇编.md"}},
+            {"text": short, "metadata": {"source": "汇编.md"}},
+        ],
+    }
+    out = rag_block_payload(ctx, False, "comparison")
+    assert len(out) <= _MAX_BLOCK_CHARS, "块应受预算约束，避免触发落盘"
+    assert "15日内提交" in out, "头部要点保留"
+    assert "日常报销仅需发票。" in out, "短命中不截断"
+    assert "[1]" in out and "[2]" in out, "来源编号保留供引用"
+    assert "…" in out, "长命中应被句末截断"
+
+
+async def test_rag_tool_returns_budgeted_block(settings):
+    """knowledge_retrieve：长命中返回要点化块（正文 ≤ _MAX_BLOCK_CHARS）+
+    结构化状态行，总量仍低于上下文落盘阈值，落盘几乎不触发。"""
+    class FakeScheme:
+        id = "agentic"
+        name = "Agentic RAG"
+
+        async def astream(self, query, top_k=None, context=None, seed_hits=None, pre_route=None):  # noqa: ARG002
+            yield {"type": "classify", "status": "done", "generation_mode": "comparison"}
+            yield {"type": "retrieve", "hits": [
+                {"text": "差旅报销须在15日内提交，逾期作废；海外需三重审批并提前5日报备。" * 60},
+            ]}
+            yield {"type": "answerability", "verdict": {"answerable": True}}
+
+    tool = make_knowledge_retrieve_tool(FakeScheme(), settings, None, "s1", {}, {})
+    result = await tool.ainvoke({"query": "差旅和日常报销流程差异"})
+    block, status = result.rsplit("\n", 1)
+    assert len(block) <= _MAX_BLOCK_CHARS, "要点化正文应低于预算上限"
+    assert len(result) < 3000, "正文+状态行总量仍低于上下文落盘阈值，落盘几乎不触发"
+    assert "知识库检索结果" in block
+    assert "15日内提交" in block, "头部要点保留供模型组织回答"
+    assert status.startswith("【检索状态】") and "充分性=充分" in status, "工具返回应附结构化状态行"
+
+
+def test_orchestrator_pipeline_full_link(no_role_llm):
+    """检索链路完整明细（pipeline）：触发条件/查询变换/每路策略/筛选/排序 齐备。
+
+    覆盖需求1：工具调用过程返回完整检索步骤——触发条件（trigger）、查询向量生成方法
+    （query_pipeline）、每路检索策略（strategy，含命中分数分布）、文档筛选规则（filters）、
+    最终结果排序依据（ranking）；trace 与 retrieve 事件共用同一 pipeline。
+    """
+    orch = make_orchestrator(make_store([DOC_REIMBURSE]))
+    result = orch.run(QUERY_REIMBURSE, k=3)
+    p = result.pipeline
+    # 触发条件（trigger）
+    assert p["trigger"]["retrieval_need"] is True
+    assert p["trigger"]["mode"] == "citation"
+    assert p["trigger"]["reason"], "路由决策理由（trigger.reason）应记录"
+    # 查询向量生成方法（query_pipeline）
+    assert p["query_pipeline"]["embedding"] in ("dense", "dense+sparse")
+    assert p["query_pipeline"]["hyde"] is False, "规则回退不生成 HyDE 假想文档"
+    # 每路检索策略（strategy）
+    assert p["strategy"], "每路检索明细非空"
+    s = p["strategy"][0]
+    assert s["tool"] == ACTION_HYBRID and s["query"] == QUERY_REIMBURSE
+    assert s["hits"] > 0 and s["scores"], "命中数与分数分布应记录"
+    assert s["query_pipeline"], "查询变换明细应记录（检索类型/向量体系）"
+    # 文档筛选规则（filters）
+    assert any(f["name"] == "grade" for f in p["filters"]), "评审筛选统计应记录"
+    # 最终结果排序依据（ranking）
+    assert p["ranking"]["fusion"]["method"] == "RRF(K=60)"
+    assert p["ranking"]["rerank"]["model"], "重排模型/前后保留数应记录"
+    # trace 与 retrieve 事件共用同一 pipeline
+    assert result.trace["pipeline"] == p
+
+
+def test_rag_block_payload_keeps_relevant_sentence_behind_cut():
+    """rag_block_payload：query 相关句（落在硬截断点之后）被保留，不从头硬切。
+
+    覆盖需求2：直接截断会把「关键条款/差异点落在截断点之后而丢失」；传 query 后按
+    相关度选取句子、原文顺序输出，关键句即使在截断点之后也能进入最终上下文。
+    """
+    filler = "本规定系根据公司管理需要制定，适用于全体在职员工，具体条款由人事部门负责解释。" * 80
+    key = "发票报销必须附上发票原件，逾期未报销的发票一律作废。"
+    ctx = {
+        "name": "Agentic RAG",
+        "hits": [{"text": filler + key, "metadata": {"source": "汇编.md"}}],
+    }
+    out = rag_block_payload(ctx, False, "citation", "报销发票")
+    assert "逾期未报销的发票一律作废" in out, "关键句落在截断点后也应保留"
+    assert "…" in out, "超长命中应标注截断"
+
+
+# ---- P0 层间结构化契约：confidence / cost ----
+
+def test_orchestrator_contract_confidence_cost(no_role_llm):
+    """层间结构化契约：run 结果携带 confidence（确定性口径）+ cost（token/调用/时延）。
+
+    规则回退路径：facts=[query] 全覆盖可答 → 基准 1.0，回退降权 0.1 → 0.9；
+    cost.calls ≥ 1（首发检索），token 账本与 latency_ms 齐备——外层可编程消费。
+    """
+    result = make_orchestrator(make_store([DOC_REIMBURSE])).run(QUERY_REIMBURSE, k=3)
+    assert result.answerable is True
+    assert result.confidence == 0.9
+    assert result.cost["tokens"] == {"prompt": 0, "completion": 0}
+    assert result.cost["calls"] >= 1
+    assert result.cost["latency_ms"] > 0
+    assert result.verdict["answerable"] is True
+
+
+async def test_scheme_astream_contract_fields(no_role_llm):
+    """流式事件契约：retrieve / answerability 事件携带 confidence 与 cost（前端可展示）。"""
+    events = [ev async for ev in make_scheme(make_store([DOC_REIMBURSE])).astream(QUERY_REIMBURSE, 3)]
+    retrieve = next(e for e in events if e["type"] == "retrieve")
+    answerability = next(e for e in events if e["type"] == "answerability")
+    assert retrieve["confidence"] == 0.9 and retrieve["cost"]["calls"] >= 1
+    assert answerability["confidence"] == 0.9
+    assert "tokens" in answerability["cost"] and "latency_ms" in answerability["cost"]
+
+
+def test_scheme_retrieve_full_passes_contract(no_role_llm):
+    """契约透传：retrieve_full → RetrieveResult 携带 confidence/cost（其他方案默认 None）。"""
+    rr = make_scheme(make_store([DOC_REIMBURSE])).retrieve_full(QUERY_REIMBURSE)
+    assert rr.confidence == 0.9
+    assert rr.cost["calls"] >= 1
+    assert rr.answerability["answerable"] is True
+
+
+async def test_rag_tool_contract_passthrough(settings):
+    """工具层契约旁路：结构化元数据写入 holder["rag_state"]（程序化消费，零文本解析），
+    文本返回附状态行（模型直接理解充分性/缺口/置信度）。"""
+    class ContractScheme:
+        id = "agentic"
+        name = "Agentic RAG"
+
+        async def astream(self, query, top_k=None, context=None, seed_hits=None, pre_route=None):  # noqa: ARG002
+            yield {"type": "classify", "status": "done", "generation_mode": "citation"}
+            yield {"type": "retrieve", "hits": [{"text": "王刚是研发部部门主管。", "score": 0.9}]}
+            yield {
+                "type": "answerability",
+                "verdict": {"answerable": False, "missing_facts": ["王刚的在岗工龄"]},
+                "confidence": 0.6,
+                "cost": {"tokens": {"prompt": 10, "completion": 5}, "calls": 2, "latency_ms": 350},
+            }
+
+    holder: dict = {"recent": None}
+    tool = make_knowledge_retrieve_tool(ContractScheme(), settings, None, "s1", {}, holder)
+    result = await tool.ainvoke({"query": "王刚年假"})
+    # 旁路结构化契约（程序化消费）
+    rag_state = holder["rag_state"]
+    assert rag_state["verdict"]["answerable"] is False
+    assert rag_state["verdict"]["missing_facts"] == ["王刚的在岗工龄"]
+    assert rag_state["confidence"] == 0.6
+    assert rag_state["cost"]["calls"] == 2
+    assert rag_state["hits"] == 1
+    # 文本状态行（模型直接理解）
+    assert "充分性=不足" in result
+    assert "缺失事实=王刚的在岗工龄" in result
+    assert "置信度=0.60" in result
+
+
+# ---- P1 检索任务编排层：拆解器 / 任务图状态机 / knowledge_task 工具 ----
+
+@pytest.fixture
+def no_task_llm(monkeypatch):
+    """任务层 LLM 全部规则回退（模拟无 Key 离线环境）。"""
+    monkeypatch.setattr("app.rag.task.decomposer.get_chat_model", lambda scenario: None)
+
+
+def task_llm_msg(payload: dict) -> AIMessage:
+    """构造任务层 LLM 决策 JSON 消息（拆解器脚本）。"""
+    return AIMessage(content=json.dumps(payload, ensure_ascii=False))
+
+
+def make_contract(answerable=True, hits=None, missing=None, confidence=1.0, note=""):
+    """构造单节点内层契约（NodeResult 载荷）。"""
+    return {
+        "hits": hits or [],
+        "verdict": {"answerable": answerable},
+        "missing_facts": ([] if answerable else missing) or ([] if answerable else ["缺失事实"]),
+        "confidence": confidence,
+        "cost": {"tokens": {"prompt": 1, "completion": 1}, "calls": 1, "latency_ms": 1.0},
+        "note": note,
+    }
+
+
+class FakeRunNode:
+    """脚本化内层闭环消费者：记录执行顺序与黑板 seed，按节点 id 返回契约。"""
+
+    def __init__(self, contracts: dict[str, dict]):
+        self.contracts = contracts
+        self.order: list[str] = []
+        self.seed_seen: dict[str, list[dict]] = {}
+
+    async def __call__(self, node: TaskNode, seed: list[dict] | None):
+        self.order.append(node.id)
+        self.seed_seen[node.id] = list(seed or [])
+        return self.contracts.get(
+            node.id,
+            {"hits": [], "verdict": {"answerable": False}, "missing_facts": [node.query],
+             "confidence": 0.0, "cost": {"tokens": {"prompt": 0, "completion": 0}, "calls": 0, "latency_ms": 0.0}, "note": ""},
+        )
+
+
+def test_decomposer_llm_multi_node_with_deps(monkeypatch):
+    """拆解器 LLM 路径：复合问题 → 多节点 DAG（含链式依赖声明，重编号 n1..nN）。"""
+    payload = {
+        "nodes": [
+            {"id": "n1", "query": "张三 所在部门", "deps": [], "reason": "先解析部门"},
+            {"id": "n2", "query": "研发部 在职人数", "deps": ["n1"], "reason": "再查人数"},
+        ],
+        "reason": "链式：先部门后人数",
+    }
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[task_llm_msg(payload)]),
+    )
+    nodes, thought, note = TaskDecomposer(max_nodes=4).decompose("张三所在部门在职人数")
+    assert len(nodes) == 2
+    assert nodes[0]["id"] == "n1" and nodes[0]["deps"] == []
+    assert nodes[1]["id"] == "n2" and nodes[1]["deps"] == ["n1"]
+    assert thought == "链式：先部门后人数"
+    assert note == ""
+
+
+def test_decomposer_rule_fallback_single_node(no_task_llm):
+    """复合问题 + 无 LLM → 规则回退：单节点 = 原查询（任务不中断，note 记录回退原因）。"""
+    nodes, thought, note = TaskDecomposer(max_nodes=4).decompose("张三所在部门在职人数")
+    assert nodes == [{"id": "n1", "query": "张三所在部门在职人数", "deps": [], "reason": "规则回退：单节点"}]
+    assert note == "拆解规则回退"
+
+
+def test_decomposer_rule_simple_skips_llm(monkeypatch):
+    """单一入口规则粗筛：简单问题（短 + 无复合标记）不调拆解 LLM，单节点直通内层。"""
+    calls: list[str] = []
+
+    def noop_llm(scenario):
+        calls.append(scenario)
+        return None  # 模拟无 Key：记录调用、不产出，调用方回退规则
+
+    monkeypatch.setattr("app.rag.task.decomposer.get_chat_model", noop_llm)
+    nodes, thought, note = TaskDecomposer(max_nodes=4).decompose("报销发票")
+    assert calls == [], "规则粗筛短路，拆解 LLM 零调用"
+    assert nodes == [{"id": "n1", "query": "报销发票", "deps": [], "reason": "规则判定简单问题：单节点直通"}]
+    assert note == "规则判定简单问题"
+    # 疑似复合（含并列标记）仍走 LLM 拆解
+    nodes2, _, note2 = TaskDecomposer(max_nodes=4).decompose("报销发票和时限")
+    assert calls == [SCENARIO_DECOMPOSE], "含复合标记 → 调拆解 LLM"
+    assert nodes2[0]["query"] == "报销发票和时限" and note2 == "拆解规则回退", "LLM 无产出 → 规则回退"
+
+
+def test_decomposer_cap_and_dedup(monkeypatch):
+    """拆解器护栏：超 max_nodes 封顶 + 重复查询去重 + 空查询剔除。"""
+    payload = {
+        "nodes": [
+            {"id": "x1", "query": "A", "deps": []},
+            {"id": "x2", "query": "A", "deps": []},
+            {"id": "x3", "query": "  ", "deps": []},
+            {"id": "x4", "query": "B", "deps": []},
+            {"id": "x5", "query": "C", "deps": []},
+        ],
+        "reason": "",
+    }
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[task_llm_msg(payload)]),
+    )
+    nodes, _, _ = TaskDecomposer(max_nodes=3).decompose("A和B与C的对比")
+    assert [n["id"] for n in nodes] == ["n1"]
+    assert [n["query"] for n in nodes] == ["A"], "重复与空查询剔除后仅剩 A（B/C 被 max_nodes 截断）"
+
+
+def test_executor_single_node_complete(no_task_llm):
+    """任务图：单节点任务 resolve → completion=complete，证据合并入库。"""
+    runner = FakeRunNode({"n1": make_contract(answerable=True, hits=[{"text": "报销需附发票", "score": 0.9}])})
+    result = TaskExecutor(runner).run("报销发票")
+    assert result.completion == TC_COMPLETE
+    assert result.resolved_count == 1 and result.gap_count == 0
+    assert len(result.evidence) == 1 and result.evidence[0]["text"] == "报销需附发票"
+    assert result.cost["calls"] == 1
+
+
+def test_executor_dag_order_and_seed(no_task_llm, monkeypatch):
+    """任务图 DAG：依赖节点先执行；黑板证据池跨节点 seed 复用（n2 可见 n1 命中）。"""
+    payload = {
+        "nodes": [
+            {"id": "n1", "query": "张三 所在部门", "deps": [], "reason": "先查部门"},
+            {"id": "n2", "query": "研发部 在职人数", "deps": ["n1"], "reason": "再查人数"},
+        ],
+        "reason": "链式",
+    }
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[task_llm_msg(payload)]),
+    )
+    contracts = {
+        "n1": make_contract(answerable=True, hits=[{"text": "张三在研发部。", "score": 0.9}]),
+        "n2": make_contract(answerable=True, hits=[{"text": "研发部在职人数 120 人。", "score": 0.9}]),
+    }
+    runner = FakeRunNode(contracts)
+    result = TaskExecutor(runner).run("张三所在部门的在职人数")
+    assert runner.order == ["n1", "n2"], "依赖序执行：n1 先于 n2"
+    assert runner.seed_seen["n2"] == [{"text": "张三在研发部。", "score": 0.9}], "黑板证据池跨节点复用"
+    assert result.completion == TC_COMPLETE and result.resolved_count == 2
+    assert [h["text"] for h in result.evidence] == ["张三在研发部。", "研发部在职人数 120 人。"]
+
+
+def test_executor_gap_partial(no_task_llm, monkeypatch):
+    """节点缺口：可答节点先行，缺口如实记录 → completion=partial（可答部分不丢）。"""
+    payload = {
+        "nodes": [
+            {"id": "n1", "query": "报销发票", "deps": [], "reason": ""},
+            {"id": "n2", "query": "报销时限", "deps": [], "reason": ""},
+        ],
+        "reason": "",
+    }
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[task_llm_msg(payload)]),
+    )
+    contracts = {
+        "n1": make_contract(answerable=True, hits=[{"text": "报销需附发票", "score": 0.9}]),
+        "n2": make_contract(answerable=False, missing=["报销时限"], confidence=0.2),
+    }
+    runner = FakeRunNode(contracts)
+    result = TaskExecutor(runner).run("报销发票与时限")
+    assert result.completion == TC_PARTIAL
+    assert result.resolved_count == 1 and result.gap_count == 1
+    assert result.gaps[0]["node_id"] == "n2" and result.gaps[0]["missing_facts"] == ["报销时限"]
+    assert len(result.evidence) == 1
+
+
+def test_executor_inner_calls_budget(no_task_llm, monkeypatch):
+    """任务账本护栏：max_inner_calls 触顶即终止（预算耗尽 ≠ 失败，note 说明原因）。"""
+    payload = {
+        "nodes": [
+            {"id": "n1", "query": "A", "deps": [], "reason": ""},
+            {"id": "n2", "query": "B", "deps": [], "reason": ""},
+            {"id": "n3", "query": "C", "deps": [], "reason": ""},
+        ],
+        "reason": "",
+    }
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[task_llm_msg(payload)]),
+    )
+    runner = FakeRunNode({"n1": make_contract(answerable=True)})
+    result = TaskExecutor(runner, budgets=TaskBudgets(max_nodes=4, max_inner_calls=1)).run("A和B与C的对比")
+    assert runner.order == ["n1"], "只允许触发 1 次内层闭环"
+    assert result.trace["note"] == "任务内层触发已达上限"
+    assert result.completion == TC_PARTIAL, "可答节点先行，剩余如实上报"
+
+
+async def test_executor_astream_event_sequence(no_task_llm):
+    """任务图事件序列：task_plan → task_node* → task_done（前端可展示任务轨迹）。"""
+    runner = FakeRunNode({"n1": make_contract(answerable=True, hits=[{"text": "报销需附发票", "score": 0.9}])})
+    events = [ev async for ev in TaskExecutor(runner).astream("报销发票")]
+    assert [e["type"] for e in events] == ["task_plan", "task_node", "task_done"]
+    plan = events[0]
+    assert plan["type"] == "task_plan" and plan["nodes"][0]["id"] == "n1"
+    node_ev = events[1]
+    assert node_ev["node_id"] == "n1" and node_ev["state"] == NS_RESOLVED
+    assert node_ev["confidence"] == 1.0 and node_ev["cost"]["calls"] == 1
+    done = events[2]
+    assert done["result"]["completion"] == TC_COMPLETE
+
+
+async def test_knowledge_task_tool_passthrough(settings, no_task_llm):
+    """knowledge_task 工具：任务编排 → 文本附任务状态行 + holder["task_state"] 旁路透传。"""
+    class TaskScheme:
+        id = "agentic"
+        name = "Agentic RAG"
+
+        async def astream(self, query, top_k=None, context=None, seed_hits=None, pre_route=None):  # noqa: ARG002
+            yield {"type": "classify", "status": "done", "generation_mode": "citation"}
+            yield {"type": "retrieve", "hits": [{"text": "报销需附发票，随报销单一并提交财务。", "score": 0.9}]}
+            yield {
+                "type": "answerability",
+                "verdict": {"answerable": True, "missing_facts": []},
+                "confidence": 0.9,
+                "cost": {"tokens": {"prompt": 1, "completion": 1}, "calls": 1, "latency_ms": 100},
+            }
+
+    holder: dict = {}
+    ledger = SessionLedger(max_inner_calls=5)
+    emitted: list[dict] = []
+    tool = make_knowledge_task_tool(TaskScheme(), settings, emitted.append, "s1", {}, holder, ledger)
+    result = await tool.ainvoke({"query": "报销发票和时限"})
+    task_state = holder["task_state"]
+    assert task_state["completion"] == TC_COMPLETE
+    assert task_state["resolved"] == 1 and task_state["gaps"] == 0
+    assert "【检索状态】" in result and "任务完成度=complete" in result
+    assert "报销需附发票" in result
+    assert f"会话内层余量={ledger.remaining_inner()}/5" in result, "P3 会话账本余量进入状态行"
+    assert ledger.inner_calls == 1, "任务内层消耗并入会话账本"
+    # P4 统一事件协议：任务图事件 + 内层事件均携带 task_id/node_id（前端可按节点聚合轨迹）
+    task_ids = {e["task_id"] for e in emitted if e["type"] == "task_plan"}
+    assert len(task_ids) == 1
+    tid = task_ids.pop()
+    inner = [e for e in emitted if e["type"] in ("classify", "retrieve", "answerability")]
+    assert inner, "节点执行内层事件被转发"
+    assert all(e.get("task_id") == tid and e.get("node_id") == "n1" for e in inner)
+
+
+# ---- P2 缺口策略中心：分类 / 决策表 / 改写重查回环 ----
+
+def gap_msg(payload: dict) -> AIMessage:
+    """构造缺口分类 LLM 决策 JSON 消息。"""
+    return AIMessage(content=json.dumps(payload, ensure_ascii=False))
+
+
+def gap_contract(answerable=False, missing=("缺失事实",), confidence=0.2, hits=None):
+    """构造单节点缺口/可答契约（重查回环断言用）。"""
+    return {
+        "hits": hits or [],
+        "verdict": {"answerable": answerable},
+        "missing_facts": list(missing),
+        "confidence": confidence,
+        "cost": {"tokens": {"prompt": 1, "completion": 1}, "calls": 1, "latency_ms": 1.0},
+        "note": "",
+    }
+
+
+class QueryScriptedRunNode:
+    """按节点查询串返回契约（记录尝试序列），供改写重查回环断言。"""
+
+    def __init__(self, by_query: dict[str, dict], default: dict | None = None):
+        self.by_query = by_query
+        self.default = default or gap_contract()
+        self.calls: list[str] = []
+
+    async def __call__(self, node: TaskNode, seed: list[dict] | None):
+        self.calls.append(node.query)
+        return self.by_query.get(node.query, self.default)
+
+
+class StubClassifier:
+    """固定分类结果的缺口分类器（决策表收敛直测用）。"""
+
+    def __init__(self, decision: GapDecision):
+        self.decision = decision
+
+    def classify(self, query, missing_facts, evidence=None, ledger=None):
+        return self.decision
+
+
+def test_gap_classifier_llm_query_type(monkeypatch):
+    """分类器 LLM 路径：query 类缺口 → rewrite 动作 + 改写查询（rag_task_gap 场景）。"""
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[gap_msg({"gap_type": "query", "rewrite_query": "发票 报销 时限", "reason": "换词重查"})]),
+    )
+    d = GapClassifier().classify("报销发票", ["发票报销时限"], ledger={"prompt": 0, "completion": 0})
+    assert d.gap_type == "query" and d.action == "rewrite"
+    assert d.rewrite_query == "发票 报销 时限"
+
+
+def test_gap_classifier_rule_fallback(no_task_llm):
+    """分类器规则回退：缺失项与查询强重叠 → 表达问题（拼词改写）；否则保守数据缺失。"""
+    overlap = GapClassifier().classify("张三 部门", ["张三 所在部门"])
+    assert overlap.gap_type == "query" and overlap.action == "rewrite"
+    assert "张三 所在部门" in overlap.rewrite_query
+    data = GapClassifier().classify("报销发票", ["报销时限"])
+    assert data.gap_type == "data" and data.action == "report"
+    assert data.note == "缺口分类规则回退"
+
+
+async def test_gap_center_decision_table(no_task_llm):
+    """决策表收敛：改写超次数上限 → 降级上报；跨域 → 降级上报 + 建议；低价值 → 接受。"""
+    center = GapStrategyCenter()
+    # 规则回退改写类：retries 未触顶 → 保留 rewrite
+    d1 = await center.decide("报销发票", ["发票"], [], retries=0, max_retries=1)
+    assert d1.action == "rewrite" and d1.rewrite_query
+    # 改写类 retries 触顶 → 降级 report（note 记录次数上限）
+    d2 = await center.decide("报销发票", ["发票"], [], retries=1, max_retries=1)
+    assert d2.action == "report" and "次数达上限" in d2.note
+    # 跨域 → 降级 report + 建议转交（本系统工具面无对应目标）
+    cross = GapStrategyCenter(classifier=StubClassifier(GapDecision("cross_domain", "delegate", reason="计算类")))
+    d3 = await cross.decide("报销发票", ["发票"], [], 0, 1)
+    assert d3.action == "report" and "转交其它工具" in d3.note
+    # 低价值 → accept（部分回答 + 标注，不阻塞）
+    low = GapStrategyCenter(classifier=StubClassifier(GapDecision("low_value", "accept", reason="不影响结论")))
+    d4 = await low.decide("报销发票", ["发票"], [], 0, 1)
+    assert d4.action == "accept" and d4.gap_type == "low_value"
+
+
+def test_executor_gap_rewrite_retry_resolves(no_task_llm):
+    """缺口策略回环：首查缺口（表达问题）→ 改写重查 → 节点 resolve（attempt 证据并入黑板）。"""
+    runner = QueryScriptedRunNode({
+        "张三 部门": gap_contract(missing=["张三 所在部门"]),
+        "张三 部门 张三 所在部门": gap_contract(answerable=True, hits=[{"text": "张三在研发部。", "score": 0.9}]),
+    })
+    result = TaskExecutor(runner).run("张三 部门")
+    assert runner.calls == ["张三 部门", "张三 部门 张三 所在部门"], "改写重查触发第二次内层闭环"
+    assert result.completion == TC_COMPLETE and result.resolved_count == 1
+    assert [h["text"] for h in result.evidence] == ["张三在研发部。"]
+
+
+def test_executor_gap_data_reported(no_task_llm):
+    """数据缺失型缺口：如实上报不重查（仅 1 次内层触发），缺口带类型/动作/备注。"""
+    runner = QueryScriptedRunNode({"报销发票": gap_contract(missing=["报销时限"])})
+    result = TaskExecutor(runner).run("报销发票")
+    assert runner.calls == ["报销发票"]
+    assert result.completion == TC_CLARIFIED, "单节点缺口且无重查 → 如实上报追问"
+    assert result.gaps[0]["gap_type"] == "data" and result.gaps[0]["action"] == "report"
+    assert result.gaps[0]["missing_facts"] == ["报销时限"]
+
+
+def test_executor_gap_rewrite_exhausted(no_task_llm):
+    """改写重查达上限：如实上报（note 记录次数），不无限重试。"""
+    runner = QueryScriptedRunNode({}, default=gap_contract(missing=["张三 所在部门"]))
+    result = TaskExecutor(runner, budgets=TaskBudgets(max_nodes=4, max_retries=1)).run("张三 部门")
+    assert len(runner.calls) == 2, "首查 + 1 次改写重查后停止"
+    assert result.gaps[0]["gap_type"] == "query" and result.gaps[0]["action"] == "report"
+    assert "次数达上限" in result.gaps[0]["note"]
+
+
+async def test_executor_astream_task_retry_event(no_task_llm):
+    """改写重查事件：task_retry 进入事件流（前端可见缺口分类决策轨迹）。"""
+    runner = QueryScriptedRunNode({
+        "张三 部门": gap_contract(missing=["张三 所在部门"]),
+        "张三 部门 张三 所在部门": gap_contract(answerable=True, hits=[{"text": "张三在研发部。", "score": 0.9}]),
+    })
+    events = [ev async for ev in TaskExecutor(runner).astream("张三 部门")]
+    types = [e["type"] for e in events]
+    assert types == ["task_plan", "task_retry", "task_node", "task_done"]
+    retry = events[1]
+    assert retry["node_id"] == "n1" and retry["rewrite_query"] == "张三 部门 张三 所在部门"
+    assert retry["gap_type"] == "query" and retry["retries"] == 1
+    # P4 事件协议：task_node 携带节点真实 missing_facts / gap note
+    node_ev = events[2]
+    assert node_ev["state"] == "resolved" and node_ev["missing_facts"] == []
+    assert node_ev["task_id"] == events[0]["task_id"] and node_ev["node_id"] == "n1"
+
+
+async def test_executor_astream_gap_node_event(no_task_llm):
+    """缺口节点事件：task_node 如实携带 missing_facts 与缺口 note（前端可展示缺口）。"""
+    runner = QueryScriptedRunNode({"报销发票": gap_contract(missing=["报销时限"])})
+    events = [ev async for ev in TaskExecutor(runner).astream("报销发票")]
+    node_ev = events[1]
+    assert node_ev["type"] == "task_node" and node_ev["state"] == "gap"
+    assert node_ev["missing_facts"] == ["报销时限"]
+    assert node_ev["note"] == "缺口分类规则回退"  # 规则回退 data 缺口的 note 如实透传
+
+
+# ---- P3 会话账本：跨任务累计，与任务账本叠加 ----
+
+def test_session_ledger_unit():
+    """会话账本记账与触顶判定：merge 累计、remaining/over_inner/over_token/exhausted。"""
+    ledger = SessionLedger(max_inner_calls=3, token_budget=10)
+    assert ledger.remaining_inner() == 3 and not ledger.exhausted()
+    ledger.merge({"prompt": 4, "completion": 2}, inner_calls=1)
+    assert ledger.inner_calls == 1 and ledger.tokens == {"prompt": 4, "completion": 2}
+    assert not ledger.over_inner() and not ledger.over_token()
+    ledger.merge({"prompt": 5, "completion": 0}, inner_calls=2)
+    assert ledger.inner_calls == 3 and ledger.over_inner() and ledger.exhausted()
+    assert ledger.remaining_inner() == 0
+    # token 账本：0=不限
+    assert not SessionLedger(token_budget=0).over_token()
+
+
+def test_executor_session_ledger_cross_task_cap(no_task_llm, monkeypatch):
+    """会话账本叠加：任务 A 消耗会话余量 → 任务 B 触发前触顶即止（跨任务防级联超支）。"""
+    payload = {
+        "nodes": [
+            {"id": "n1", "query": "A", "deps": [], "reason": ""},
+            {"id": "n2", "query": "B", "deps": [], "reason": ""},
+            {"id": "n3", "query": "C", "deps": [], "reason": ""},
+        ],
+        "reason": "",
+    }
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[task_llm_msg(payload), task_llm_msg(payload)]),
+    )
+    ledger = SessionLedger(max_inner_calls=2)
+    runner = FakeRunNode({"n1": make_contract(), "n2": make_contract()})
+    # 任务 A：会话余量 2 → 只执行 2 个节点，第 3 节点因会话预算耗尽转缺口
+    ra = TaskExecutor(runner, session_ledger=ledger).run("A和B与C的对比")
+    assert runner.order == ["n1", "n2"], "会话余量只够触发 2 次内层"
+    assert ra.completion == TC_PARTIAL and ledger.inner_calls == 2
+    assert ra.trace["session_inner_calls"] == 2
+    # 任务 B：会话已耗尽 → 0 次内层触发，如实上报
+    rb = TaskExecutor(runner, session_ledger=ledger).run("D和E与F的对比")
+    assert runner.order == ["n1", "n2"], "会话耗尽后不再触发内层"
+    assert rb.completion == TC_CLARIFIED and "会话预算耗尽" in rb.trace["note"]
+
+
+def test_executor_session_ledger_token_cap(no_task_llm, monkeypatch):
+    """会话账本 token 触顶：累计 token 达会话上限 → 后续任务如实上报。"""
+    payload = {
+        "nodes": [{"id": "n1", "query": "A", "deps": [], "reason": ""}],
+        "reason": "",
+    }
+    monkeypatch.setattr(
+        "app.rag.task.decomposer.get_chat_model",
+        lambda scenario: FakeChatModel(script=[task_llm_msg(payload), task_llm_msg(payload)]),
+    )
+    ledger = SessionLedger(token_budget=2)
+    runner = FakeRunNode({"n1": make_contract()})
+    r1 = TaskExecutor(runner, session_ledger=ledger).run("A和B的对比")
+    assert r1.completion == TC_COMPLETE and ledger.over_token()
+    r2 = TaskExecutor(runner, session_ledger=ledger).run("D和E的对比")
+    assert r2.completion == TC_CLARIFIED and "会话预算耗尽" in r2.trace["note"]

@@ -143,6 +143,18 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.1, "max_tokens": 400, "enable_thinking": False},
     },
     {
+        "scenario": "rag_task_decompose",  # 检索任务拆解：复合问题 → 子查询节点 JSON（轻量决策）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.2, "max_tokens": 400, "enable_thinking": False},
+    },
+    {
+        "scenario": "rag_task_gap",  # 检索缺口分类：缺口类型 JSON（轻量决策）
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.1, "max_tokens": 200, "enable_thinking": False},
+    },
+    {
         "scenario": "rag_judge",  # L2 语义评测 judge（LLM-as-a-Judge）：输出结构化评分，低随机 + 关闭思考
         "provider": "dashscope",
         "model": "qwen3.5-flash",
