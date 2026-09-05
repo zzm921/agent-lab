@@ -8,7 +8,6 @@ from app.memory.session_store import SessionStore
 from app.rag.manager import RagManager
 from app.tools.big_output import big_output
 from app.tools.calculator import calculator
-from app.tools.memory_tool import make_memory_tools
 from app.tools.run_command import make_run_command_tool
 from app.tools.time_now import time_now
 from app.tools.web_search import web_search
@@ -84,12 +83,6 @@ class CapabilityRegistry:
         if cap_id == "rag":
             # RAG 作为独立能力在前置检索阶段处理（见 runner.stream），不进入工具集
             return None
-        if cap_id == "memory":
-            if self.embeddings is None:
-                return None
-            store = self.sessions.long_memory(session_id, self.embeddings)
-            constant = self.sessions.constant_memory(self.embeddings)
-            return make_memory_tools(store, constant, self.settings, emit)
         return self.mcp.tool(cap_id)
 
     def rag_schemes(self) -> list[dict]:

@@ -49,8 +49,11 @@ class QueryRewriter(ABC):
     """查询改写抽象：把一个问题扩展为多个检索查询变体。"""
 
     @abstractmethod
-    def rewrite(self, query: str) -> list[str]:
-        """返回查询变体列表（首个为原始查询，保证基础召回）。"""
+    def rewrite(self, query: str, memory: str | None = None) -> list[str]:
+        """返回查询变体列表（首个为原始查询，保证基础召回）。
+
+        memory：L2 主动语义召回的用户记忆块（背景参考），追加进提示词辅助个性化改写。
+        """
 
 
 class LLMQueryRewriter(QueryRewriter):
@@ -65,18 +68,26 @@ class LLMQueryRewriter(QueryRewriter):
     def __init__(self, variants: int = 3):
         self.variants = max(1, int(variants))
 
-    def rewrite(self, query: str) -> list[str]:
+    def rewrite(self, query: str, memory: str | None = None) -> list[str]:
         parsed: list[str] = []
         llm = get_chat_model(self.scenario)
         if llm is not None:
             try:
+                hint = (
+                    f"\n\n相关用户记忆（仅作背景参考，可能与问题无关）：\n{memory}"
+                    if memory
+                    else ""
+                )
                 messages = [
                     SystemMessage(
                         content=(
                             f"你是企业知识库检索助手。请把用户的问题改写成 {self.variants} 个"
                             "更适合检索企业制度语料的查询变体：保留关键实体与数字，"
                             "用更正式、贴近规章制度原文的措辞；若原问题已足够正式，可做关键词化压缩。"
+                            "相关用户记忆可帮助补充省略的信息（如「上次那个」对应的具体名词），"
+                            "但仅作背景参考，不得把记忆内容当作制度事实写进变体。"
                             "每个变体单独一行输出，不要编号、不要解释、不要其他文字。"
+                            f"{hint}"
                         )
                     ),
                     HumanMessage(content=query),
@@ -113,7 +124,8 @@ class LLMQueryRewriter(QueryRewriter):
 class RuleQueryRewriter(QueryRewriter):
     """确定性规则改写（无 LLM 回退）：去客套语 + 关键词化变体。"""
 
-    def rewrite(self, query: str) -> list[str]:
+    def rewrite(self, query: str, memory: str | None = None) -> list[str]:
+        # 规则改写无提示词，memory 仅作接口兼容（供上层统一传参）
         stripped = _POLITE_PREFIX.sub("", query).strip()
         keyword = self._keyword_query(query)
         variants = [query]

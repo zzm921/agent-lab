@@ -493,8 +493,8 @@ class AgenticOrchestrator:
         return builder.compile()
 
     @staticmethod
-    def _initial_state(query: str, k: int | None, seed_hits: list[dict[str, Any]] | None, budgets) -> dict:
-        agent = AgentState(query=query, deadline=time.monotonic() + budgets.timeout_s)
+    def _initial_state(query: str, k: int | None, seed_hits: list[dict[str, Any]] | None, budgets, memory: str | None = None) -> dict:
+        agent = AgentState(query=query, deadline=time.monotonic() + budgets.timeout_s, memory=memory)
         return {
             "agent": agent,
             "outbox": [],
@@ -529,13 +529,15 @@ class AgenticOrchestrator:
 
     # ---- 主入口（同步） ----
 
-    def run(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None) -> OrchResult:
+    def run(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None, memory: str | None = None) -> OrchResult:
         """同步编排：编译图 ainvoke 一次跑完状态机（评测脚本/同步上下文用）。
 
         当前线程已处运行中事件循环时（异步 handler 内同步调用 retrieve_full），
         转交独立线程执行，保持同步语义不变。
+        memory：用户记忆背景块（挂 AgentState，供 Planner/Corrector 实体化身份、
+        Verifier 不再把记忆已提供的身份报为缺失）。
         """
-        initial = self._initial_state(query, k, seed_hits, self.budgets)
+        initial = self._initial_state(query, k, seed_hits, self.budgets, memory)
         config = {"recursion_limit": self._recursion_limit}
         coro = self._graph.ainvoke(initial, config=config)
         try:
@@ -548,14 +550,16 @@ class AgenticOrchestrator:
 
     # ---- 主入口（异步流式：逐事件下发） ----
 
-    async def astream(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None):
+    async def astream(self, query: str, k: int | None = None, seed_hits: list[dict[str, Any]] | None = None, memory: str | None = None):
         """异步流式编排：编译图 astream 逐 super-step 排空 outbox 事件。
 
         事件序列：classify(running/done) → plan(running/done) → [agent_step* → grade →
         verify →（不足则 correct → 下一波）] → retrieve(含 trace) → compress → answerability。
         决策与工具执行均为同步阻塞调用，统一放线程池不阻塞事件循环（项目硬约束）。
+        memory：用户记忆背景块（挂 AgentState，供 Planner/Corrector 实体化身份、
+        Verifier 不再把记忆已提供的身份报为缺失）。
         """
-        initial = self._initial_state(query, k, seed_hits, self.budgets)
+        initial = self._initial_state(query, k, seed_hits, self.budgets, memory)
         agent = initial["agent"]
         sent = 0
         final = initial

@@ -60,7 +60,7 @@ from app.rag.schemes.modular import ExecutionPlan, ModuleCall, ModularRagScheme
 class StubClassifier:
     """测试桩：替代已移除的规则路由，按测试查询确定性返回路由决策（保持离线确定性）。"""
 
-    def classify(self, query: str) -> RouteDecision:
+    def classify(self, query: str, memory: str | None = None) -> RouteDecision:
         if "你好" in query or "谢谢" in query:
             return RouteDecision(
                 retrieval_need=False, retrieval_mode=VECTOR, complexity=SIMPLE,
@@ -90,7 +90,7 @@ class StubClassifier:
 class StubDeicticResolver:
     """测试桩：确定性指代消解——查询含指代词且上下文提到「王刚」时替换为具体实体。"""
 
-    def resolve(self, query: str, context: str | None) -> str:
+    def resolve(self, query: str, context: str | None, memory: str | None = None) -> str:
         if context and "王刚" in context and re.search(r"他|她|它", query):
             return re.sub(r"他|她|它", "王刚", query)
         return query
@@ -835,7 +835,7 @@ async def test_astream_slow_router_does_not_block_event_loop(settings):
     import time
 
     class SlowClassifier:
-        def classify(self, query):
+        def classify(self, query, memory=None):
             time.sleep(0.15)  # 模拟慢速 LLM 路由
             return StubClassifier().classify(query)
 
@@ -1165,7 +1165,7 @@ def test_execute_plan_department_size_escalation_reaches_chapter5(settings):
     升级轮应命中第五章「各部门人员规模与编制」，最终判定可答（修复前会误报需追问澄清）。"""
 
     class ComparisonClassifier:
-        def classify(self, query):
+        def classify(self, query, memory=None):
             if "比" in query:
                 return RouteDecision(
                     retrieval_need=True, retrieval_mode=MULTI_RECALL, complexity=DECOMPOSE,
@@ -1710,3 +1710,27 @@ def test_context_compress_semantic_dedup():
     plain = ExtractiveContextCompressor()
     _, m2 = plain.compress("考勤", hits, top_k=5)
     assert m2["kept"] == 3, "未提供 embeddings 时仅精确去重，不触发语义去重"
+
+
+@pytest.mark.asyncio
+async def test_astream_forwards_memory_to_stages(settings):
+    """记忆供 RAG 参考：memory 透传给指代消解与语义路由（检索 query 不被记忆污染）。"""
+    seen = {}
+
+    class RecClassifier:
+        def classify(self, query, memory=None):
+            seen["classify_memory"] = memory
+            return StubClassifier().classify(query)
+
+    class RecDeictic:
+        def resolve(self, query, context, memory=None):
+            seen["deictic_memory"] = memory
+            return query
+
+    scheme = make_modular(settings, classifier=RecClassifier(), deictic=RecDeictic())
+    [ev async for ev in scheme.astream(
+        "出差报销怎么走", 3, context="用户: 张三的报销制度",
+        memory="用户记忆：张三偏好紫色主题",
+    )]
+    assert seen.get("classify_memory") == "用户记忆：张三偏好紫色主题"
+    assert seen.get("deictic_memory") == "用户记忆：张三偏好紫色主题"

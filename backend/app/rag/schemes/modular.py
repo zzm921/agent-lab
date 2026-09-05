@@ -421,11 +421,13 @@ class ModularRagScheme(AdvancedRagScheme):
         plan: ExecutionPlan,
         k: int,
         seed_hits: list[dict[str, Any]] | None = None,
+        memory: str | None = None,
     ) -> RetrieveResult:
         """按执行计划执行一轮检索（预处理 → 召回 → 后处理），返回完整检索结果。
 
         seed_hits：既有证据（充分性验证升级前的首轮命中），升级多跳时传入执行器
         作覆盖检测与合并的基础——已覆盖步骤复用跳过、不重复检索（增量补缺）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），透传给查询改写辅助个性化改写。
         """
         if not plan.need_retrieval:
             return RetrieveResult(query=query, hits=[])
@@ -434,7 +436,7 @@ class ModularRagScheme(AdvancedRagScheme):
         decomposed: list[str] = []
         for mod in plan.pre_retrieval:
             if mod.name == "rewrite":
-                rewrites = self.rewriter.rewrite(query)
+                rewrites = self.rewriter.rewrite(query, memory)
                 logger.info("[modular] 执行：查询改写 → %d 个变体 %s", len(rewrites), rewrites)
                 sub_queries = rewrites or [query]
             elif mod.name == "decompose":
@@ -477,15 +479,17 @@ class ModularRagScheme(AdvancedRagScheme):
         plan: ExecutionPlan,
         k: int,
         seed_hits: list[dict[str, Any]] | None = None,
+        memory: str | None = None,
     ) -> RetrieveResult:
         """同步执行执行计划，返回完整检索结果；检索后过答案充分性验证闸门（不足则有界升级 1 轮）。
 
         seed_hits：跨轮既有证据（上一轮已验证命中经 _cross_turn_seed 闸门筛选），
         首轮即作为候选证据参与召回融合与覆盖检测（省重复检索）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），透传给查询改写辅助个性化改写。
         """
         if not plan.need_retrieval:
             return RetrieveResult(query=query, hits=[])
-        result = self._run_plan(query, plan, k, seed_hits=seed_hits)
+        result = self._run_plan(query, plan, k, seed_hits=seed_hits, memory=memory)
         verdict = self.answerability.verify(result.query, result.hits)
         result.answerability = verdict_to_dict(verdict)
         logger.info(
@@ -502,7 +506,7 @@ class ModularRagScheme(AdvancedRagScheme):
                 )
                 # 升级重跑时把首轮命中作为既有证据传入多跳执行器（seed）：已覆盖步骤复用跳过、
                 # 不重复检索，实现增量补缺而非整轮重跑
-                result = self._run_plan(query, escalated, k, seed_hits=result.hits)
+                result = self._run_plan(query, escalated, k, seed_hits=result.hits, memory=memory)
                 final = self.answerability.verify(result.query, result.hits)
                 result.answerability = verdict_to_dict(final)
                 logger.info(
@@ -568,19 +572,21 @@ class ModularRagScheme(AdvancedRagScheme):
         top_k: int | None = None,
         context: str | None = None,
         seed_hits: list[dict[str, Any]] | None = None,
+        memory: str | None = None,
     ) -> RetrieveResult:
         """同步完整检索结果：先指代消解，再路由，再按执行计划动态编排。
 
         seed_hits：跨轮既有证据（上一轮已验证命中，由 _cross_turn_seed 按分数/相关性过滤）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），供指代消解/语义路由参考（记忆先行）。
         """
         k = top_k or self.top_k
-        resolved = self.deictic.resolve(query, context) or query
+        resolved = self.deictic.resolve(query, context, memory) or query
         if resolved != query:
             logger.info("[modular] 执行：指代消解 %r → %r", query, resolved)
         seed = self._cross_turn_seed(resolved, seed_hits) if seed_hits else []
         if seed:
             logger.info("[modular] 执行：跨轮 seed 复用 → %d 条候选证据", len(seed))
-        decision = self.classifier.classify(resolved)
+        decision = self.classifier.classify(resolved, memory)
         plan = self._build_plan(decision)
         logger.info(
             "[modular] 执行：语义路由 → need=%s mode=%s complexity=%s generation=%s conf=%.2f（%s）",
@@ -600,7 +606,7 @@ class ModularRagScheme(AdvancedRagScheme):
         )
         if not plan.need_retrieval:
             logger.info("[modular] 执行：无需检索，直接生成")
-        return self._execute_plan(resolved, plan, k, seed_hits=seed)
+        return self._execute_plan(resolved, plan, k, seed_hits=seed, memory=memory)
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         return self.retrieve_full(query, top_k).hits
@@ -613,6 +619,7 @@ class ModularRagScheme(AdvancedRagScheme):
         plan: ExecutionPlan,
         k: int,
         seed_hits: list[dict[str, Any]] | None = None,
+        memory: str | None = None,
     ):
         """按执行计划流式执行一轮检索：预处理 → 召回（逐跳 multi_hop）→ 后处理，逐事件下发。
 
@@ -620,6 +627,7 @@ class ModularRagScheme(AdvancedRagScheme):
         retrieve / compress 事件；retrieve 事件携带本轮最终命中（调用方据此做充分性验证）。
         seed_hits：既有证据（充分性验证升级前的首轮命中），升级多跳时作为第 0 路参与
         覆盖检测与合并——已覆盖的步骤复用跳过、不重复检索（增量补缺而非整轮重跑）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），透传给查询改写辅助个性化改写。
         """
         sub_queries = [query]
         rewrites: list[str] = []
@@ -627,7 +635,7 @@ class ModularRagScheme(AdvancedRagScheme):
         for mod in plan.pre_retrieval:
             if mod.name == "rewrite":
                 # 改写为同步 LLM 调用，放线程池避免阻塞事件循环（否则 rewrite 事件与后续事件攒在一起刷出）
-                rewrites = await asyncio.to_thread(self.rewriter.rewrite, query)
+                rewrites = await asyncio.to_thread(self.rewriter.rewrite, query, memory)
                 if rewrites:
                     logger.info("[modular] 流式：查询改写 → %d 个变体 %s", len(rewrites), rewrites)
                     yield {"type": "rewrite", "query": query, "scheme": self.id, "rewrites": rewrites}
@@ -818,12 +826,14 @@ class ModularRagScheme(AdvancedRagScheme):
         top_k: int | None = None,
         context: str | None = None,
         seed_hits: list[dict[str, Any]] | None = None,
+        memory: str | None = None,
     ):
         """异步流式：先指代消解，再产出路由事件，再按计划产出 rewrite / decompose / 逐跳 multi_hop / retrieve / compress 事件；
         检索后过答案充分性验证闸门（不足则有界升级 1 轮，再产出 answerability 事件）。
 
         seed_hits：跨轮既有证据（上一轮已验证命中，由 _cross_turn_seed 按分数/相关性过滤），
         首轮即作为候选证据参与召回融合与覆盖检测；复用命中数 >0 时下发 seed_reuse 事件（可观测）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），供指代消解/改写/路由参考（记忆先行）。
 
         路由/改写/分解/召回/重排/压缩/充分性验证等均为同步调用（向量库/模型同步 HTTP），
         统一放线程池（asyncio.to_thread）执行、不阻塞事件循环——否则各事件会被攒到同一次
@@ -832,7 +842,7 @@ class ModularRagScheme(AdvancedRagScheme):
         """
         k = top_k or self.top_k
         # 指代消解为同步 LLM 调用，放线程池避免阻塞事件循环
-        resolved = (await asyncio.to_thread(self.deictic.resolve, query, context)) or query
+        resolved = (await asyncio.to_thread(self.deictic.resolve, query, context, memory)) or query
         if resolved != query:
             logger.info("[modular] 流式：指代消解 %r → %r", query, resolved)
             yield {
@@ -860,7 +870,7 @@ class ModularRagScheme(AdvancedRagScheme):
             "scheme": self.id,
             "status": "running",
         }
-        decision = await asyncio.to_thread(self.classifier.classify, query)
+        decision = await asyncio.to_thread(self.classifier.classify, query, memory)
         plan = self._build_plan(decision)
         logger.info(
             "[modular] 流式：语义路由 → need=%s mode=%s complexity=%s generation=%s conf=%.2f（%s）",
@@ -895,7 +905,7 @@ class ModularRagScheme(AdvancedRagScheme):
             return
         # 第一轮执行 + 答案充分性验证（seed 为跨轮候选证据，参与召回融合与覆盖检测）
         current_hits: list[dict[str, Any]] = []
-        async for ev in self._astream_plan(query, plan, k, seed_hits=seed):
+        async for ev in self._astream_plan(query, plan, k, seed_hits=seed, memory=memory):
             if ev["type"] == "retrieve":
                 current_hits = ev["hits"]
             yield ev
@@ -926,7 +936,7 @@ class ModularRagScheme(AdvancedRagScheme):
                 # 升级重跑时把首轮命中作为既有证据传入多跳执行器（seed）：已覆盖步骤复用跳过、
                 # 不重复检索，实现增量补缺而非整轮重跑；current_hits 保留首轮命中作种子，
                 # 由第二轮 retrieve 事件覆盖为合并后的最终命中（已含种子 + 新增）
-                async for ev in self._astream_plan(query, escalated, k, seed_hits=current_hits):
+                async for ev in self._astream_plan(query, escalated, k, seed_hits=current_hits, memory=memory):
                     if ev["type"] == "retrieve":
                         current_hits = ev["hits"]
                     yield ev

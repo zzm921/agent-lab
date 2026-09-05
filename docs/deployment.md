@@ -79,11 +79,11 @@ cd ../frontend && npm run build                                      # 产物输
 cd ../backend && uvicorn app.main:app --port 8000
 ```
 
-`app/main.py` 检测到 `frontend/dist` 存在时自动以静态资源托管前端，直接访问 http://localhost:8000 即可使用完整功能（单 uvicorn 进程）。服务启动时自动连接并发现 MCP（stdio 子进程拉起 `mcp-notes`），无需单独启动。`MCP_ENABLED=false` 可关闭。
+`app/main.py` 检测到 `frontend/dist` 存在时自动以静态资源托管前端，直接访问 http://localhost:8000 即可使用完整功能（单 uvicorn 进程）。服务启动时自动连接并发现 MCP（stdio 子进程拉起 `mcp-info`），无需单独启动。`MCP_ENABLED=false` 可关闭。
 
 ## 5. MCP 集成配置示例
 
-> 本项目自带 `mcp-notes` 便签 server 默认以 **stdio** 方式由在线服务启动时自动拉起（`MCP_ENABLED` 默认 `true`），无需手动启动；如需独立 HTTP 部署仍可用 `uvicorn app.mcp_server.notes_server:app --port 8001`。以下为通用 MCP 配置示例。
+> 本项目自带 `mcp-info` 只读 server 默认以 **stdio** 方式由在线服务启动时自动拉起（`MCP_ENABLED` 默认 `true`），无需手动启动；如需独立 HTTP 部署仍可用 `uvicorn app.mcp_server.info_server:app --port 8001`。以下为通用 MCP 配置示例。
 
 ### 5.1 stdio transport
 

@@ -99,8 +99,8 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 > 技术说明：Agent 与外部世界交互的标准协议：MCP（工具服务化）与 A2A（智能体间通信）。
 
-- **MCP 工具热插拔**（85%）— 相关技术：stdio / Streamable HTTP 双传输，启动自动连接 + `load_mcp_tools` 工具发现注册，连接失败标记「不适配」不注入，自带 mcp-notes 便签 server
-  - 未完成：无断线重连 / 健康探测（连接仅在启动 / 首开建立一次，失败后不重试）；无 OAuth / token 刷新（仅 headers / env 直传）；工具 schema 无项目层校验；自带 notes server 单 JSON 文件、无用户隔离与条目上限、HTTP 形态无鉴权
+- **MCP 工具热插拔**（85%）— 相关技术：stdio / Streamable HTTP 双传输，启动自动连接 + `load_mcp_tools` 工具发现注册，连接失败标记「不适配」不注入，自带 mcp-info 只读 server（now / system_info / env_get）
+  - 未完成：无断线重连 / 健康探测（连接仅在启动 / 首开建立一次，失败后不重试）；无 OAuth / token 刷新（仅 headers / env 直传）；工具 schema 无项目层校验；自带 info server 仅只读信息、无鉴权
 - **A2A 智能体通信**（发现 / 委托 / 协作开放协议）→ **待实现**
 - **计算机操作代理**（computer-use，看截图 / 移鼠标 / 点按钮）→ **待实现**
 
@@ -164,8 +164,8 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | `EMBEDDING_MODEL` | 否 | 默认 `text-embedding-v3` |
 | `RAG_ENABLED` | 否 | 知识库检索总开关，默认 `true`（能力后端默认就绪）；`false` 整体关闭。每轮是否检索由前端「知识库检索」开关控制 |
 | `RAG_MIN_SCORE` | 否 | 最小相关度阈值，默认 `0.6`；命中相似度低于该值直接丢弃（不注入上下文），全部被丢弃则本轮不注入。naive 为 cosine、advanced 为 rerank 归一分数 |
-| `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server（本项目自带 `mcp-notes` 便签 server） |
-| `MCP_ENABLED` | 否 | 默认 `true`：服务启动时自动连接并发现已配置的 MCP Server（stdio 以子进程拉起 `mcp-notes`），无需手动启动 |
+| `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server（本项目自带 `mcp-info` 只读 server） |
+| `MCP_ENABLED` | 否 | 默认 `true`：服务启动时自动连接并发现已配置的 MCP Server（stdio 以子进程拉起 `mcp-info`），无需手动启动 |
 | `SECURITY_ENABLED` | 否 | 安全防护总开关，默认 `true` |
 | `GUARD_INPUT` | 否 | 输入 Guardrail：越狱 / 提示注入特征拦截，命中短路并礼貌拒绝，默认 `true` |
 | `GUARD_OUTPUT` | 否 | 输出 Guardrail：敏感数据泄露全文扫描 + 阻断提示，默认 `true` |
@@ -254,8 +254,8 @@ my-agent/
 │   │   │   ├── fake_model.py
 │   │   │   └── service.py
 │   │   ├── tools/               # 工具：calculator / time_now / web_search / run_command / memory / retry
-│   │   ├── mcp_server/          # 自带 mcp-notes 便签 server（stdio）
-│   │   │   └── notes_server.py
+│   │   ├── mcp_server/          # 自带 mcp-info 只读 server（stdio，无写入副作用）
+│   │   │   └── info_server.py
 │   │   ├── memory/              # 会话 + 长期记忆（写入/巩固/召回）+ 多后端存储
 │   │   │   ├── session_store.py
 │   │   │   ├── long_memory.py   #   LongMemoryStore：语义去重 + LRU/TTL + 常驻注入

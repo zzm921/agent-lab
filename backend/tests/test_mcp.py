@@ -8,15 +8,15 @@ class FakeTool:
 
 
 async def test_mcp_disabled_no_discover(monkeypatch):
-    """默认关闭：开关未开启时 discover 不连接，能力目录为空。"""
+    """默认关闭：连接仍于启动时建立（开关仅控制能力是否入目录），能力可被发现。"""
     mcp = McpManager('{"srv": {"command": "x"}}', enabled=False)
 
-    async def boom(name, conf):
-        raise AssertionError("开关未开不应连接")
+    async def fake_load(name, conf):
+        return [FakeTool()]
 
-    monkeypatch.setattr(mcp, "_load_tools", boom)
+    monkeypatch.setattr(mcp, "_load_tools", fake_load)
     await mcp.discover()
-    assert mcp.capabilities == []
+    assert mcp.capabilities[0]["id"] == "srv:tool_a"
     assert mcp.enabled is False
 
 
@@ -75,9 +75,8 @@ async def test_mcp_enable_then_disable(monkeypatch):
 
     mcp.disable()
     assert mcp.enabled is False
-    assert mcp.capabilities == []
-    assert mcp._discovered is False
-    assert mcp.tool("srv:tool_a") is None
+    assert mcp._discovered is True  # 关闭仅隐藏能力，连接保持
+    assert mcp.tool("srv:tool_a") is not None
 
     await mcp.enable()
     assert mcp.enabled is True

@@ -76,6 +76,26 @@ def test_is_write_intent_false(query):
 
 
 @pytest.mark.asyncio
+async def test_proactive_personal_query_force_recall(embeddings, tmp_path):
+    """个人化归属查询（我的主管是谁）确定性召回：跳过 selector，直接召回身份记忆。"""
+    store = _store(embeddings, tmp_path)
+    store.add("用户名为张三，任职于研发部", kind="fact", importance=0.9)
+    constant = _constant(embeddings, tmp_path)
+    llm = FakeChatModel()  # script 为空：护栏直接判定，selector 不应被调用
+    events, emit = _events()
+    block, hits, skipped = await maybe_recall(
+        llm, store, constant, "我的主管是谁？",
+        top_k=3, threshold=0.0, max_chars=400, injected_ids=set(), emit=emit,
+    )
+    assert skipped is False
+    assert block is not None and "张三" in block
+    assert events[0]["type"] == "memory_read"
+    assert events[0]["need"] is True
+    assert events[0]["reason"] == "个人化归属查询，需召回用户身份记忆"
+    assert any("张三" in h["text"] for h in events[0]["hits"])
+
+
+@pytest.mark.asyncio
 async def test_proactive_write_intent_skip(embeddings, tmp_path):
     """写指令（记住 X）确定性跳过：不发 selector、不召回，事件 need=false，reason 说明写指令。"""
     store = _store(embeddings, tmp_path)
@@ -263,3 +283,30 @@ async def test_runner_write_intent_no_proactive(settings, registry, sessions):
     ev = proactive_evs[0]
     assert ev["need"] is False
     assert ev["hits"] == []
+
+
+@pytest.mark.asyncio
+async def test_proactive_memory_precedes_rag_stage(settings, registry, sessions):
+    """记忆注入在 RAG 之前：事件顺序 memory_read → rag retrieve（记忆先行原则）。"""
+    settings.memory_proactive_threshold = 0.0
+    settings.memory_consolidate_enabled = False
+    runner = AgentRunner(settings, FakeChatModel(), registry, sessions)
+    sessions.long_memory("s1", registry.embeddings).add(
+        "用户生日是十月十号", kind="fact", importance=0.9
+    )
+    events = await collect_stream(
+        runner,
+        session_id="s1",
+        message="我的生日是哪天？",
+        enabled=["calculator", "memory"],
+        rag_enabled=True,
+        rag_scheme="naive",
+        memory_enabled=True,
+        client_key="dev-a",
+    )
+    memory_idx = next(i for i, e in enumerate(events) if e["type"] == "memory_read")
+    rag_idx = next(i for i, e in enumerate(events) if e["type"] == "retrieve")
+    assert memory_idx < rag_idx, "memory_read 事件必须先于 RAG retrieve 事件"
+    # 主动召回仍注入了会话库记忆（未被 RAG 阶段抢占）
+    proactive_evs = [e for e in events if e["type"] == "memory_read" and e.get("source") == "proactive"]
+    assert proactive_evs and proactive_evs[0]["hits"]

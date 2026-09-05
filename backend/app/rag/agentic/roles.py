@@ -103,6 +103,13 @@ def _extract_json(content: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _memory_hint(memory: str | None, purpose: str) -> str:
+    """记忆背景提示段：仅作角色决策背景参考，不直接拼接进检索 query 文本。"""
+    if not memory:
+        return ""
+    return f"\n\n相关用户记忆（仅作背景参考，可能过时，以用户本次说法为准）：\n{memory}\n提示：{purpose}"
+
+
 def _tokens_of(resp: Any) -> dict[str, int]:
     """从响应提取 token 用量（LangChain usage_metadata 优先，DashScope 原生次之）。"""
     usage = getattr(resp, "usage_metadata", None) or {}
@@ -169,7 +176,7 @@ class RouterAgent:
                     target=str(data.get("target") or "none"),
                 )
 
-            outcome = _llm_json(ROLE_ROUTE, state, self._system(), self._user(query), parse)
+            outcome = _llm_json(ROLE_ROUTE, state, self._system(), self._user(query, state.memory), parse)
             if outcome is not None:
                 return outcome
         # 规则回退：保守全检索 + 引用生成（不猜定向）
@@ -185,8 +192,12 @@ class RouterAgent:
         )
 
     @staticmethod
-    def _user(query: str) -> str:
-        return f"用户问题：{query}\n请输出路由决策 JSON。"
+    def _user(query: str, memory: str | None = None) -> str:
+        hint = _memory_hint(
+            memory,
+            "可参考记忆判断检索必要性（如记忆已含答案信息时可考虑无需检索）；记忆仅作背景参考。",
+        )
+        return f"用户问题：{query}{hint}\n请输出路由决策 JSON。"
 
 
 class PlannerAgent:
@@ -223,7 +234,7 @@ class PlannerAgent:
                     calls=calls or [ToolCallSpec(ACTION_HYBRID, normalize_query(query), "", "默认首发：混合检索")],
                 )
 
-            outcome = _llm_json(ROLE_PLAN, state, self._system(), self._user(query), parse)
+            outcome = _llm_json(ROLE_PLAN, state, self._system(), self._user(query, state.memory), parse)
             if outcome is not None:
                 if _CHAIN_QUERY.search(query):
                     # 链式查询（先解析中间实体再查其属性）→ 强制首发改走 multi_hop，
@@ -271,8 +282,14 @@ class PlannerAgent:
         )
 
     @staticmethod
-    def _user(query: str) -> str:
-        return f"用户问题：{query}\n请输出规划 JSON。"
+    def _user(query: str, memory: str | None = None) -> str:
+        hint = _memory_hint(
+            memory,
+            "若记忆已给出当前用户身份（姓名/工号/部门），请把问题中的『我/本人/当前登录用户』"
+            "实体化为该具体身份来构造检索 query（如『我的主管是谁』→『张三 主管』），"
+            "不要停留在『当前登录用户』这类泛化表述；记忆仅作背景参考，勿把记忆原文直接拼进 query。",
+        )
+        return f"用户问题：{query}{hint}\n请输出规划 JSON。"
 
 
 class GraderAgent:
@@ -305,7 +322,7 @@ class GraderAgent:
                 )
 
             outcome = _llm_json(
-                ROLE_GRADE, state, self._system(), self._user(query, hits, prior_hits or []), parse
+                ROLE_GRADE, state, self._system(), self._user(query, hits, prior_hits or [], state.memory), parse
             )
             if outcome is not None:
                 return outcome
@@ -337,7 +354,7 @@ class GraderAgent:
         )
 
     @staticmethod
-    def _user(query: str, hits: list[dict[str, Any]], prior_hits: list[dict[str, Any]]) -> str:
+    def _user(query: str, hits: list[dict[str, Any]], prior_hits: list[dict[str, Any]], memory: str | None = None) -> str:
         # 证据截断放宽到 400 字符，与 Verifier 可见内容对齐：检索命中常为表格型明细（流程表/
         # 标准表），关键行可能在 120 字符之外；过小截断会把已召回的事实误判为缺口，
         # 导致纠错重复检索（与 Verifier._user 不二次截断、answerability.py 放宽到 800 同理）。
@@ -348,7 +365,11 @@ class GraderAgent:
                 f"· {(h.get('metadata') or {}).get('volume') or ''}：{(h.get('text') or '')[:400]}" for h in prior_hits[:5]
             )
             body += f"\n\n先前轮已确认的证据（缺失事实归纳时请结合，勿再把其中已支持的事实报为缺失）：\n{prior}"
-        return body + "\n\n请输出评审 JSON。"
+        hint = _memory_hint(
+            memory,
+            "证据相关性判断时，用户记忆中的身份信息可作为背景（如与记忆中的姓名/部门相关的证据更相关）。",
+        )
+        return body + hint + "\n\n请输出评审 JSON。"
 
 
 class CorrectorAgent:
@@ -396,7 +417,7 @@ class CorrectorAgent:
 
             outcome = _llm_json(
                 ROLE_CORRECT, state, self._system(executed),
-                self._user(query, missing_facts, prior_hits or []), parse,
+                self._user(query, missing_facts, prior_hits or [], state.memory), parse,
             )
             if outcome is not None:
                 return outcome
@@ -433,7 +454,7 @@ class CorrectorAgent:
         )
 
     @staticmethod
-    def _user(query: str, missing_facts: list[str], prior_hits: list[dict[str, Any]]) -> str:
+    def _user(query: str, missing_facts: list[str], prior_hits: list[dict[str, Any]], memory: str | None = None) -> str:
         facts = "\n".join(f"- {m}" for m in missing_facts) or "- （未归纳，请围绕原问题换路）"
         body = f"用户问题：{query}\n\n缺失事实：\n{facts}"
         if prior_hits:
@@ -442,7 +463,13 @@ class CorrectorAgent:
                 for h in prior_hits[:5]
             )
             body += f"\n\n先前轮已确认的证据（生成下一跳查询时请结合，直接使用其中已解析的实体/结论）：\n{prior}"
-        return body + "\n\n请输出纠错 JSON。"
+        hint = _memory_hint(
+            memory,
+            "若缺失事实涉及『当前用户身份标识』，而记忆已给出姓名/工号/部门，请视为身份已知，"
+            "下一跳查询直接实体化为该身份（如『张三 工号』『张三 部门』『张三 主管』），"
+            "不要再用『当前登录用户』泛化表述空转；记忆仅作背景参考，勿把记忆原文直接拼进 query。",
+        )
+        return body + hint + "\n\n请输出纠错 JSON。"
 
 
 class VerifierAgent:
@@ -479,7 +506,7 @@ class VerifierAgent:
 
             outcome = _llm_json(
                 ROLE_VERIFY, state, self._system(),
-                self._user(query, facts, hits, confirmed), parse,
+                self._user(query, facts, hits, confirmed, state.memory), parse,
             )
             if outcome is not None:
                 return outcome
@@ -524,7 +551,7 @@ class VerifierAgent:
         )
 
     @staticmethod
-    def _user(query: str, facts: list[str], hits: list[dict[str, Any]], confirmed: list[str]) -> str:
+    def _user(query: str, facts: list[str], hits: list[dict[str, Any]], confirmed: list[str], memory: str | None = None) -> str:
         # 证据池跨轮累积，逐条全部呈现；evidence 文本已被 compressor 压缩（≤400 字符），
         # 此处不再二次截断——否则表格类证据（如"部门|在职人数|研发部130|产品部120"）后半行被切，
         # Verifier 会把已支持的事实误判为缺失（产品部人数"看不到"问题）。
@@ -537,4 +564,9 @@ class VerifierAgent:
             body += "\n\n先前轮已确认的事实（视为已支持，不得再报缺失）：\n" + "\n".join(
                 f"- {f}" for f in confirmed
             )
-        return body + "\n\n请输出校验 JSON。"
+        hint = _memory_hint(
+            memory,
+            "记忆已提供的用户身份事实（姓名/工号/所属部门等）视为已知信息，"
+            "不得再报为缺失事实；缺失判定只针对知识库证据与记忆均未提供的部分。",
+        )
+        return body + hint + "\n\n请输出校验 JSON。"

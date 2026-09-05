@@ -101,16 +101,21 @@ class AgenticRagScheme(AdvancedRagScheme):
         top_k: int | None = None,
         context: str | None = None,
         seed_hits: list[dict[str, Any]] | None = None,
+        memory: str | None = None,
     ) -> RetrieveResult:
-        """同步完整检索：指代消解 → 跨轮 seed 闸门 → 状态机编排。"""
+        """同步完整检索：指代消解 → 跨轮 seed 闸门 → 状态机编排。
+
+        memory：L2 主动语义召回的用户记忆块（背景参考），供指代消解参考，
+        并挂入 AgentState 供 Planner/Corrector 实体化身份、Verifier 判定缺失（记忆先行）。
+        """
         k = top_k or self.top_k
-        resolved = self.deictic.resolve(query, context) or query
+        resolved = self.deictic.resolve(query, context, memory) or query
         if resolved != query:
             logger.info("[agentic] 执行：指代消解 %r → %r", query, resolved)
         seed = cross_turn_seed(resolved, seed_hits) if seed_hits else []
         if seed:
             logger.info("[agentic] 执行：跨轮 seed 复用 → %d 条候选证据", len(seed))
-        result = self.orchestrator.run(resolved, k=k, seed_hits=seed)
+        result = self.orchestrator.run(resolved, k=k, seed_hits=seed, memory=memory)
         logger.info(
             "[agentic] 执行：编排完成 → 命中 %d 条 answerable=%s 纠错 %d 轮",
             len(result.hits), result.answerable, result.corrections,
@@ -135,14 +140,17 @@ class AgenticRagScheme(AdvancedRagScheme):
         top_k: int | None = None,
         context: str | None = None,
         seed_hits: list[dict[str, Any]] | None = None,
+        memory: str | None = None,
     ):
         """异步流式：前置消解/seed 事件 → 编排器逐事件（classify/plan/agent_step/grade/
         correct/verify/retrieve/compress/answerability）。
 
         指代消解为同步 LLM 调用，放线程池（不阻塞事件循环，项目硬约束）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），供指代消解参考，
+        并挂入 AgentState 供 Planner/Corrector 实体化身份、Verifier 判定缺失（记忆先行）。
         """
         k = top_k or self.top_k
-        resolved = (await asyncio.to_thread(self.deictic.resolve, query, context)) or query
+        resolved = (await asyncio.to_thread(self.deictic.resolve, query, context, memory)) or query
         if resolved != query:
             logger.info("[agentic] 流式：指代消解 %r → %r", query, resolved)
             yield {
@@ -154,5 +162,5 @@ class AgenticRagScheme(AdvancedRagScheme):
         if seed:
             logger.info("[agentic] 流式：跨轮 seed 复用 → %d 条候选证据", len(seed))
             yield {"type": "seed_reuse", "query": query, "scheme": self.id, "count": len(seed)}
-        async for ev in self.orchestrator.astream(query, k=k, seed_hits=seed):
+        async for ev in self.orchestrator.astream(query, k=k, seed_hits=seed, memory=memory):
             yield ev

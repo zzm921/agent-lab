@@ -68,6 +68,8 @@ class AgentState:
 
     query: str
     deadline: float = 0.0  # 墙钟截止（time.monotonic 基准；预算治理用）
+    # 背景上下文
+    memory: str | None = None  # L2 主动语义召回的用户记忆块（仅作角色决策背景参考，不污染检索 query）
     # 阶段产物
     retrieval_need: bool = True  # 路由结论
     generation_mode: str = "citation"  # 生成策略（direct/citation/comparison，注入主 LLM）

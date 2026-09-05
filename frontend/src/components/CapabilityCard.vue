@@ -64,15 +64,16 @@ function onFaultChange(e: Event) {
     @click="available && compact && emit('toggle', cap.id)"
   >
     <div class="flex items-start justify-between gap-2">
-      <div class="flex items-center gap-2">
+      <div class="flex min-w-0 items-center gap-1.5">
         <span
-          class="rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
+          v-if="!compact"
+          class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
           :class="cap.source === 'mcp' ? 'bg-fuchsia-500/15 text-fuchsia-300' : 'bg-indigo-500/15 text-indigo-300'"
         >
           {{ cap.source === 'mcp' ? 'MCP' : '内置' }}
         </span>
-        <h3 class="text-sm font-semibold text-white">{{ cap.name }}</h3>
-        <span v-if="cap.server" class="text-[10px] text-fuchsia-400/80">{{ cap.server }}</span>
+        <h3 class="truncate font-semibold text-white" :class="compact ? 'text-xs' : 'text-sm'" :title="cap.name">{{ cap.name }}</h3>
+        <span v-if="cap.server && !compact" class="text-[10px] text-fuchsia-400/80">{{ cap.server }}</span>
       </div>
 
       <!-- 启用开关（热插拔） -->
@@ -94,16 +95,19 @@ function onFaultChange(e: Event) {
       {{ cap.desc }}
     </p>
 
-    <div class="mt-3 flex items-center justify-between gap-2">
-      <span v-if="available" class="text-xs text-emerald-400">● 可用</span>
-      <span v-else class="text-xs text-rose-400" title="该能力不适配">● 不适配</span>
-      <div class="flex items-center gap-2">
+    <div class="mt-2.5 flex items-center justify-between gap-2">
+      <template v-if="!compact">
+        <span v-if="available" class="text-xs text-emerald-400">● 可用</span>
+        <span v-else class="text-xs text-rose-400" title="该能力不适配">● 不适配</span>
+      </template>
+      <div class="flex items-center gap-2" :class="compact ? 'w-full' : ''">
         <!-- 故障注入选择器：验证两层重试机制用（瞬时错误→直接重试 / 参数业务错误→交给模型），不影响工具类本身 -->
         <select
           v-if="available"
           :value="fault"
           :title="faultTitle(fault ?? 'off')"
           class="rounded-lg border border-slate-700 bg-slate-800 px-1.5 py-1 text-[11px] text-slate-300 outline-none transition hover:border-rose-400/60"
+          :class="compact ? 'w-full' : ''"
           @change="onFaultChange"
         >
           <option value="off">正常</option>

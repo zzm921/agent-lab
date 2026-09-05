@@ -26,7 +26,7 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # 服务启动即就绪：构建能力注册表（RAG 预建数据直接可用）。
-    # MCP 默认开启：启动时即连接并发现（stdio 拉起 mcp-notes），页面开关只控制能力是否入目录。
+    # MCP 默认开启：启动时即连接并发现（stdio 拉起 mcp-info），页面开关只控制能力是否入目录。
     # 失败不阻断服务（如未配 Embedding Key / MCP server 不可达），能力目录仍可正常访问。
     try:
         registry = get_registry()

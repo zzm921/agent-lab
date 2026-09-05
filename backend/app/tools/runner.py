@@ -13,9 +13,9 @@ from app.tools.retry import format_tool_error, invoke_with_retry
 
 
 def _wrap_untrusted_tool_output(name: str, output: str, settings) -> str:
-    """不可信外部内容工具（网页/命令/记忆）返回经来源分级包装后再给模型，防间接注入。
+    """不可信外部内容工具（网页/命令）返回经来源分级包装后再给模型，防间接注入。
 
-    只包装「外部内容来源」工具的成功返回（web_search / run_command / memory_recall），
+    只包装「外部内容来源」工具的成功返回（web_search / run_command），
     内部工具（calculator 等）原样透传，避免污染正常工具结果。
     """
     mark = bool(getattr(settings, "security_enabled", True) and getattr(settings, "mark_untrusted", True))

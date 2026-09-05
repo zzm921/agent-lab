@@ -136,6 +136,25 @@ class AgentRunner:
             len(items),
         )
 
+    async def _first_round_constant_block(self, graph, config, memory_enabled: bool = True, client_key: str = "default", emit=None):
+        """首轮 L1 常驻注入提前：仅当新会话首轮（无历史消息）时生成常驻块并 emit memory_constant 事件。
+
+        事件在 RAG 阶段之前产出，保证前端事件顺序「常驻记忆 → 主动召回 → RAG → 主 Agent」；
+        生成的块经 constant_block 参数传给 _make_inputs 复用，避免重复注入与重复事件。
+        任何异常静默吞掉（常驻注入失败绝不影响主链路）。
+        """
+        try:
+            snap = await graph.aget_state(config)
+        except Exception:  # noqa: BLE001
+            return None, 0
+        msgs = (snap.values.get("messages") or []) if snap is not None and snap.values else []
+        if msgs:
+            return None, 0  # 非首轮：常驻已在首轮注入 system，不重复
+        block, count = self._constant_memory_block(memory_enabled, client_key)
+        if block and emit is not None:
+            emit({"type": "memory_constant", "count": count})
+        return block, count
+
     async def _proactive_memory_recall(self, session_id, client_key, query, emit):
         """L2 主动语义召回：selector 判断 → 会话库+常驻库合并召回 → 返回注入块。
 
@@ -193,7 +212,7 @@ class AgentRunner:
             if rid:
                 injected.add(rid)
 
-    async def _make_inputs(self, graph, config, message, strategy, emit=None, rag_context=None, insufficient=False, generation_mode=None, keep_rounds=0, memory_enabled=True, client_key="default", memory_block=None):
+    async def _make_inputs(self, graph, config, message, strategy, emit=None, rag_context=None, insufficient=False, generation_mode=None, keep_rounds=0, memory_enabled=True, client_key="default", memory_block=None, constant_block=None, constant_count=0):
         snap = await graph.aget_state(config)
         msgs = []
         if snap is not None and snap.values:
@@ -214,12 +233,17 @@ class AgentRunner:
                     emit({"type": "context", **ev})
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
+            # 常驻记忆置于 system 最前：模型最先看到用户画像/偏好，再读通用行为规范
             content = f"{base}\n\n{TOOL_RETRY_HINT}"
-            block, count = self._constant_memory_block(memory_enabled, client_key)
-            if block:
-                content = f"{content}\n\n{block}"
-                if emit is not None:
-                    emit({"type": "memory_constant", "count": count})
+            if constant_block is not None:
+                # stream 已在 RAG 之前预生成并 emit memory_constant，这里只复用块不重复 emit
+                content = f"{constant_block}\n\n{content}"
+            else:
+                block, count = self._constant_memory_block(memory_enabled, client_key)
+                if block:
+                    content = f"{block}\n\n{content}"
+                    if emit is not None:
+                        emit({"type": "memory_constant", "count": count})
             msgs.append(SystemMessage(content=content))
         msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient, generation_mode, memory_block)))
         return {"messages": msgs}
@@ -260,7 +284,7 @@ class AgentRunner:
         均注入 user 消息，确保首轮模型调用可见。
 
         说明：知识库为受控内部语料，视为可信来源，不做「不可信外部数据」包装；
-        仅对 web_search / run_command / memory_recall 等真正的外部来源做注入隔离。
+        仅对 web_search / run_command 等真正的外部来源做注入隔离。
         """
         content = message
         if rag_context and rag_context.get("hits"):
@@ -345,12 +369,15 @@ class AgentRunner:
                 turns.append(f"助手: {content}")
         return "\n".join(turns) if turns else None
 
-    async def _run_rag_stage(self, session_id, message, graph, config, rag_scheme, result: dict):
+    async def _run_rag_stage(self, session_id, message, graph, config, rag_scheme, result: dict, memory: str | None = None):
         """RAG 前置检索阶段：按选定方案流式检索并逐条转发事件，同时提取主 LLM 所需信号。
 
         作为异步生成器运行：runner.stream 用 `async for` 消费并逐条转发 RAG 过程事件
         （rewrite/classify/retrieve/answerability）给前端，保持检索过程实时可见；
         事件消费、信号提取与跨轮 seed 缓存更新全部内聚于此，stream 只取结果。
+
+        memory：L2 主动语义召回注入块（记忆先于 RAG 产出），作为背景上下文传给方案，
+        供指代消解/查询改写/语义路由参考（记忆先行）；检索 query 不被记忆文本污染。
 
         结束时把提取结果写入 result（生成器无独立返回值通道）：
         - rag_context：{name, hits} 命中上下文，注入主 LLM；
@@ -368,6 +395,8 @@ class AgentRunner:
         # （省重复检索、不注入查询文本）。
         prev_hits = self._last_hits.get(session_id)
         stream_kwargs = {"context": context}
+        if memory:
+            stream_kwargs["memory"] = memory
         if getattr(scheme, "id", None) in ("modular", "agentic") and prev_hits:
             stream_kwargs["seed_hits"] = prev_hits
 
@@ -409,7 +438,7 @@ class AgentRunner:
         """轮末自动提取巩固（后台静默）：把本轮对话提炼为长期记忆写入库。
 
         由 stream 以 asyncio.create_task 在后台启动，不阻塞 SSE 事件流、不产
-        memory_write 事件（静默）；提取出的 global 长期偏好/约束写入当前客户端
+        任何记忆事件（静默）；提取出的 global 长期偏好/约束写入当前客户端
         的常驻库（跨会话生效），session 临时上下文写入会话库；任何异常被吞掉。
         """
         if not memory_enabled:
@@ -453,10 +482,6 @@ class AgentRunner:
         # 工具调用计数统一存到护栏层：本轮重置，后续 resume 复用同一计数器累计
         tool_count = self.harness.new_tool_counter(session_id)
         emit = self._make_emit(queue, tool_count)
-        # 本轮关闭记忆时：从能力清单剔除 memory，常驻注入/轮末巩固一并关闭
-        if not memory_enabled:
-            enabled = [c for c in enabled if c != "memory"]
-            
         tools = build_tools(self.registry, enabled, session_id, emit)
         try:
             graph = self._build_graph(mode, tools, emit)
@@ -487,29 +512,45 @@ class AgentRunner:
         # 注入给主 LLM 的用户消息：默认原消息；modular 指代消解后用它产出的消解 query 替换，
         # 避免主 LLM 对「他/这…」二次解析（把指代词误指回上轮问题主语）导致答非所问。
         effective_message = message
-        if self.registry.rag_manager is not None and rag_enabled:
-            # RAG 前置检索整体收敛到 _run_rag_stage：流式转发过程事件给前端，并在内部完成
-            # 信号提取（effective_message/generation_mode/rag_context/insufficient）
-            # 与跨轮 seed 缓存更新；这里只逐条转发并取回结果。
-            rag_result = {}
-            async for ev in self._run_rag_stage(session_id, message, graph, config, rag_scheme, rag_result):
-                yield ev
-            rag_context = rag_result.get("rag_context")
-            effective_message = rag_result.get("effective_message") or message
-            generation_mode = rag_result.get("generation_mode")
-            insufficient = rag_result.get("insufficient", False)
-        # L2 主动语义召回：本轮记忆开启时，把当前对话（含 RAG 消解后的 query）转召回，
-        # 命中注入 user 消息（与 RAG 前置检索解耦、互不影响）。selector 判断/召回/注入全部
-        # 静默失败容错；即使未命中也只产出 memory_read 事件（need=false/hits=[]），不报错。
+        # L2 主动语义召回前置到 RAG 之前：本轮记忆开启时，用用户原始消息召回相关记忆，
+        # 命中注入 user 消息，并把记忆块作为背景上下文传入 RAG 阶段（指代消解/改写/路由参考），
+        # 让 RAG 能利用用户记忆；检索 query 保持干净不被记忆文本污染。
+        # 事件顺序因此变为：常驻记忆 → 主动召回 → RAG → 主 Agent（记忆在前，符合企业级「记忆先行」原则）。
         memory_block = None
+        constant_block = None
+        constant_count = 0
         if memory_enabled:
             # L1/L2 去重打通：会话首次进入记忆路径时，先把 L1 常驻注入的记忆 id 预置进
             # 已见集合，避免 L2 主动召回把同一批常驻记忆再注入一遍（system 与 user 双份）。
             if session_id not in self._injected_memory_ids:
                 self._seed_constant_ids(session_id, client_key, memory_enabled)
-            memory_block = await self._proactive_memory_recall(
-                session_id, client_key, effective_message, emit
+            # L1 常驻注入提前到 RAG 之前：首轮生成块并立即 emit memory_constant，
+            # 保证事件顺序为「常驻记忆 → 主动召回 → RAG → 主 Agent」（常驻预载最前）。
+            constant_block, constant_count = await self._first_round_constant_block(
+                graph, config, memory_enabled, client_key, emit
             )
+            memory_block = await self._proactive_memory_recall(session_id, client_key, message, emit)
+            # 主动召回已把 memory_read 事件写入队列，在进入 RAG 阶段前排空一次，
+            # 保证前端事件顺序为「常驻记忆 → 主动召回 → RAG → 主 Agent」而不是攒到图执行后一起刷出。
+            while True:
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                yield item
+        if self.registry.rag_manager is not None and rag_enabled:
+            # RAG 前置检索整体收敛到 _run_rag_stage：流式转发过程事件给前端，并在内部完成
+            # 信号提取（effective_message/generation_mode/rag_context/insufficient）
+            # 与跨轮 seed 缓存更新；这里只逐条转发并取回结果。
+            rag_result = {}
+            async for ev in self._run_rag_stage(
+                session_id, message, graph, config, rag_scheme, rag_result, memory=memory_block
+            ):
+                yield ev
+            rag_context = rag_result.get("rag_context")
+            effective_message = rag_result.get("effective_message") or message
+            generation_mode = rag_result.get("generation_mode")
+            insufficient = rag_result.get("insufficient", False)
         inputs = await self._make_inputs(
             graph,
             config,
@@ -523,6 +564,8 @@ class AgentRunner:
             memory_enabled=memory_enabled,
             client_key=client_key,
             memory_block=memory_block,
+            constant_block=constant_block,
+            constant_count=constant_count,
         )
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
             if ev["type"] == "done":

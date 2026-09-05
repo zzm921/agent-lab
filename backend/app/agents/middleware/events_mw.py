@@ -66,9 +66,9 @@ def resolve_guards(settings) -> dict:
 
 
 def _maybe_wrap_tool_result(msg: ToolMessage, name: str, enabled: bool = True) -> ToolMessage:
-    """不可信外部内容工具（网页/命令/记忆）返回经来源分级包装后再给模型，防间接注入。
+    """不可信外部内容工具（网页/命令）返回经来源分级包装后再给模型，防间接注入。
 
-    只包装「外部内容来源」工具（web_search / run_command / memory_recall）的成功返回，
+    只包装「外部内容来源」工具（web_search / run_command）的成功返回，
     内部工具（calculator 等）原样透传，避免污染正常工具结果。
     """
     if not enabled or not is_untrusted_tool(name):

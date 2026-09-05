@@ -42,10 +42,11 @@ const validRagSchemes: RagSchemeId[] = ['naive', 'advanced', 'modular', 'agentic
 const mode = ref<ModeId>(validModes.includes(route.query.mode as ModeId) ? (route.query.mode as ModeId) : 'react')
 const strategy = ref<PromptStrategy>(validStrategies.includes(route.query.strategy as PromptStrategy) ? (route.query.strategy as PromptStrategy) : 'standard')
 const policy = ref<ApprovalPolicy>(validPolicies.includes(route.query.policy as ApprovalPolicy) ? (route.query.policy as ApprovalPolicy) : 'always')
-const ragScheme = ref<RagSchemeId>(validRagSchemes.includes(route.query.rag_scheme as RagSchemeId) ? (route.query.rag_scheme as RagSchemeId) : 'naive')
-/** 知识库检索开关：默认关闭，需在能力选配中手动开启；开启后每轮按所选方案前置检索并注入上下文 */
-const ragEnabled = ref(false)
-/** 长期记忆开关：默认开启（记忆工具 + 常驻注入 + 轮末巩固） */
+const hasRagScheme = validRagSchemes.includes(route.query.rag_scheme as RagSchemeId)
+const ragScheme = ref<RagSchemeId>(hasRagScheme ? (route.query.rag_scheme as RagSchemeId) : 'naive')
+/** 知识库检索开关：默认关闭，需在能力选配中手动开启；若 URL 已携带 rag_scheme（如从能力卡片带方案进入）则自动开启 */
+const ragEnabled = ref(hasRagScheme)
+/** 长期记忆开关：默认开启（常驻注入 + 主动召回 + 轮末巩固） */
 const memoryEnabled = ref(true)
 /** 记忆管理面板开关 */
 const memoryOpen = ref(false)
@@ -232,7 +233,7 @@ function send() {
         @toggle-files="filesOpen = $event"
       />
 
-      <div class="pointer-events-none absolute left-4 top-14 z-10 md:left-80 md:top-4">
+      <div class="pointer-events-none absolute left-4 top-14 z-10 md:left-96 md:top-4">
         <div class="pointer-events-auto inline-block">
           <ExampleFillHint :cap="exampleHint?.cap ?? null" @close="clearHint" />
         </div>

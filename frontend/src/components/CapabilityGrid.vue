@@ -26,8 +26,8 @@ function onFault(id: string, mode: string) {
     <div v-else-if="!caps.length" class="py-10 text-center text-sm text-slate-500">暂无能力（/api/capabilities 未返回数据）</div>
     <div
       v-else
-      class="grid gap-3"
-      :class="compact ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'"
+      class="grid gap-2"
+      :class="compact ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'"
     >
       <CapabilityCard
         v-for="cap in caps"

@@ -433,15 +433,15 @@ class AdvancedRagScheme(RagScheme):
             best[text] = out
         return list(best.values())
 
-    def retrieve_full(self, query: str, top_k: int | None = None, context: str | None = None) -> RetrieveResult:
+    def retrieve_full(self, query: str, top_k: int | None = None, context: str | None = None, memory: str | None = None) -> RetrieveResult:
         """同步完整检索结果（供非流式场景/测试）；页面事件走 astream 流式下发。"""
         k = top_k or self.top_k
-        variants = self.rewriter.rewrite(query)
+        variants = self.rewriter.rewrite(query, memory)
         hits = self._multi_recall_rerank(query, variants, k)
         hits = self._resolve_parents(hits)  # 子块命中回填父块全文，供 LLM 完整上下文
         return RetrieveResult(query=query, hits=hits, rewrites=variants, reranked=True)
 
-    async def astream(self, query: str, top_k: int | None = None, context: str | None = None):
+    async def astream(self, query: str, top_k: int | None = None, context: str | None = None, memory: str | None = None):
         """异步流式检索：重写一结束立即 yield 重写事件，再召回/重排后 yield 检索事件。
 
         召回/重排为同步阻塞调用（向量库/重排模型的同步 HTTP），放线程池执行，
@@ -449,7 +449,7 @@ class AdvancedRagScheme(RagScheme):
         在前端「同时」展示——放线程池后事件循环保持畅通，重写事件先行下发。
         """
         k = top_k or self.top_k
-        variants = self.rewriter.rewrite(query)
+        variants = self.rewriter.rewrite(query, memory)
         if variants:
             yield {
                 "type": "rewrite",

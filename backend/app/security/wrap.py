@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 # 属于「不可信外部内容」的工具名：其返回需经 wrap_untrusted 包装后再给模型。
-# 覆盖 security.md 点名的间接注入渠道：网页内容（web_search）、命令输出（run_command）、
-# 记忆投毒（memory_recall）；内部计算/工具（calculator/time_now 等）不包装。
-UNTRUSTED_TOOLS: frozenset[str] = frozenset({"web_search", "run_command", "memory_recall"})
+# 覆盖 security.md 点名的间接注入渠道：网页内容（web_search）、命令输出（run_command）；
+# 内部计算/工具（calculator/time_now 等）不包装。
+UNTRUSTED_TOOLS: frozenset[str] = frozenset({"web_search", "run_command"})
 
 
 def is_untrusted_tool(name: str) -> bool:

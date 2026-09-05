@@ -46,13 +46,4 @@ BUILTIN_CAPABILITIES = [
         "example": "用大输出演示工具生成一段大文件文本",
         "code_key": "big_output",
     },
-    {
-        "id": "memory",
-        "name": "长期记忆",
-        "source": "builtin",
-        "requires": "embeddings",
-        "desc": "跨会话长期记忆：写入（分类/重要性/去重）+ 按需召回（规范化注入块 + 老化提示）；支持全局常驻记忆（会话启动注入 system）。",
-        "example": "记住：我喜欢深色主题，主色是紫色",
-        "code_key": "memory",
-    },
 ]

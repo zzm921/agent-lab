@@ -2,7 +2,7 @@
 /** 长期记忆管理面板：查看（会话/全局）、删除、手动写入（用户掌控权）。
  * 全局（常驻）记忆按设备指纹隔离：请求带 X-Client-Id，后端据此各存一份、互不可见。
  */
-import { onMounted, reactive, ref } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { getClientId } from '../services/sse'
 
 const props = defineProps<{
@@ -148,9 +148,16 @@ function switchTab(next: 'memory' | 'audit') {
   if (next === 'audit' && !auditItems.value.length) void loadAudit()
 }
 
-onMounted(() => {
-  if (props.open) load()
-})
+// 组件常驻 DOM（内部 v-if 控制显示），需监听 open 变化：打开面板即自动加载数据
+watch(
+  () => props.open,
+  (v) => {
+    if (!v) return
+    void load()
+    if (tab.value === 'audit' && !auditItems.value.length) void loadAudit()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -253,7 +260,7 @@ onMounted(() => {
               </div>
             </div>
             <p v-else class="rounded-xl border border-dashed border-slate-700/70 px-3 py-4 text-center text-[11px] text-slate-600">
-              暂无全局常驻记忆 — 可用 memory_write(scope=global) 或上方表单写入
+              暂无全局常驻记忆 — 可用上方表单写入，或在对话中让助手记住（轮末自动巩固提取）
             </p>
           </section>
 

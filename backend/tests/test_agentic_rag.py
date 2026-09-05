@@ -699,7 +699,7 @@ async def test_scheme_deictic_rewrite_event():
     """指代消解：消解命中时流式先发 rewrite 事件，检索用消解后查询。"""
 
     class StubDeictic:
-        def resolve(self, query: str, context: str | None) -> str:
+        def resolve(self, query: str, context: str | None, memory: str | None = None) -> str:
             if context and "张三" in context and "他" in query:
                 return query.replace("他", "张三")
             return query

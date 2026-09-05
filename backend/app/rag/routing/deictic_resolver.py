@@ -30,8 +30,11 @@ class DeicticResolver(ABC):
     """指代消解抽象：输入当前问题 + 会话上下文，输出无指代、可独立检索的查询。"""
 
     @abstractmethod
-    def resolve(self, query: str, context: str | None) -> str:
-        """返回消解后的查询；无指代/无上下文/无法消解时原样返回。"""
+    def resolve(self, query: str, context: str | None, memory: str | None = None) -> str:
+        """返回消解后的查询；无指代/无上下文/无法消解时原样返回。
+
+        memory：L2 主动语义召回的用户记忆块（背景参考），追加进提示词辅助定位指代对象。
+        """
 
 
 class LLMDeicticResolver(DeicticResolver):
@@ -40,13 +43,18 @@ class LLMDeicticResolver(DeicticResolver):
     # 复用 Query 改写场景（qwen3.5-flash / temp=0.3 / max_tokens=200 / thinking=False，见 service.DEFAULT_PROFILES）
     scenario = "rag_rewrite"
 
-    def resolve(self, query: str, context: str | None) -> str:
+    def resolve(self, query: str, context: str | None, memory: str | None = None) -> str:
         if not context or not (_DEICTIC.search(query) or _DEICTIC_PREFIX.match(query)):
             return query
         llm = get_chat_model(self.scenario)
         if llm is None:
             return query
         try:
+            hint = (
+                f"\n\n相关用户记忆（仅作背景参考，可能与当前问题无关）：\n{memory}"
+                if memory
+                else ""
+            )
             messages = [
                 SystemMessage(
                     content=(
@@ -58,9 +66,11 @@ class LLMDeicticResolver(DeicticResolver):
                         "（即上轮用户问题的答案对象），而不是上轮用户问题的主语。"
                         "例如：用户问「张三的领导是谁」、助手答「是王刚」时，"
                         "后续「他的年假有多少天」中的「他」指王刚，应改写为「王刚的年假有多少天」；\n"
+                        "- 相关用户记忆可用于辅助定位指代对象（如「上次说的那个流程」），"
+                        "但仅作参考，与对话上下文冲突时以对话上下文为准；\n"
                         "- 上下文不足以确定指代对象，或问题本来就没有指代 → 原样输出当前问题；\n"
                         "- 只输出一条查询，不要解释、不要其他文字。\n\n"
-                        f"对话上下文：\n{context}"
+                        f"对话上下文：\n{context}{hint}"
                     )
                 ),
                 HumanMessage(content=f"当前问题：{query}"),
@@ -76,7 +86,7 @@ class LLMDeicticResolver(DeicticResolver):
 class RuleDeicticResolver(DeicticResolver):
     """确定性兜底：指代消解属语义判定，不做规则猜测——原样返回（离线不消解也不误伤）。"""
 
-    def resolve(self, query: str, context: str | None) -> str:
+    def resolve(self, query: str, context: str | None, memory: str | None = None) -> str:
         return query
 
 

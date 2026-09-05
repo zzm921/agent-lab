@@ -1,7 +1,7 @@
 """L2 主动语义召回（企业级「每轮前置把对话转 query 召回相关记忆」）。
 
-区别于 L1 常驻注入（启动按重要度挑、不依赖查询）与 L3 被动工具召回
-（模型决定调 memory_recall），本模块由系统驱动、基于当前对话内容主动召回：
+区别于 L1 常驻注入（启动按重要度挑、不依赖查询），本模块由系统驱动、
+基于当前对话内容主动召回（记忆为系统前置能力，不暴露为模型工具）：
 
   ① 触发判断（selector 轻量 LLM）——本轮是否需要记忆背景，判否直接跳过（省检索+注入成本）
   ② 合并召回——会话记忆库 + 常驻库各召一次，按 id 去重、按分数合并
@@ -28,6 +28,7 @@ SELECTOR_PROMPT = """你是记忆触发判断器。判断「用户最新一条�
 
 需要召回（need=true）的情形：
 - 用户用个人化措辞：我/我的、我的偏好、我记得、之前/上次/以前做过、你了解我
+- 身份/归属类查询：我的主管/上级/领导、我的部门/团队、我的薪资/工资/福利、我的生日/档案/工号、我负责什么等——回答这类问题必须知道用户身份，务必召回
 - 问题涉及用户资料、历史决策、过往项目、长期偏好或约束
 - 与用户个人历史明显相关的开放问题
 
@@ -46,6 +47,12 @@ SELECTOR_PROMPT = """你是记忆触发判断器。判断「用户最新一条�
 _WRITE_INTENT_RE = re.compile(r"(记住|记一下|记牢|记起来|记下|记好了|帮我记|帮我记住|请记住|请记|保存)")
 _FORGET_INTENT_RE = re.compile(r"(忘了|忘掉|忘记|删除记忆|移除记忆|删掉)")
 _READ_GUARD_RE = re.compile(r"(你还记得|记得(吗|么|不)|我之前让你记住|我之前让你记|上次让我记|以前让你记|记住的|记住了什么|记住哪些|记住什么)")
+
+# 个人化归属查询（确定性护栏，先于 selector，省一次轻量 LLM 调用）：
+# 「我的主管是谁」「我的部门/薪资/生日/工号…」这类身份归属查询必须召回用户身份记忆，
+# 否则后续检索会把「当前登录用户」当泛化实体空转（选召 LLM 可能误判为通用查询而跳过）。
+# 误召回由阈值 + top-k 预算兜底（宁多召，不漏召）。
+_PERSONAL_QUERY_RE = re.compile(r"(我的|本人|我自己的|我自己)")
 
 
 def is_write_intent(query: str) -> bool:
@@ -121,7 +128,11 @@ async def maybe_recall(
             emit({"type": "memory_read", "query": query, "hits": [], "source": "proactive", "need": False, "reason": reason})
         return None, [], True
     need, reason = True, ""
-    if selector_enabled:
+    if _PERSONAL_QUERY_RE.search(query):
+        # 个人化归属查询确定性召回：跳过 selector，保证用户身份记忆进入链路
+        # （身份丢失会让后续检索把「当前登录用户」当泛化实体空转）
+        reason = "个人化归属查询，需召回用户身份记忆"
+    elif selector_enabled:
         try:
             resp = await llm.ainvoke([SystemMessage(content=SELECTOR_PROMPT), HumanMessage(content=query)])
             content = resp.content if isinstance(resp.content, str) else str(resp.content or "")

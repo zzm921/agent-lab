@@ -14,10 +14,9 @@ def test_build_tools_empty(registry):
     assert build_tools(registry, [], "s1") == []
 
 
-def test_build_tools_memory_two_tools(registry):
-    tools = build_tools(registry, ["memory"], "s1")
-    names = {t.name for t in tools}
-    assert names == {"memory_write", "memory_recall"}
+def test_build_tools_memory_not_in_toolset(registry):
+    """记忆是系统前置能力（常驻注入/主动召回/轮末巩固），不再暴露为工具。"""
+    assert build_tools(registry, ["memory"], "s1") == []
 
 
 def test_build_tools_skips_unavailable(settings, sessions):
@@ -27,6 +26,6 @@ def test_build_tools_skips_unavailable(settings, sessions):
 
 
 def test_build_tools_dedupe(registry):
-    tools = build_tools(registry, ["memory", "memory", "calculator"], "s1")
+    tools = build_tools(registry, ["calculator", "calculator", "time_now"], "s1")
     names = [t.name for t in tools]
-    assert names.count("memory_write") == 1
+    assert names.count("calculator") == 1

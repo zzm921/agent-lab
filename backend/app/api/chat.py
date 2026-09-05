@@ -262,7 +262,6 @@ _SOURCE_FILES: dict[str, str] = {
     "run_command": "tools/run_command.py",
     "big_output": "tools/big_output.py",
     "rag": "rag/manager.py",
-    "memory": "tools/memory_tool.py",
     "mcp": "capabilities/mcp.py",
     "registry": "capabilities/registry.py",
     "react": "agents/modes/react.py",

@@ -79,8 +79,12 @@ class QueryClassifier(ABC):
     """查询语义路由抽象：输入问题，输出结构化路由决策。"""
 
     @abstractmethod
-    def classify(self, query: str) -> RouteDecision:
-        """返回路由决策（五维度 + 置信度 + 理由）。"""
+    def classify(self, query: str, memory: str | None = None) -> RouteDecision:
+        """返回路由决策（五维度 + 置信度 + 理由）。
+
+        memory：L2 主动语义召回的用户记忆块（背景参考），追加进提示词辅助路由判断
+        （如「上次问过/关注的」这类历史相关问题的识别）。
+        """
 
 
 class LLMQueryClassifier(QueryClassifier):
@@ -94,13 +98,18 @@ class LLMQueryClassifier(QueryClassifier):
     # 本阶段使用的模型/参数场景（qwen3.5-flash / temp=0.2 / max_tokens=500 / thinking=False，见 service.DEFAULT_PROFILES）
     scenario = "rag_classify"
 
-    def classify(self, query: str) -> RouteDecision:
+    def classify(self, query: str, memory: str | None = None) -> RouteDecision:
         llm = get_chat_model(self.scenario)
         if llm is None:
             raise ConfigError(
                 f"modular 语义路由需要聊天模型（场景 {self.scenario}）：请配置 LLM_API_KEY。"
                 "路由已改为纯 LLM，不再回退规则判定。"
             )
+        hint = (
+            f"\n\n相关用户记忆（仅作背景参考，可能与当前问题无关）：\n{memory}"
+            if memory
+            else ""
+        )
         messages = [
             SystemMessage(
                 content=(
@@ -171,6 +180,7 @@ class LLMQueryClassifier(QueryClassifier):
                     '输出: {"retrieval_need": false, "retrieval_mode": "vector", '
                     '"complexity": "simple", "generation_mode": "direct", '
                     '"target": "none", "confidence": 0.99, "reason": "闲聊元问题，无需检索"}'
+                    f"{hint}"
                 )
             ),
             HumanMessage(content=query),

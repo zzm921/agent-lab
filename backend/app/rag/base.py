@@ -55,18 +55,20 @@ class RagScheme(ABC):
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         """按本方案策略检索，返回 [{text, score, metadata}]。"""
 
-    def retrieve_full(self, query: str, top_k: int | None = None, context: str | None = None) -> RetrieveResult:
+    def retrieve_full(self, query: str, top_k: int | None = None, context: str | None = None, memory: str | None = None) -> RetrieveResult:
         """同步完整检索结果（供非流式场景/测试）；页面事件走 astream 流式下发。
 
         context：最近会话上下文（指代消解用，naive 等无需消解的方案忽略）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），naive 无 LLM 阶段忽略。
         """
         return RetrieveResult(query=query, hits=self.retrieve(query, top_k))
 
-    async def astream(self, query: str, top_k: int | None = None, context: str | None = None):
+    async def astream(self, query: str, top_k: int | None = None, context: str | None = None, memory: str | None = None):
         """异步流式检索：按阶段即时产出事件，供 runner 经 async for 直达前端。
 
         默认实现（naive）无重写阶段，仅产出检索命中事件；子类可先 yield 重写事件再检索。
         context：最近会话上下文（指代消解用，naive 等无需消解的方案忽略）。
+        memory：L2 主动语义召回的用户记忆块（背景参考），naive 无 LLM 阶段忽略。
         """
         hits = self.retrieve(query, top_k)
         yield {

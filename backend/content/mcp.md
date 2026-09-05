@@ -8,11 +8,11 @@ completeLevel: 90
 tags: [MCP, Tooling, Protocol]
 techFilters: [MCP]
 accent: '#22d3a8'
-enabledTools: [save_note, list_notes, get_note, delete_note]
+enabledTools: [now, system_info, env_get]
 prompts:
-  - 帮我把「周三下午三点和客户张总开会」记成一条笔记，然后列出我所有的笔记标题。
-  - 查看我笔记里关于「RAG」的笔记内容。
-  - 把「记住：老板不喜欢红色方案」存为一条笔记。
+  - 帮我查一下当前的时间、日期和系统时区。
+  - 告诉我当前运行环境的基本信息（操作系统 / Python 版本 / CPU 核数）。
+  - 读取一下环境变量 TZ 的值，看看时区是怎么设置的。
 ---
 ## 概述
 
@@ -22,8 +22,8 @@ MCP（Model Context Protocol）是 AI 工具调用的「USB 标准」——一�
 
 本项目把 MCP 落成**一条完整可运行的链路**，并且默认开启、服务启动即就绪，页面侧边栏可随时关闭，直观对比「有 MCP / 无 MCP」的能力差异：
 
-- **服务端（MCP Server）**：自建 `mcp-notes` 便签服务（FastMCP + **stdio 传输**，由在线服务启动时以子进程自动拉起），提供 `save_note / list_notes / get_note / delete_note` 四个工具，JSON 文件持久化；
-- **客户端（MCP Client）**：后端 `McpManager` 默认开启（`MCP_ENABLED=true`），**服务启动时自动连接 + 发现工具** → 工具以 `mcp-notes:xxx` 能力出现在页面，可逐个启用/示例/对话调用；页面「MCP 服务」开关**只控制这些能力是否进入目录**（服务连接在启动时已建立、与开关无关），关闭则能力从目录消失。
+- **服务端（MCP Server）**：自建 `mcp-info` **只读**信息服务（FastMCP + **stdio 传输**，由在线服务启动时以子进程自动拉起），提供 `now / system_info / env_get` 三个**纯只读**工具——只返回当前时间、系统信息与白名单环境变量，**没有任何写入 / 修改副作用**；
+- **客户端（MCP Client）**：后端 `McpManager` 默认开启（`MCP_ENABLED=true`），**服务启动时自动连接 + 发现工具** → 工具以 `mcp-info:xxx` 能力出现在页面，可逐个启用/示例/对话调用；页面「MCP 服务」开关**只控制这些能力是否进入目录**（服务连接在启动时已建立、与开关无关），关闭则能力从目录消失。
 
 ## 为什么需要
 
@@ -74,40 +74,45 @@ Client                     Server
 
 ## 本项目的做法
 
-### 一、MCP Server 端（`backend/app/mcp_server/notes_server.py`）
+### 一、MCP Server 端（`backend/app/mcp_server/info_server.py`）
 
-用 `mcp` SDK 的 `FastMCP` 定义一个便签服务，数据以 JSON 文件持久化（`NotesStore`：线程锁 + 读盘→变更→临时文件 `os.replace` 原子写回）。
+用 `mcp` SDK 的 `FastMCP` 定义一个**只读信息**服务，只暴露「读」不暴露「写」，天然安全、可反复演示。
 
 伪代码：
 
 ```python
-# backend/app/mcp_server/notes_server.py
+# backend/app/mcp_server/info_server.py
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("mcp-notes")                    # 声明服务名
-store = NotesStore(os.getenv("MCP_NOTES_FILE", "./data/mcp-notes.json"))
+mcp = FastMCP("mcp-info")                  # 声明服务名
+_ENV_WHITELIST = {"HOME", "USER", "TZ", "LANG", ...}   # env_get 仅允许读白名单
 
 @mcp.tool()
-def save_note(title: str, content: str) -> str:
-    """保存一条便签；同标题覆盖。"""
-    return store.save(title, content)
+def now() -> str:
+    """返回当前日期、时间与系统时区（只读）。"""
+    return "当前时间：{YYYY-MM-DD HH:MM:SS}\n时区：{TZ}（UTC+08:00）"
 
 @mcp.tool()
-def list_notes() -> str:
-    """列出全部便签标题与摘要（按更新时间倒序）。"""
-    return store.list()
+def system_info() -> str:
+    """返回运行环境信息：操作系统 / Python 版本 / 主机名 / CPU 核数（只读）。"""
+    return "操作系统：{System}\nPython：{版本}\n主机名：{hostname}\nCPU 逻辑核数：{n}"
 
-# get_note / delete_note 同理，中文 docstring 即工具描述
+@mcp.tool()
+def env_get(name: str) -> str:
+    """读取白名单内的环境变量（只读）；白名单外拒绝，避免暴露敏感信息。"""
+    return "{name}={value}"  # 或 "拒绝读取环境变量：{name}（仅允许白名单）"
 
-app = mcp.streamable_http_app()   # 可选：独立 HTTP 部署时用 uvicorn app.mcp_server.notes_server:app --port 8001
-                                  # 默认以 stdio 由在线服务子进程拉起（python -m app.mcp_server.notes_server）
+app = mcp.streamable_http_app()   # 可选：独立 HTTP 部署时用 uvicorn app.mcp_server.info_server:app --port 8001
+                                  # 默认以 stdio 由在线服务子进程拉起（python -m app.mcp_server.info_server）
 ```
 
 要点：
 
+- **只读设计**：三个工具都只读取环境状态（当前时间、系统信息、白名单环境变量）并返回文本，不产生任何写入 / 修改副作用——这是与「写库 / 落盘」类 MCP 服务的关键差异，也是演示热插拔最干净的选择；
+- **env_get 白名单机制**：仅允许读取 `HOME / USER / TZ / LANG` 等非敏感变量，白名单外返回拒绝提示，避免把 `API_KEY` 等机密暴露给模型；
 - `FastMCP` + `@mcp.tool()` 自动从函数签名生成 JSON Schema（参数、必填、描述），Client 侧 `tools/list` 拿到的就是它；
 - 默认 **stdio 传输**：`mcp.run()` 走标准输入输出，在线服务以子进程自动拉起，无需手动启动；`streamable_http_app()` 可选地把它变成可独立部署的 HTTP 服务；
-- 每个工具是**纯函数 + 原子持久化**，无状态、可并发、可挂到任何宿主上。
+- 每个工具是**纯函数**，无状态、可并发、可挂到任何宿主上。
 
 ### 二、MCP Client 端（`backend/app/capabilities/mcp.py`）
 
@@ -118,7 +123,7 @@ app = mcp.streamable_http_app()   # 可选：独立 HTTP 部署时用 uvicorn ap
 ```python
 class McpManager:
     def __init__(self, servers_json="{}", enabled=True):
-        self.servers = parse(servers_json)   # {"mcp-notes": {"command": "python", "args": ["-m", "app.mcp_server.notes_server"]}}
+        self.servers = parse(servers_json)   # {"mcp-info": {"command": "python", "args": ["-m", "app.mcp_server.info_server"]}}
         self.enabled = enabled               # 页面开关：是否在能力目录中使用 MCP（默认开启）
         self.capabilities: list[dict] = []   # 已发现的能力（是否暴露由 registry.list 按 enabled 过滤）
         self.tools_by_id: dict = {}          # cap_id -> LangChain 工具
@@ -157,7 +162,7 @@ class McpManager:
 
 - **开关语义**：`enabled=False` 时 `discover()` 被门卫短路，能力目录不含任何 MCP 工具——这就是「默认不开」；
 - **连接保活**：传输上下文存进 `self._contexts`，避免被 GC 回收导致流中断（anyio.WouldBlock / CancelledError）；
-- **能力注册**：`mcp-notes:save_note` 这种「`server:tool`」id 与内置能力统一进能力目录，前端同一套卡片渲染；
+- **能力注册**：`mcp-info:now` 这种「`server:tool`」id 与内置能力统一进能力目录，前端同一套卡片渲染；
 - **工具注入**：`registry.tool_for(cap_id)` 对 MCP 能力走 `mcp.tool()` 返回 LangChain 工具，与 `calculator` 等内置工具同链路进入 `create_agent`。
 
 ### 三、开关 API（`backend/app/api/chat.py`）
@@ -183,15 +188,15 @@ async def mcp_toggle(req: McpToggleRequest):
 
 - 状态：`mcpEnabled` 初始 `false`，`loadMcp()` 从后端 `/api/mcp` 读取（后端默认 `MCP_ENABLED=true`）；`builtinCaps` / `mcpCaps` 按 `source` 分组；
 - 交互：`setMcpEnabled(v)` → `POST /api/mcp` 成功后重新拉能力列表；
-- 展示：侧边栏「MCP 服务」分组有开关——**开启态**（默认）显示「已连接 mcp-notes · 发现 N 个工具」+ fuchsia「MCP」徽标卡片（可逐个开关/示例/故障注入）；**关闭态**显示「MCP 未启用 — 仅使用内置能力」；内置能力单列一组，直观对比有无 MCP。
+- 展示：侧边栏「MCP 服务」分组有开关——**开启态**（默认）显示「MCP 服务已连接 · 能力 N 个」+ fuchsia「MCP」徽标卡片（可逐个开关/示例/故障注入）；**关闭态**显示「MCP 能力已停用 — 仅使用内置能力」；内置能力单列一组，直观对比有无 MCP。
 
 ### 五、端到端流程：有无 MCP 的对比
 
 | 阶段 | 有 MCP（默认开启） | 无 MCP（页面点选关闭） |
 |------|-------------------|----------------------|
-| 能力目录 | 内置能力 + 4 个 `mcp-notes:*`（fuchsia MCP 徽标，独立分组） | 只有内置能力（计算器/时间/搜索/沙箱…） |
-| 侧边栏 | 「已连接 mcp-notes · 发现 4 个工具」 | 「MCP 服务」开关关闭，虚线框提示未启用 |
-| 对话能力 | 发「记一条便签：明天 10 点开会」→ 模型调用 `save_note` → 落盘 `data/mcp-notes.json` | 记不了便签 |
+| 能力目录 | 内置能力 + 3 个 `mcp-info:*`（fuchsia MCP 徽标，独立分组） | 只有内置能力（计算器/时间/搜索/沙箱…） |
+| 侧边栏 | 「MCP 服务已连接 · 能力 N 个」 | 「MCP 服务」开关关闭，虚线框提示未启用 |
+| 对话能力 | 发「现在几点了？」→ 模型调用 `now` → 返回当前时间与时区 | 无法调用 MCP 工具 |
 | 开关动作 | 关闭开关 → MCP 分组消失，回到仅内置能力（不重启） | 再开启 → 重新连接并发现（不重启） |
 | server 无法拉起 | 能力标「不适配（连接失败）」置灰，其余对话不受影响 | — |
 
@@ -220,7 +225,7 @@ async function setMcpEnabled(v: boolean) {   // 页面开关
 
 | 通用概念 | 本项目实现 |
 |---------|-----------|
-| MCP Server（工具服务进程） | `mcp-notes`（FastMCP + stdio，服务启动时以子进程自动拉起，JSON 持久化） |
+| MCP Server（工具服务进程） | `mcp-info`（FastMCP + stdio，服务启动时以子进程自动拉起，纯只读：时间 / 系统信息 / 白名单环境变量） |
 | MCP Client（Agent 宿主） | `McpManager`：连接 + `tools/list` 发现 → 能力注册 → 工具注入 |
 | 传输：stdio / Streamable HTTP | 两者均支持；本项目默认 stdio |
 | 握手 / 发现 / 调用 | `initialize` → `load_mcp_tools`（内部 `tools/list`）→ `tools/call` |
@@ -235,6 +240,7 @@ async function setMcpEnabled(v: boolean) {   // 页面开关
 
 - 工具以独立服务存在，与 Agent 解耦，新增/下线能力不改主程序代码；
 - 标准化协议：同一 MCP Server 可被任意支持 MCP 的 Agent 复用；
+- 只读服务零副作用：演示热插拔不产生脏数据，env 白名单避免敏感信息泄露；
 - 默认开启（服务启动即就绪）+ 页面可关闭 + 分组展示，能力热插拔直观可见，降级友好（连接失败不影响对话）。
 
 **边界**

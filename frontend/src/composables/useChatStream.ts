@@ -185,7 +185,7 @@ export interface SendParams {
   ragScheme: RagSchemeId
   /** 本轮是否启用知识库检索（RAG 前置检索），后端能力默认开启，由前端开关控制 */
   ragEnabled: boolean
-  /** 本轮是否启用长期记忆能力（工具/常驻注入/轮末巩固），默认开启 */
+  /** 本轮是否启用长期记忆能力（常驻注入/主动召回/轮末巩固），默认开启 */
   memoryEnabled: boolean
   /** 「每轮压缩」演示：保留最近 N 轮对话原文，更早历史每轮被压缩；0 使用系统默认阈值 */
   contextKeepRounds: number

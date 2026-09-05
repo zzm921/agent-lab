@@ -9,7 +9,7 @@ const emit = defineEmits<{ 'update:modelValue': [v: RagSchemeId] }>()
 </script>
 
 <template>
-  <div class="flex flex-wrap gap-2">
+  <div class="grid grid-cols-2 gap-2">
     <button
       v-for="o in schemes"
       :key="o.id"

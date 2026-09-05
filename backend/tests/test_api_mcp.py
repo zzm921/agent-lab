@@ -43,24 +43,24 @@ def test_registry_filters_mcp_caps_by_enabled(settings, sessions, rag_manager, e
     mcp._discovered = True  # 模拟服务启动时已连接并发现工具
     mcp.capabilities.append(
         {
-            "id": "mcp-notes:save_note",
-            "name": "mcp-notes · save_note",
+            "id": "mcp-info:now",
+            "name": "mcp-info · now",
             "source": "mcp",
-            "server": "mcp-notes",
+            "server": "mcp-info",
             "requires": None,
             "availability": "available",
             "unavailable_reason": None,
-            "desc": "save_note",
+            "desc": "now",
             "example": "",
             "code_key": "mcp",
         }
     )
     registry = CapabilityRegistry(settings, sessions, mcp, rag_manager, embeddings)
     ids = {c["id"] for c in registry.list()}
-    assert "mcp-notes:save_note" not in ids  # 默认未启用 → 能力目录不含 MCP
+    assert "mcp-info:now" not in ids  # 默认未启用 → 能力目录不含 MCP
     mcp.enabled = True
     ids = {c["id"] for c in registry.list()}
-    assert "mcp-notes:save_note" in ids  # 开启后进入能力目录
+    assert "mcp-info:now" in ids  # 开启后进入能力目录
     assert mcp._discovered is True  # 开关切换不改变连接状态
 
 

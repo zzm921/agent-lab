@@ -64,8 +64,8 @@ npm run test
 - `test_mcp_partial_failure`：多 server 部分失败不影响其它
 - `test_mcp_enable_then_disable`：开启后入目录、关闭后移除
 
-**test_mcp_server.py（7）** — mcp-notes 便签 server
-- NotesStore 持久化往返 / 同标题覆盖 / 列表 / 删除 / 工具函数 stdio 消息往返等（不联网）
+**test_info_server.py（5）** — mcp-info 只读 server
+- now / system_info 输出关键字段、env_get 白名单读取 / 未设置 / 白名单外拒绝（不联网）
 
 **test_tools.py（17）** — 工具与向量检索
 - `test_calculator_basic` / `test_calculator_chinese_operators` / `test_calculator_unsafe_rejected`：计算器基本/中文符号/不安全表达式拒绝

@@ -22,17 +22,15 @@ def test_rag_not_in_directory(settings, sessions):
     assert "rag" not in caps
 
 
-def test_memory_in_directory(settings, sessions, embeddings):
-    """memory 能力卡收录目录：有 embeddings 时可用（工具可解析），无 embeddings 时不可用。"""
+def test_memory_not_in_directory(settings, sessions, embeddings):
+    """memory 已从能力目录移除：记忆为系统前置能力（常驻注入/主动召回/轮末巩固），不暴露为工具。"""
     registry = CapabilityRegistry(settings, sessions, McpManager("{}"), None, embeddings)
     caps = {c["id"]: c for c in registry.list()}
-    assert caps["memory"]["availability"] == "available"
-    assert registry.tool_for("memory", "s1", lambda e: None) is not None
+    assert "memory" not in caps
+    assert registry.tool_for("memory", "s1", lambda e: None) is None
 
     no_emb = CapabilityRegistry(settings, sessions, McpManager("{}"), None, None)
-    caps2 = {c["id"]: c for c in no_emb.list()}
-    assert caps2["memory"]["availability"] == "unavailable"
-    assert no_emb.tool_for("memory", "s1") is None
+    assert "memory" not in {c["id"] for c in no_emb.list()}
 
 
 def test_tool_for_unavailable_returns_none(settings, sessions):
