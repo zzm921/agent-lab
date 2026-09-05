@@ -194,7 +194,16 @@ export type AgentEvent =
       thought?: string
     }
   | { type: 'memory_write'; content: string; kind?: string; importance?: number; scope?: string; source?: string }
-  | { type: 'memory_read'; query: string; hits: HitItem[] }
+  | {
+      type: 'memory_read'
+      query: string
+      hits: HitItem[]
+      /** 召回来源：tool（memory_recall 工具，模型被动触发）| proactive（L2 主动语义召回，系统每轮触发） */
+      source?: 'tool' | 'proactive'
+      /** proactive：selector 触发判断结果（need=false 表示本轮判断无需记忆，跳过召回） */
+      need?: boolean
+      reason?: string
+    }
   | { type: 'memory_constant'; count: number }
   | { type: 'approval_request'; approval_id: string; tool_calls: ToolCallInfo[] }
   | { type: 'reflect'; stage?: string; critique?: string }

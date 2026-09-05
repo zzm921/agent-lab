@@ -152,11 +152,15 @@ export interface StepEntry {
   content?: string
   /** memory_constant：常驻记忆注入条数 */
   count?: number
+  /** memory_read：召回来源（tool 被动工具 / proactive 主动语义召回）；memory_write：写入来源 */
+  memorySource?: string
+  /** memory_read：proactive selector 触发判断（need=false 表示本轮判断无需记忆跳过召回） */
+  memoryNeed?: boolean
+  memoryReason?: string
   /** memory_write：记忆分类 / 重要度 / 写入范围（session|global） */
   memoryKind?: string
   memoryImportance?: number
   memoryScope?: string
-  memorySource?: string
   /** reflect */
   stage?: string
   critique?: string
@@ -569,7 +573,14 @@ export function useChatStream(): ChatStream {
         })
         break
       case 'memory_read':
-        pushStep({ kind: 'memory_read', query: ev.query, hits: ev.hits })
+        pushStep({
+          kind: 'memory_read',
+          query: ev.query,
+          hits: ev.hits,
+          memorySource: ev.source,
+          memoryNeed: ev.need,
+          memoryReason: ev.reason,
+        })
         break
       case 'memory_constant':
         pushStep({ kind: 'memory_constant', count: ev.count })

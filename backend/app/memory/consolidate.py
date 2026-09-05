@@ -2,7 +2,13 @@
 
 对齐 3.5 提取模板：只提取用户画像/偏好/项目决策/外部资源；
 每条由 LLM 判定 scope（global=跨会话长期偏好/约束 → 写常驻库；session=本会话临时上下文 → 写会话库）；
-importance < memory_consolidate_min_importance 丢弃；经 store.add 语义去重自动纠偏。
+importance < memory_consolidate_min_importance 丢弃。
+
+写入采用「提取 → 匹配 → 合并」三段式（企业级 Mem0 式，替代简单覆盖）：
+- 高相似度（≥ dedup_threshold）→ 直接合并：旧值入 history 归档、新表述作当前值；
+- 模糊带（MERGE_LOW ~ 高阈值）→ 轻量 LLM 批量裁决 merge/conflict/add；裁决失败回退规则
+  （含改口触发词 → conflict 合并归档，否则保守新增，宁重不漏）；
+- 低相似度 → 视为不同事实另存。
 整体 try/except 吞错，任何失败都不影响主对话链路（记忆是增强项，非必要项）。
 """
 from __future__ import annotations
@@ -13,6 +19,8 @@ import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.memory.long_memory import MERGE_LOW, is_conflict_rewrite
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +37,58 @@ EXTRACT_PROMPT = (
 
 # 参考记忆分类；无法映射的 type 一律归为 fact
 _VALID_KINDS = ("fact", "preference", "episodic", "procedural")
+
+# 模糊带合并裁决：给「已有记忆 + 新提取事实」，判定 merge（补充/更新）/ conflict（用户改口）/
+# add（不同事实另存）；merge/conflict 时由 LLM 给出合并后的统一表述 text。
+MERGE_JUDGE_PROMPT = (
+    "你是记忆合并判断器。以下是若干组「已有记忆」与其最相似的「新提取事实」，逐条判断应如何处理：\n"
+    "- merge：新事实是对已有记忆的补充/更新（同一事实的新表述）→ 输出合并后的统一表述 text；\n"
+    "- conflict：新事实推翻/取代旧记忆（用户改口、纠正）→ 输出新表述 text，旧表述将归档不再召回；\n"
+    "- add：新事实与已有记忆是不同事实，应另存为一条新记忆。\n"
+    '只输出严格 JSON 数组，不要输出任何其他文字：\n'
+    '[{"index": 0, "action": "merge|conflict|add", "reason": "一句话理由", "text": "合并后的表述"}]'
+)
+
+
+def _judge_payload(ambiguous: list[dict[str, Any]]) -> str:
+    """把模糊带候选组装为裁决输入（编号对齐 JSON 里的 index）。"""
+    lines = []
+    for a in ambiguous:
+        lines.append(
+            f"{a['idx']}. 已有记忆：{a['existing']}\n"
+            f"   新提取事实：{a['item']['text']}"
+        )
+    return "\n\n".join(lines)
+
+
+def _parse_judgments(content: str) -> dict[int, dict[str, str]]:
+    """解析裁决输出 JSON 数组 → {index: {action, reason, text}}；整体非法返回空（走规则回退）。"""
+    match = re.search(r"\[.*\]", content, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, list):
+        return {}
+    out: dict[int, dict[str, str]] = {}
+    for d in data:
+        if not isinstance(d, dict):
+            continue
+        try:
+            idx = int(d.get("index"))
+        except (TypeError, ValueError):
+            continue
+        action = str(d.get("action") or "").strip().lower()
+        if action not in ("merge", "conflict", "add"):
+            continue
+        out[idx] = {
+            "action": action,
+            "reason": str(d.get("reason") or ""),
+            "text": str(d.get("text") or "").strip(),
+        }
+    return out
 
 
 def _extract_items(content: str) -> list[dict[str, Any]]:
@@ -86,10 +146,16 @@ def _transcript(messages) -> str:
 
 
 async def maybe_consolidate(store, constant_store, messages, llm, settings, session_id: str) -> list[dict[str, Any]]:
-    """轮末提取巩固：门控开关；提取 + 过滤 + 按 scope 分流落库；任何异常静默吞掉。
+    """轮末提取巩固：门控开关；提取 + 过滤 + 按 scope 分流 + 三段式合并落库；任何异常静默吞掉。
 
     scope=global 的条目写入 constant_store（当前客户端的常驻库，跨会话生效）；
     scope=session 的条目写入 store（当前会话库）。返回实际写入的记忆条目列表（含 scope）。
+
+    三段式（Mem0 式提取→匹配→合并）：
+    - 高相似度（≥ dedup_threshold）→ 确定性合并（旧值入 history 归档、新表述作当前值）；
+    - 模糊带（MERGE_LOW ~ dedup_threshold）→ 攒批后轻量 LLM 裁决 merge/conflict/add；
+      裁决失败回退规则（含改口触发词 → conflict 合并归档，否则保守新增，宁重不漏）；
+    - 低相似度 / 无匹配 → 视为不同事实另存。
     """
     if not getattr(settings, "memory_consolidate_enabled", True):
         return []
@@ -112,10 +178,26 @@ async def maybe_consolidate(store, constant_store, messages, llm, settings, sess
         return []
     written = []
     min_importance = getattr(settings, "memory_consolidate_min_importance", 0.5)
+    ambiguous: list[dict[str, Any]] = []  # 模糊带候选：攒批统一交 LLM 裁决
     for item in items:
         if item["importance"] < min_importance:
             continue
         target = constant_store if (item["scope"] == "global" and constant_store is not None) else store
+        # 匹配（不触碰访问统计）：落入模糊带则攒批，其余（高/低/无匹配）直接确定性落库
+        matched = target.match(item["text"], top_k=1)
+        if matched:
+            sim = float(matched[0].get("score", 0.0))
+            if MERGE_LOW <= sim < target.dedup_threshold:
+                ambiguous.append(
+                    {
+                        "idx": len(ambiguous),
+                        "target": target,
+                        "item": item,
+                        "match_id": (matched[0].get("metadata") or {}).get("id"),
+                        "existing": matched[0].get("text"),
+                    }
+                )
+                continue
         try:
             target.add(
                 item["text"],
@@ -126,4 +208,45 @@ async def maybe_consolidate(store, constant_store, messages, llm, settings, sess
             written.append(item)
         except Exception as exc:  # noqa: BLE001
             logger.warning("memory consolidate 写入失败（已忽略）: %s", exc)
+
+    # 模糊带批量裁决：轻量 LLM 判定 merge/conflict/add（一次调用处理整批）；
+    # 裁决缺失/失败回退走 add 的确定性合并（高阈值合并 / 改口 conflict / 保守新增）。
+    if ambiguous:
+        try:
+            resp = await llm.ainvoke(
+                [
+                    SystemMessage(content=MERGE_JUDGE_PROMPT),
+                    HumanMessage(content=_judge_payload(ambiguous)),
+                ]
+            )
+            content = resp.content if isinstance(resp.content, str) else str(resp.content or "")
+            judgments = _parse_judgments(content)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memory consolidate 合并裁决失败（已忽略）: %s", exc)
+            judgments = {}
+        for a in ambiguous:
+            target = a["target"]
+            item = a["item"]
+            jud = judgments.get(a["idx"])
+            try:
+                if jud and jud["action"] in ("merge", "conflict"):
+                    target.add_judged(
+                        jud.get("text") or item["text"],
+                        kind=item["kind"],
+                        importance=item["importance"],
+                        source_session=session_id,
+                        decision=jud["action"],
+                        reason=jud.get("reason") or jud["action"],
+                        match_id=a["match_id"],
+                    )
+                else:  # add 或裁决缺失/失败 → 确定性回退
+                    target.add(
+                        item["text"],
+                        kind=item["kind"],
+                        importance=item["importance"],
+                        source_session=session_id,
+                    )
+                written.append(item)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("memory consolidate 裁决写入失败（已忽略）: %s", exc)
     return written

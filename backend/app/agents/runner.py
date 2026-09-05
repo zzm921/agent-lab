@@ -21,6 +21,7 @@ from app.agents.modes.reflection import build_reflection_agent
 from app.agents.tools_builder import build_tools
 from app.llm.service import LLMService
 from app.memory.consolidate import maybe_consolidate
+from app.memory.proactive import maybe_recall as proactive_recall
 from app.security import InputGuard
 
 STRATEGY_PROMPTS = {
@@ -64,6 +65,8 @@ class AgentRunner:
         # 跨轮 seed 复用：按会话记录上一轮最终检索命中（已含重排/压缩），
         # 供 modular 下一轮作为「候选证据」复用（经 _cross_turn_seed 分数/相关性闸门过滤）。
         self._last_hits: dict[str, list[dict]] = {}
+        # L2 主动语义召回：会话级「已见记忆 id 集合」——同一记忆不重复注入（跨轮去重）
+        self._injected_memory_ids: dict[str, set[str]] = {}
         # 后台静默任务（轮末记忆提取等）：持句柄防 GC 取消，完成即移除
         self._bg_tasks: set[asyncio.Task] = set()
         # 上下文管理与压缩管线（snip/micro/auto-compact，大文件落盘在工具结果层挂钩）
@@ -133,7 +136,64 @@ class AgentRunner:
             len(items),
         )
 
-    async def _make_inputs(self, graph, config, message, strategy, emit=None, rag_context=None, insufficient=False, generation_mode=None, keep_rounds=0, memory_enabled=True, client_key="default"):
+    async def _proactive_memory_recall(self, session_id, client_key, query, emit):
+        """L2 主动语义召回：selector 判断 → 会话库+常驻库合并召回 → 返回注入块。
+
+        企业级四件套：触发判断（轻量 LLM，判否跳过）→ 合并召回 → 已见去重 → 预算封顶。
+        注入到 user 消息（本轮生效）；命中即 touch 访问频率。任何异常吞掉不影响主链路。
+        """
+        if not getattr(self.settings, "memory_proactive_enabled", True):
+            return None
+        if self.registry.embeddings is None:
+            return None
+        try:
+            store = self.sessions.long_memory(session_id, self.registry.embeddings)
+            constant = self.sessions.constant_memory(self.registry.embeddings, client_key)
+            injected = self._injected_memory_ids.setdefault(session_id, set())
+            block, _, _ = await proactive_recall(
+                self._scenario_llm("memory_selector"),
+                store,
+                constant,
+                query,
+                top_k=self.settings.memory_proactive_top_k,
+                threshold=self.settings.memory_proactive_threshold,
+                max_chars=self.settings.memory_proactive_max_chars,
+                injected_ids=injected,
+                emit=emit,
+                selector_enabled=bool(getattr(self.settings, "memory_proactive_selector", True)),
+            )
+            return block
+        except Exception:  # noqa: BLE001 — 主动召回失败绝不影响主链路
+            return None
+
+    def _seed_constant_ids(self, session_id, client_key, memory_enabled: bool = True):
+        """把 L1 常驻注入的记忆 id 预置进会话已见集合，避免 L2 主动召回重复注入同一批常驻记忆。
+
+        常驻记忆已在首轮注入 system（L1），L2 主动召回若再从常驻库召到同一批会重复注入
+        （system 与 user 双份、浪费 token 且干扰模型）。首轮先 seed，proactive 的已见去重
+        自然跳过这些 id。仅依赖 constant_memories 的返回 meta.id，任何异常静默吞掉。
+        """
+        if not memory_enabled or not getattr(self.settings, "memory_enabled", True):
+            return
+        if not getattr(self.settings, "memory_constant_enabled", True):
+            return
+        if self.registry.embeddings is None:
+            return
+        try:
+            constant = self.sessions.constant_memory(self.registry.embeddings, client_key)
+            items = constant.constant_memories(
+                self.settings.memory_constant_top_k,
+                min_importance=self.settings.memory_constant_min_importance,
+            )
+        except Exception:  # noqa: BLE001 — seed 失败不影响主链路
+            return
+        injected = self._injected_memory_ids.setdefault(session_id, set())
+        for _text, meta in items:
+            rid = meta.get("id")
+            if rid:
+                injected.add(rid)
+
+    async def _make_inputs(self, graph, config, message, strategy, emit=None, rag_context=None, insufficient=False, generation_mode=None, keep_rounds=0, memory_enabled=True, client_key="default", memory_block=None):
         snap = await graph.aget_state(config)
         msgs = []
         if snap is not None and snap.values:
@@ -161,7 +221,7 @@ class AgentRunner:
                 if emit is not None:
                     emit({"type": "memory_constant", "count": count})
             msgs.append(SystemMessage(content=content))
-        msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient, generation_mode)))
+        msgs.append(HumanMessage(content=self._augment_query(message, rag_context, insufficient, generation_mode, memory_block)))
         return {"messages": msgs}
 
     @staticmethod
@@ -185,6 +245,7 @@ class AgentRunner:
         rag_context: dict | None,
         insufficient: bool = False,
         generation_mode: str | None = None,
+        memory_block: str | None = None,
     ) -> str:
         """把检索命中注入用户消息：RAG 是独立检索阶段，不依赖模型主动调用工具。
 
@@ -195,23 +256,30 @@ class AgentRunner:
         无路由事件（naive / advanced）时默认 citation；检索结果不足（insufficient）时
         强制模型如实说明缺失信息并向用户追问澄清（指令优先级最高，不依赖自身知识编造）。
 
+        memory_block：L2 主动语义召回注入块（由 proactive 模块生成），叠加在 RAG 注入之后；
+        均注入 user 消息，确保首轮模型调用可见。
+
         说明：知识库为受控内部语料，视为可信来源，不做「不可信外部数据」包装；
         仅对 web_search / run_command / memory_recall 等真正的外部来源做注入隔离。
         """
-        if not rag_context or not rag_context.get("hits"):
-            # 零命中：无「答案不足」信号时原样返回；但若答案充分性判定需澄清
-            # （insufficient=True，如 out-of-kb/证据缺口），必须仍注入追问澄清指令——
-            # 否则主 LLM 拿不到任何上下文，会凭空编造（如声称工具不可用、依赖自身
-            # 知识作答），而非如实说明信息缺失。
-            if insufficient:
-                return (
-                    f"{message}\n\n"
-                    "【知识库检索结果】本轮未检索到与问题相关的知识库内容。"
-                    "请如实告知用户当前检索未能获取足够信息，说明缺失的关键信息，"
-                    "并礼貌地向用户追问补充依据（如具体文件、部门名称等）；"
-                    "不要编造、不要依赖自身知识臆测内部数据，也不要声称工具不可用。"
-                )
-            return message
+        content = message
+        if rag_context and rag_context.get("hits"):
+            content = AgentRunner._rag_block(rag_context, message, insufficient, generation_mode)
+        elif insufficient:
+            content = (
+                f"{message}\n\n"
+                "【知识库检索结果】本轮未检索到与问题相关的知识库内容。"
+                "请如实告知用户当前检索未能获取足够信息，说明缺失的关键信息，"
+                "并礼貌地向用户追问补充依据（如具体文件、部门名称等）；"
+                "不要编造、不要依赖自身知识臆测内部数据，也不要声称工具不可用。"
+            )
+        if memory_block:
+            content = f"{content}\n\n{memory_block}"
+        return content
+
+    @staticmethod
+    def _rag_block(rag_context: dict, message: str, insufficient: bool, generation_mode: str | None) -> str:
+        """组装 RAG 注入块（保留原 _augment_query 的 RAG 分支逻辑）。"""
         hits = rag_context["hits"]
         name = rag_context["name"]
         if insufficient:
@@ -277,6 +345,66 @@ class AgentRunner:
                 turns.append(f"助手: {content}")
         return "\n".join(turns) if turns else None
 
+    async def _run_rag_stage(self, session_id, message, graph, config, rag_scheme, result: dict):
+        """RAG 前置检索阶段：按选定方案流式检索并逐条转发事件，同时提取主 LLM 所需信号。
+
+        作为异步生成器运行：runner.stream 用 `async for` 消费并逐条转发 RAG 过程事件
+        （rewrite/classify/retrieve/answerability）给前端，保持检索过程实时可见；
+        事件消费、信号提取与跨轮 seed 缓存更新全部内聚于此，stream 只取结果。
+
+        结束时把提取结果写入 result（生成器无独立返回值通道）：
+        - rag_context：{name, hits} 命中上下文，注入主 LLM；
+        - effective_message：指代消解/查询改写后的 query，替换主 LLM 输入，避免主 LLM
+          对「他/这…」二次解析（把指代词误指回上轮问题主语）导致答非所问；
+        - generation_mode：语义路由产出的生成策略（citation/comparison/direct）；
+        - insufficient：检索结果不足 → 强制模型追问澄清，不编造内部数据。
+        """
+        scheme = self.registry.rag_manager.resolve(rag_scheme)
+        # 最近会话上下文（用户/助手回合）：RAG 是独立检索阶段，只有当前消息；
+        # 传入上下文供 modular 前置「指代消解」把「他/这…」替换为具体实体。
+        context = await self._recent_context(graph, config)
+        # 跨轮 seed 复用：modular/agentic 方案支持（共享 _cross_turn_seed 闸门）；
+        # 传入上一轮最终命中，由方案内按分数/相关性过滤后作候选证据
+        # （省重复检索、不注入查询文本）。
+        prev_hits = self._last_hits.get(session_id)
+        stream_kwargs = {"context": context}
+        if getattr(scheme, "id", None) in ("modular", "agentic") and prev_hits:
+            stream_kwargs["seed_hits"] = prev_hits
+
+        rag_context = None
+        effective_message = message
+        generation_mode = None
+        insufficient = False
+        async for ev in scheme.astream(message, self.settings.rag_top_k, **stream_kwargs):
+            yield ev
+            if ev["type"] == "rewrite" and ev.get("reason") == "指代消解" and ev.get("rewrites"):
+                # rewrite 事件：modular 指代消解后的 query 作为主 LLM 输入
+                effective_message = ev["rewrites"][0]
+            elif ev["type"] == "classify":
+                generation_mode = ev.get("generation_mode") or generation_mode
+            elif ev["type"] == "retrieve":
+                # retrieve 事件携带实际用于检索的 query（modular 已含指代消解结果），
+                # 作为无 rewrite 事件场景的兜底（如未消解但有查询改写时保持原文）。
+                effective_message = ev.get("query") or effective_message
+                if ev.get("hits"):
+                    rag_context = {"name": scheme.name, "hits": ev["hits"]}
+            elif ev["type"] == "answerability":
+                # 最后一条 answerability 事件即最终验证结论：
+                # 检索结果不足以回答 → 强制模型追问澄清，不编造内部数据。
+                if ev.get("verdict", {}).get("answerable") is False:
+                    insufficient = True
+        # 更新跨轮 seed 缓存：本轮检索到命中则记录（供下一轮复用），否则清空
+        if rag_context and rag_context.get("hits"):
+            self._last_hits[session_id] = rag_context["hits"]
+        else:
+            self._last_hits.pop(session_id, None)
+        result.update(
+            rag_context=rag_context,
+            effective_message=effective_message,
+            generation_mode=generation_mode,
+            insufficient=insufficient,
+        )
+
     async def _consolidate_memory_bg(self, graph, config, session_id, memory_enabled: bool = True, client_key: str = "default"):
         """轮末自动提取巩固（后台静默）：把本轮对话提炼为长期记忆写入库。
 
@@ -328,6 +456,7 @@ class AgentRunner:
         # 本轮关闭记忆时：从能力清单剔除 memory，常驻注入/轮末巩固一并关闭
         if not memory_enabled:
             enabled = [c for c in enabled if c != "memory"]
+            
         tools = build_tools(self.registry, enabled, session_id, emit)
         try:
             graph = self._build_graph(mode, tools, emit)
@@ -359,39 +488,28 @@ class AgentRunner:
         # 避免主 LLM 对「他/这…」二次解析（把指代词误指回上轮问题主语）导致答非所问。
         effective_message = message
         if self.registry.rag_manager is not None and rag_enabled:
-            scheme = self.registry.rag_manager.resolve(rag_scheme)
-            # 最近会话上下文（用户/助手回合）：RAG 是独立检索阶段，只有当前消息；
-            # 传入上下文供 modular 前置「指代消解」把「他/这…」替换为具体实体。
-            context = await self._recent_context(graph, config)
-            # 跨轮 seed 复用：modular/agentic 方案支持（共享 _cross_turn_seed 闸门）；
-            # 传入上一轮最终命中，由方案内按分数/相关性过滤后作候选证据
-            # （省重复检索、不注入查询文本）。
-            prev_hits = self._last_hits.get(session_id)
-            stream_kwargs = {"context": context}
-            if getattr(scheme, "id", None) in ("modular", "agentic") and prev_hits:
-                stream_kwargs["seed_hits"] = prev_hits
-            async for ev in scheme.astream(message, self.settings.rag_top_k, **stream_kwargs):
+            # RAG 前置检索整体收敛到 _run_rag_stage：流式转发过程事件给前端，并在内部完成
+            # 信号提取（effective_message/generation_mode/rag_context/insufficient）
+            # 与跨轮 seed 缓存更新；这里只逐条转发并取回结果。
+            rag_result = {}
+            async for ev in self._run_rag_stage(session_id, message, graph, config, rag_scheme, rag_result):
                 yield ev
-                if ev["type"] == "rewrite" and ev.get("reason") == "指代消解" and ev.get("rewrites"):
-                    effective_message = ev["rewrites"][0]
-                elif ev["type"] == "classify":
-                    generation_mode = ev.get("generation_mode") or generation_mode
-                elif ev["type"] == "retrieve":
-                    # retrieve 事件携带实际用于检索的 query（modular 已含指代消解结果），
-                    # 作为无 rewrite 事件场景的兜底（如未消解但有查询改写时保持原文）。
-                    effective_message = ev.get("query") or effective_message
-                    if ev.get("hits"):
-                        rag_context = {"name": scheme.name, "hits": ev["hits"]}
-                elif ev["type"] == "answerability":
-                    # 最后一条 answerability 事件即最终验证结论：
-                    # 检索结果不足以回答 → 强制模型追问澄清，不编造内部数据。
-                    if ev.get("verdict", {}).get("answerable") is False:
-                        insufficient = True
-            # 更新跨轮 seed 缓存：本轮检索到命中则记录（供下一轮复用），否则清空
-            if rag_context and rag_context.get("hits"):
-                self._last_hits[session_id] = rag_context["hits"]
-            else:
-                self._last_hits.pop(session_id, None)
+            rag_context = rag_result.get("rag_context")
+            effective_message = rag_result.get("effective_message") or message
+            generation_mode = rag_result.get("generation_mode")
+            insufficient = rag_result.get("insufficient", False)
+        # L2 主动语义召回：本轮记忆开启时，把当前对话（含 RAG 消解后的 query）转召回，
+        # 命中注入 user 消息（与 RAG 前置检索解耦、互不影响）。selector 判断/召回/注入全部
+        # 静默失败容错；即使未命中也只产出 memory_read 事件（need=false/hits=[]），不报错。
+        memory_block = None
+        if memory_enabled:
+            # L1/L2 去重打通：会话首次进入记忆路径时，先把 L1 常驻注入的记忆 id 预置进
+            # 已见集合，避免 L2 主动召回把同一批常驻记忆再注入一遍（system 与 user 双份）。
+            if session_id not in self._injected_memory_ids:
+                self._seed_constant_ids(session_id, client_key, memory_enabled)
+            memory_block = await self._proactive_memory_recall(
+                session_id, client_key, effective_message, emit
+            )
         inputs = await self._make_inputs(
             graph,
             config,
@@ -404,6 +522,7 @@ class AgentRunner:
             keep_rounds=context_keep_rounds,
             memory_enabled=memory_enabled,
             client_key=client_key,
+            memory_block=memory_block,
         )
         async for ev in self._run_graph(session_id, graph, config, inputs, queue, tool_count):
             if ev["type"] == "done":

@@ -53,6 +53,12 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": False},
     },
     {
+        "scenario": "memory_selector",  # 主动语义召回触发判断：输出极小 JSON（need），关闭思考加速
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.0, "max_tokens": 80, "enable_thinking": False},
+    },
+    {
         "scenario": "planner",  # plan_execute 的任务规划/重规划：低随机性，输出精炼
         "provider": "dashscope",
         "model": "qwen3.5-flash",

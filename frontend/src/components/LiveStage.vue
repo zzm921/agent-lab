@@ -812,6 +812,20 @@ const ROLE_LABEL: Record<string, string> = {
             <span class="flex items-center gap-1.5 font-medium text-cyan-300">
               {{ RETRIEVE_KIND[s.kind] }}
               <span
+                v-if="s.kind === 'memory_read' && s.memorySource === 'proactive'"
+                class="rounded bg-fuchsia-500/20 px-1.5 py-0.5 text-[10px] font-normal text-fuchsia-200"
+                title="L2 主动语义召回：系统每轮把当前对话转 query 自动召回并注入 user，不依赖模型调用工具"
+              >
+                主动召回
+              </span>
+              <span
+                v-if="s.kind === 'memory_read' && s.memorySource === 'tool'"
+                class="rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-normal text-slate-300"
+                title="被动召回：由模型调用 memory_recall 工具触发"
+              >
+                被动工具
+              </span>
+              <span
                 v-if="s.kind === 'memory_write' && s.memoryKind"
                 class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-normal text-amber-200"
               >
@@ -854,6 +868,18 @@ const ROLE_LABEL: Record<string, string> = {
             class="mt-1.5 text-slate-500"
           >
             未检索到相关内容（本轮不注入知识库上下文）
+          </p>
+          <p
+            v-else-if="s.kind === 'memory_read' && s.memoryNeed === false"
+            class="mt-1.5 text-slate-500"
+          >
+            触发判断无需召回（跳过本轮主动召回）{{ s.memoryReason ? ` — ${s.memoryReason}` : '' }}
+          </p>
+          <p
+            v-else-if="s.kind === 'memory_read' && s.hits?.length === 0"
+            class="mt-1.5 text-slate-500"
+          >
+            未召回相关记忆（阈值门控，本轮不注入记忆上下文）
           </p>
         </section>
 

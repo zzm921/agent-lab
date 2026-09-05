@@ -10,8 +10,8 @@ from app.memory.session_store import SessionStore
 
 
 @pytest.fixture
-def mem_registry(settings, embeddings):
-    sessions = SessionStore(memory_dir=None)  # 内存态，不落盘
+def mem_registry(settings, embeddings, tmp_path):
+    sessions = SessionStore(memory_dir=str(tmp_path))  # 落盘到临时目录（隔离 + 支持审计）
     registry = CapabilityRegistry(settings, sessions, McpManager("{}"), None, embeddings)
     chat.set_runtime(sessions=sessions, registry=registry)
     yield sessions
@@ -72,3 +72,22 @@ def test_memory_api_global_isolated_by_client(settings, embeddings, mem_registry
     # B 看不到 A 的常驻记忆（各自独立库）
     resp = client.get("/api/memory?scope=global", headers={"X-Client-Id": "device-b"})
     assert not any("A 的私密偏好" in it["text"] for it in resp.json()["items"])
+
+
+def test_memory_api_audit(settings, embeddings, mem_registry):
+    """审计端点：写入/删除产生流水，按时间倒序返回。"""
+    client = TestClient(app)
+    client.post("/api/memory", json={"text": "用户喜欢深色主题", "kind": "preference", "importance": 0.9})
+    client.post("/api/memory", json={"text": "用户生日是 1995-08-20", "kind": "fact", "importance": 0.7})
+
+    resp = client.get("/api/memory/audit")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert len(items) == 2
+    assert items[0]["action"] == "add"
+    assert items[0]["scope"] == "session"
+    assert {i["kind"] for i in items} == {"preference", "fact"}
+
+    # scope 过滤：global 无记录（上面写的都是 session）
+    resp = client.get("/api/memory/audit?scope=global")
+    assert resp.json()["items"] == []

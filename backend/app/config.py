@@ -99,13 +99,18 @@ class Settings(BaseSettings):
     memory_threshold: float = 0.3  # 召回相似度阈值（不达标不注入，命中率低则零注入）
     memory_dedup_threshold: float = 0.92  # 语义去重阈值（相似则更新而非追加）
     memory_max_per_namespace: int = 500  # 每命名空间记录上限，超限按最近访问 LRU 淘汰
-    memory_ttl_days: int = 0  # 记忆 TTL（天），0 表示不启用过期清理
+    memory_ttl_days: int = 90  # 记忆 TTL（天），默认 90 天启用过期清理；0 表示不启用
     memory_consolidate_enabled: bool = True  # 轮末自动提取巩固开关
     memory_consolidate_min_importance: float = 0.5  # 巩固提取的重要性下限，低于则丢弃
     memory_constant_enabled: bool = True  # 常驻记忆注入 system（会话启动默认开启）
     memory_constant_min_importance: float = 0.7  # 常驻注入的重要性下限
     memory_constant_top_k: int = 5  # 常驻注入条数上限
     memory_old_days_hint: int = 2  # 召回命中超过该天数的记忆附「可能过时」老化提示
+    memory_proactive_enabled: bool = True  # L2 主动语义召回（每轮前置把当前对话转 query 召回相关记忆注入 user）
+    memory_proactive_selector: bool = True  # 触发判断：轻量 LLM 先判「本轮是否需要记忆背景」，否则跳过召回
+    memory_proactive_threshold: float = 0.3  # 主动召回相似度阈值（不达标不注入）
+    memory_proactive_top_k: int = 3  # 主动召回每轮注入条数上限
+    memory_proactive_max_chars: int = 400  # 主动召回注入字符预算（超预算截断）
 
     # 护栏：工具调用上限与熔断
     tool_max_calls: int =10 # 单轮最多工具调用次数，达到后拒绝后续调用

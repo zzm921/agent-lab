@@ -52,6 +52,14 @@ async def write_memory(req: MemoryWriteRequest, request: Request):
     return {"ok": True, "id": result["id"], "action": result["action"]}
 
 
+@router.get("/audit")
+async def memory_audit(scope: str = "", limit: int = 50):
+    """记忆操作审计流水（新增/更新/删除，按时间倒序）；scope 可按 session/global 过滤。"""
+    store = _store("session", "", "default")
+    items = store.list_audit(limit=max(1, min(limit, 200)), scope=scope or None)
+    return {"items": items, "scope": scope or "all"}
+
+
 @router.delete("/{mem_id}")
 async def delete_memory(mem_id: str, request: Request, session_id: str = "", scope: str = "session"):
     """删除一条记忆（用户掌控权）；不存在返回 404。"""

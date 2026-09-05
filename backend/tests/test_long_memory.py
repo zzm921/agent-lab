@@ -1,4 +1,4 @@
-"""长期记忆存储测试：持久化往返 / 语义去重更新 / 阈值过滤 / 上限 LRU / TTL。"""
+"""长期记忆存储测试：持久化往返 / 语义去重更新 / 阈值过滤 / 上限 LRU / TTL / 审计。"""
 import time
 
 from app.memory.long_memory import LongMemoryStore
@@ -24,14 +24,17 @@ def test_persist_roundtrip(embeddings, tmp_path):
 
 
 def test_dedup_updates_not_duplicates(embeddings, tmp_path):
-    """语义去重：相似度 ≥ dedup_threshold 时更新而非追加（纠偏）。"""
+    """语义去重：相似度 ≥ dedup_threshold 时合并（旧值归档）而非追加。"""
     store = _store(embeddings, tmp_path)
     r1 = store.add("用户喜欢深色主题，主色是紫色", importance=0.9)
     r2 = store.add("用户喜欢深色主题，主色是紫色", importance=0.8)
     assert r1["action"] == "add"
-    assert r2["action"] == "update"
+    assert r2["action"] == "merge"
     assert len(store) == 1
-    assert store.list()[0]["importance"] == 0.8
+    rec = store.list()[0]
+    assert rec["importance"] == 0.9  # 合并重要度取高
+    assert rec["merge_count"] == 1
+    assert len(rec["history"]) == 1  # 旧值已归档
 
 
 def test_threshold_filter(embeddings, tmp_path):
@@ -72,3 +75,29 @@ def test_search_updates_access_stats(embeddings, tmp_path):
     store.add("用户喜欢深色主题")
     store.search("主题")
     assert store.list()[0]["access_count"] == 1
+
+
+def test_audit_add_update_delete(embeddings, tmp_path):
+    """审计：add / merge（去重合并归档）/ delete 各记一条，按时间倒序、scope 可过滤。"""
+    store = LongMemoryStore("_global:dev-a", embeddings, str(tmp_path / "mem.jsonl"))
+    store.add("用户喜欢深色主题", kind="preference", importance=0.9)
+    store.add("用户喜欢深色主题", kind="preference", importance=0.8)  # 完全相同 → 去重 merge
+    rec = store.list()[0]
+    store.delete(rec["id"])
+
+    items = store.list_audit()
+    assert [i["action"] for i in items] == ["delete", "merge", "add"]  # 最新在前
+    assert all(i["scope"] == "global" for i in items)  # _global 命名空间判定为全局
+    assert items[0]["text"].startswith("用户喜欢深色主题")
+    # scope 过滤
+    assert store.list_audit(scope="session") == []
+
+
+def test_audit_session_scope(embeddings, tmp_path):
+    """审计：普通会话命名空间判定 scope=session。"""
+    store = _store(embeddings, tmp_path)
+    store.add("用户生日是 1995-08-20")
+    items = store.list_audit()
+    assert len(items) == 1
+    assert items[0]["action"] == "add"
+    assert items[0]["scope"] == "session"

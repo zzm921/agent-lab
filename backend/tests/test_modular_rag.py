@@ -285,6 +285,7 @@ async def test_runner_injects_resolved_query_to_llm(settings, sessions):
     class FakeRegistry:
         def __init__(self):
             self.rag_manager = FakeRagManager()
+            self.embeddings = None  # 无向量能力：记忆常驻注入/轮末巩固自动跳过
 
     captured: list[str] = []
 
@@ -1327,6 +1328,7 @@ async def test_runner_insufficient_injects_clarify_directive(settings, sessions)
     class FakeRegistry:
         def __init__(self):
             self.rag_manager = FakeRagManager()
+            self.embeddings = None  # 无向量能力：记忆常驻注入/轮末巩固自动跳过
 
     captured: list[str] = []
 
@@ -1647,6 +1649,7 @@ async def test_runner_reuses_last_hits_as_next_seed(settings, sessions):
     class FakeRegistry:
         def __init__(self):
             self.rag_manager = FakeRagManager()
+            self.embeddings = None  # 无向量能力：记忆常驻注入/轮末巩固自动跳过
 
     llm = FakeChatModel(
         script=[

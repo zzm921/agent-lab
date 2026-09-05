@@ -4,7 +4,7 @@ name: 跨轮长期记忆
 shortDesc: 跨会话记住关键事实并按语义召回，Agent 不再每次从零开始。
 icon: history
 difficulty: int
-completeLevel: 70
+completeLevel: 95
 tags: [Memory, Vector-Store, Persistence]
 techFilters: [Qdrant]
 accent: '#a855f7'
@@ -92,16 +92,25 @@ def inject(hits):
 从以下对话中提取值得长期记住的事实。
 只提取：用户画像、偏好、项目决策、外部资源。
 不提取：可从代码/文件/命令历史推导的信息、临时状态。
-每条输出 JSON：{text, type, importance(0~1)}；importance 低于 0.5 的不要输出。
+每条输出 JSON：{text, type, importance(0~1), scope}。
+  scope=global：跨会话长期有效的偏好/约束/稳定画像（如「以后所有项目都用 X」）；
+  scope=session：仅本会话相关的临时上下文/一次性事件；
+importance 低于 0.5 的不要输出。
+输出必须严格是 JSON 数组，不要输出任何其他文字。
 ```
+
+提取由独立轻量场景 `memory_consolidate`（关闭 thinking）后台静默执行：`scope=global` 写当前客户端的常驻库（跨会话生效）、`scope=session` 写会话库（scope 缺失/非法保守归 session）；任何失败静默吞掉，不阻塞、不产事件、不影响主链路。
 
 ## 本项目的做法
 
 **已实现（落地完成，详见《记忆体系规划与落地实施方案》）**：
 
 - **存储**：向量 + 元数据持久化到 JSONL（会话记忆 `data/memory/{session_id}.jsonl`；常驻记忆按客户端隔离 `_global_{设备/IP}.jsonl`），启动全量载入内存索引、不重算 embedding；记录带 kind / importance / 时间戳 / 来源 / TTL；每命名空间上限 LRU + TTL 遗忘治理；
-- **写入**：memory_write 支持 kind（fact/preference/episodic/procedural）与 importance、scope（session/global）；语义去重（相似度 ≥0.92 更新而非追加）；轮末自动提取巩固后台静默运行，提取用独立轻量场景 memory_consolidate（关闭 thinking，实测 48s→3s），按 LLM 判定的 scope 自动分流——global（长期偏好/约束/稳定画像）写当前客户端常驻库跨会话生效、session（临时上下文）写会话库；importance 过滤、吞错不阻断主链路、不产事件不拖慢响应；
-- **加载**：常驻记忆会话启动注入 system（默认开启，importance ≥0.7 的 top-k）；memory_recall 工具按需召回（被动加载·模型驱动），返回规范化注入块 + 老化提示（命中 2 天以上附带）；召回按 UNTRUSTED 外部来源注入隔离（防记忆投毒）；
+- **写入**：memory_write 支持 kind（fact/preference/episodic/procedural）与 importance、scope（session/global）；语义去重（相似度 ≥0.92 更新而非追加）；**遗忘治理**：每命名空间上限 500 条 LRU 淘汰 + TTL 过期清理（默认 90 天，config 可调）；**审计**：add / update（去重纠偏）/ delete 每笔操作追加目录级 `_audit.jsonl`（ts / ns / scope / action / kind / importance / text，text 截断 200），管理面板「审计流水」标签可查、可按 session/global 过滤；轮末自动提取巩固后台静默运行，提取用独立轻量场景 memory_consolidate（关闭 thinking，实测 48s→3s），按 LLM 判定的 scope 自动分流——global（长期偏好/约束/稳定画像）写当前客户端常驻库跨会话生效、session（临时上下文）写会话库；importance 过滤、吞错不阻断主链路、不产事件不拖慢响应；
+- **加载（三级注入）**：
+  - **L1 常驻注入**：会话启动预载 system（默认开启，importance ≥0.7 的 top-k）；
+  - **L2 主动语义召回**（本轮系统驱动）：每轮把当前对话（含 RAG 指代消解后的 query）转 query 召回，命中注入 user 消息（只对本轮生效）。企业级四件套：① 触发判断（轻量场景 memory_selector，关闭 thinking，判 need=false 直接跳过省检索+注入成本）→ ② 合并召回（会话库 + 常驻库各召一次，按 id 去重、按分数合并）→ ③ 已见去重（会话级 injected_ids，同一记忆跨轮不重复注入）→ ④ 预算封顶（top-k + 注入字符预算 memory_proactive_max_chars=400，超预算截断）。两道额外治理：**写指令确定性跳过**（「记住/忘掉 X」是写操作不需要背景，规则先于 selector 直接跳过，省一次 LLM 调用；读指令如「你还记得…吗」反向护栏排除，不误伤）＋ **L1/L2 去重打通**（首轮把 L1 常驻注入的记忆 id 预置进已见集合，L2 不再把同一批常驻记忆重复注入 system 与 user 双份）；任何异常吞掉不阻断主链路，事件带 source=proactive / need / reason 供前端区分；
+  - **L3 被动工具召回**：memory_recall 工具按需召回（模型驱动），返回规范化注入块 + 老化提示（命中 2 天以上附带）；召回按 UNTRUSTED 外部来源注入隔离（防记忆投毒）；
 - **管理**：GET/DELETE/POST 记忆管理 API + 前端「记忆管理」面板（查看 / 删除 / 手动写入）；SSE 透出 memory_write / memory_read / memory_constant 事件卡片。
 
 ## 收益与边界
@@ -109,4 +118,6 @@ def inject(hits):
 - 四类记忆模型，跨会话语义召回，记住偏好与关键事实
 - 短期 in-context + 长期向量组合，平衡成本与覆盖
 - 记忆 ≠ RAG：独立链路、独立工具，不与 RAG 检索混用
-- 边界：单机形态温/冷合一（内存索引 + JSONL），云端演进为对象存储 + 向量库 + 缓存分层；语义记忆「前置自动检索」（每轮系统驱动注入 user）与小模型选择器为演进项/分阶段落地
+- 常驻记忆按客户端（设备指纹/IP）隔离，每个试用者各自一份、互不可见
+- 提取性能治理：独立轻量提取场景关闭 thinking（实测完整提取 48s→3s），后台静默不阻塞对话
+- 边界：单机形态温/冷合一（内存索引 + JSONL），云端演进为对象存储 + 向量库 + 缓存分层；L2 主动召回触发判断精度可调（selector prompt 迭代）

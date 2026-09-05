@@ -76,15 +76,16 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
   - 未完成：无网络隔离（compose 注明需自补策略）；local 兜底后端在宿主 `shell=True` 执行、无文件系统 / 网络 / 资源隔离；黑名单为 20 条静态子串、无命令结构解析 / 白名单扩展；沙箱池全局持锁串行执行；`allowed_host_paths` 硬编码需人工对齐
 - **可观测性与评估** — RAGAS 语义评测（L3）与语义回归（L2）**部分实现**（`backend/eval/` + `scripts/eval_*`）；Trace 全链路追踪、指标监控完整接入 → **待实现**
 - **安全**（60%）— 相关技术：输入 Guardrail（规则拦截越狱/提示注入，命中短路 + 礼貌拒绝 + `guard_refused` 事件）；输出 Guardrail + 敏感数据脱敏（`StreamMasker` 流式实时脱敏手机号/身份证/银行卡/密钥 + 全文阻断提示，落库亦脱敏）；来源可信分级（web 搜索 / 命令输出 / 记忆召回 = 不可信外部来源，注入隔离指令与数据；知识库 = 受控内部语料 = 可信来源，不隔离）
-  - 未完成：记忆投毒防御（跨轮长期记忆未落地）；服务端工具白名单强制；RBAC 权限管控；敏感操作审计日志
+  - 未完成：服务端工具白名单强制；RBAC 权限管控；敏感操作审计日志
 
 ### 记忆
 
-> 技术说明：让 Agent 具备跨会话的记忆能力：写入 → 语义召回 → 注入上下文；存储层支持多后端可替换。
+> 技术说明：让 Agent 具备跨会话的记忆能力：写入 → 语义召回 → 注入上下文；存储层支持多后端可替换。**记忆 ≠ RAG**：记忆是数据（有「写入—巩固—更新—遗忘」生命周期），RAG 是检索机制；本项目记忆走工具通道（memory_recall）+ 常驻注入，RAG 走前置检索，两轨对照。
 
 - **多后端向量存储**（80%）— 相关技术：`StoreBackend` 统一接口，Qdrant（Prefetch + RRF 真混合）/ Elasticsearch（kNN + rank.rrf / 旧版 BM25）/ 内存三后端 + `MultiBackendStore` 多路融合，构造期自动选路、失败回退内存
   - 未完成：ES 混合检索需 8.8+ 且无版本门槛校验（8.0~8.7 会构造 RRF 失败）；选路 / 回退仅在启动构造期一次，运行期不探测不重连；真混合仅 Qdrant 后端、内存 / 多后端退化为多路融合；多线程共享 Embedding 客户端无并发上限
-- **跨轮长期记忆**（雏形，未正式启动）— 相关技术：向量库写入 + 余弦语义召回 → **待实现**（存储后端与读写工具雏形已搭）
+- **跨轮长期记忆**（95%）— 相关技术：`LongMemoryStore` 向量 + 元数据 JSONL 持久化 + 语义去重（≥0.92 更新）+ LRU/TTL 遗忘治理；写入工具 memory_write（kind / importance / scope）+ 召回工具 memory_recall（规范化注入块 + 老化提示 + UNTRUSTED 注入隔离）；常驻记忆**按客户端（设备指纹/IP）隔离**、会话启动注入 system（importance ≥0.7 的 top-k）；轮末自动提取巩固后台静默（独立轻量场景 memory_consolidate，关闭 thinking，实测 48s→3s），按 LLM 判定 scope 自动分流——长期偏好/约束写常驻库跨会话生效、临时上下文写会话库；**L2 主动语义召回**（每轮系统驱动把当前对话转 query 召回并注入 user，只对本轮生效）——企业级四件套：selector 轻量 LLM 触发判断（判无需直接跳过）→ 会话库+常驻库合并召回按 id 去重 → 会话级已见去重（跨轮不重复注入）→ top-k + 字符预算封顶；另有写指令确定性跳过（记住/忘掉类不需背景，先于 selector）＋ L1/L2 去重打通（首轮 seed 常驻 id，避免与常驻注入双份）；异常全吞不阻断主链路；管理 API + 前端「记忆管理」面板 + SSE 事件卡片
+  - 未完成：单机内存索引 + JSONL 形态（云端演进为对象存储 + 向量库分层）；无跨进程记忆同步
 
 ### 上下文工程
 
@@ -114,12 +115,12 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ## 总结
 
-**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% / agentic 85% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、上下文管理与压缩 90%、安全防护 60%、SSE 85%、技术路径点选 100%、源码展示 100%。
+**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% / agentic 85% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、跨轮长期记忆 95%、上下文管理与压缩 90%、安全防护 60%、SSE 85%、技术路径点选 100%、源码展示 100%。
 
 **待实现**：
-- 未正式启动（有雏形）：multi_agent、跨轮长期记忆
+- 未正式启动（有雏形）：multi_agent
 - 实现待落地：知识图谱 RAG、RAG 专项增强其余插件（RAPTOR 等）、上下文缓存与渐进式披露、计算机操作代理、A2A、可观测性完整接入、结构化输出独立模块
-- 安全余量：记忆投毒防御、服务端工具白名单、RBAC 权限管控、敏感操作审计日志
+- 安全余量：服务端工具白名单、RBAC 权限管控、敏感操作审计日志
 - 增强项：离线建库完整解析（OCR / PDF / 表格 / 公式）、在线混合检索参数化实验、模块级消融评估
 
 **明确暂不实现**（边界声明）：多知识库路由（D2）、结构化查询（Text-to-SQL）。
@@ -170,6 +171,18 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | `GUARD_OUTPUT` | 否 | 输出 Guardrail：敏感数据泄露全文扫描 + 阻断提示，默认 `true` |
 | `MASK_SENSITIVE_OUTPUT` | 否 | 输出敏感数据流式脱敏（手机号 / 身份证 / 银行卡 / 密钥），默认 `true` |
 | `MARK_UNTRUSTED` | 否 | 不可信外部来源标记（web 搜索 / 命令输出 / 记忆召回与指令隔离，Prompt 注入防御），默认 `true` |
+| `MEMORY_ENABLED` | 否 | 长期记忆总开关（工具 / 常驻注入 / 轮末巩固），默认 `true` |
+| `MEMORY_CONSTANT_ENABLED` | 否 | 常驻记忆注入 system 开关（会话启动预载），默认 `true` |
+| `MEMORY_CONSTANT_MIN_IMPORTANCE` | 否 | 常驻注入的重要度门槛，默认 `0.7`（低于不注入） |
+| `MEMORY_CONSTANT_TOP_K` | 否 | 常驻注入条数上限，默认 `5` |
+| `MEMORY_CONSOLIDATE_ENABLED` | 否 | 轮末自动提取巩固开关（后台静默，独立轻量场景关闭 thinking），默认 `true` |
+| `MEMORY_CONSOLIDATE_MIN_IMPORTANCE` | 否 | 巩固提取重要度下限，低于则丢弃，默认 `0.5` |
+| `MEMORY_TTL_DAYS` | 否 | 记忆过期清理天数，默认 `90`（启用遗忘治理；`0` 关闭 TTL，仅保留 LRU 上限） |
+| `MEMORY_PROACTIVE_ENABLED` | 否 | L2 主动语义召回总开关（每轮系统驱动召回注入 user），默认 `true` |
+| `MEMORY_PROACTIVE_SELECTOR` | 否 | 触发判断开关（轻量 LLM 先判本轮是否需要记忆背景，否则跳过召回），默认 `true` |
+| `MEMORY_PROACTIVE_THRESHOLD` | 否 | 主动召回相似度阈值，默认 `0.3`（不达标不注入） |
+| `MEMORY_PROACTIVE_TOP_K` | 否 | 主动召回每轮注入条数上限，默认 `3` |
+| `MEMORY_PROACTIVE_MAX_CHARS` | 否 | 主动召回注入字符预算，默认 `400`（超预算截断） |
 
 RAG 向量库数据在**线上前**通过建库脚本预建（在线服务启动时只加载、不现场入库）：
 
@@ -193,6 +206,10 @@ python scripts/ingest_modular.py   # modular / agentic 方案（语义分块，�
 | POST | `/api/approve` | HITL 审批（批准/拒绝/修改） |
 | POST | `/api/stop` | 停止当前流式任务 |
 | GET | `/api/rag/schemes` | RAG 方案目录（naive / advanced / modular / agentic） |
+| GET | `/api/memory` | 记忆列表（scope=session/global，可按 kind 过滤） |
+| POST | `/api/memory` | 手动写入一条记忆（scope 决定写会话库 / 全局常驻库） |
+| DELETE | `/api/memory/{id}` | 删除一条记忆 |
+| GET | `/api/memory/audit` | 记忆操作审计流水（新增/更新/删除，按时间倒序，可 scope 过滤） |
 | GET | `/api/faults` | 当前注入的故障列表 |
 | GET | `/api/faults/types` | 故障类型目录（瞬时 / 参数业务两类） |
 | POST | `/api/fault` | 注入 / 清除工具故障（13 种类型，演示两层重试） |
@@ -239,8 +256,10 @@ my-agent/
 │   │   ├── tools/               # 工具：calculator / time_now / web_search / run_command / memory / retry
 │   │   ├── mcp_server/          # 自带 mcp-notes 便签 server（stdio）
 │   │   │   └── notes_server.py
-│   │   ├── memory/              # 会话 + 长期记忆 + 多后端存储
+│   │   ├── memory/              # 会话 + 长期记忆（写入/巩固/召回）+ 多后端存储
 │   │   │   ├── session_store.py
+│   │   │   ├── long_memory.py   #   LongMemoryStore：语义去重 + LRU/TTL + 常驻注入
+│   │   │   ├── consolidate.py   #   轮末自动提取巩固（后台静默，scope 全局/会话分流）
 │   │   │   ├── vector_store.py
 │   │   │   ├── corpus.py
 │   │   │   └── stores/          #   Qdrant / Elasticsearch / 内存 可替换后端
@@ -253,9 +272,10 @@ my-agent/
 │   │   │   ├── docs/            #   RAG 设计文档
 │   │   │   ├── base.py / manager.py / ingest.py
 │   │   │   └── __init__.py
-│   │   └── api/                 # chat / content / sandbox 路由
+│   │   └── api/                 # chat / content / memory / sandbox 路由
 │   │       ├── chat.py
 │   │       ├── content.py
+│   │       ├── memory.py
 │   │       └── sandbox.py
 │   ├── content/                 # 21 张能力卡 Markdown（落地页 /api/content 实时解析）
 │   ├── eval/                    # RAGAS 语义评测 / 离线回归 / 报告
