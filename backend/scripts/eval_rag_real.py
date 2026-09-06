@@ -1,11 +1,11 @@
-"""真实 RAG 方案全面评测入口（modular / agentic）：真实 Qdrant/ES 检索 + 真实 LLM 生成 + RAGAS 评分。
+"""真实 RAG 链路评测入口（modular / agentic）：真实 Qdrant/ES 检索 + 真实 LLM 生成 + RAGAS 评分。
 
 用法（backend 目录）：
-  python scripts/eval_real_full.py                        # 真实评测 modular（默认方案）
-  python scripts/eval_real_full.py --scheme agentic       # 真实评测 agentic（含 agent 轨迹指标）
-  python scripts/eval_real_full.py --fake                 # 冒烟：真实检索链路 + 占位生成（验证链路，分数无意义）
-  python scripts/eval_real_full.py --top-k 5              # 调整检索配额
-  python scripts/eval_real_full.py --report path.json     # 自定义报告路径
+  python scripts/eval_rag_real.py                        # 真实评测 modular（默认方案）
+  python scripts/eval_rag_real.py --scheme agentic       # 真实评测 agentic（含 agent 轨迹指标）
+  python scripts/eval_rag_real.py --fake                 # 冒烟：真实检索链路 + 占位生成（验证链路，分数无意义）
+  python scripts/eval_rag_real.py --top-k 5              # 调整检索配额
+  python scripts/eval_rag_real.py --report path.json     # 自定义报告路径
 """
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval import real_full  # noqa: E402
+from eval.rag import real  # noqa: E402
 
-DEFAULT_REPORT = "eval/reports/real_full.json"
+DEFAULT_REPORT = "eval/rag/reports/rag_real.json"
 
 
 def _setup_logging() -> None:
@@ -38,14 +38,14 @@ def main() -> int:
     parser.add_argument("--scheme", default="modular", choices=["modular", "agentic"], help="被评测方案")
     parser.add_argument("--fake", action="store_true", help="冒烟模式：真实检索 + 占位生成/评分")
     parser.add_argument("--top-k", type=int, default=3)
-    parser.add_argument("--report", default=None, help="报告路径（缺省按方案：real_full[_scheme].json）")
+    parser.add_argument("--report", default=None, help="报告路径（缺省按方案：rag_real[_scheme].json）")
     args = parser.parse_args()
 
     report_path = args.report or (
-        DEFAULT_REPORT if args.scheme == "modular" else f"eval/reports/real_full_{args.scheme}.json"
+        DEFAULT_REPORT if args.scheme == "modular" else f"eval/rag/reports/rag_real_{args.scheme}.json"
     )
-    records, report = real_full.run(top_k=args.top_k, fake=args.fake, scheme_id=args.scheme)
-    real_full.save_report(report, report_path)
+    records, report = real.run(top_k=args.top_k, fake=args.fake, scheme_id=args.scheme)
+    real.save_report(report, report_path)
 
     r = report["retrieval"]["overall"]
     print(f"\n=== 真实 {args.scheme} 全面评测（{report['meta']['mode']}）===")

@@ -10,7 +10,7 @@
 - 拒答行为：库外问题由手写 judge 判定「拒绝回答而非编造」（grounded），
   RAGAS 无此维度；库外用例不进 RAGAS 评分（期望答案为拒答，标准指标无意义）。
 
-两种模式（scripts/eval_full.py 选择）：
+两种模式（scripts/eval_rag.py 选择）：
 - 默认（真实 LLM）：生成用 chat 场景、拒答 judge 用 rag_judge 场景、RAGAS 内部 LLM
   用 rag_ragas 场景（关闭思考：高频小 JSON 提取，开思考会整批超时）、
   embeddings 用 DashScopeEmbeddings，需配置 LLM_API_KEY 与 EMBEDDING_API_KEY；
@@ -47,7 +47,7 @@ from app.core.errors import ConfigError
 from app.llm.client import create_embeddings, get_chat_model
 from app.llm.fake_model import FakeChatModel, FakeEmbeddings
 
-from eval import runner, semantic
+from eval.rag import runner, semantic
 
 # fake 模式下最多送入 evaluate() 的样本数（占位文本解析必败，只验证链路不追求覆盖）
 FAKE_EVAL_LIMIT = 3

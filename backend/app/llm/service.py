@@ -325,6 +325,7 @@ class LoggedChatModel(BaseChatModel):
         self._log_start("stream")
         start = time.perf_counter()
         last = None
+        usage_tokens: dict[str, int] | None = None
         try:
             # 公开 stream() 已按 _should_stream 分流：流式模型逐块产出，非流式回退整条消息；
             # 统一转成 ChatGenerationChunk（整条消息需转成 AIMessageChunk）。
@@ -332,11 +333,16 @@ class LoggedChatModel(BaseChatModel):
                 if not isinstance(chunk, BaseMessageChunk):
                     chunk = AIMessageChunk(**chunk.model_dump(exclude={"type"}))
                 last = chunk
+                # 流式用量聚合：usage 可能附着在任一块（不同供应商/模型位置不同），
+                # 只取末块会丢账。取「最后一次出现的有效用量」，忽略全 0 占位。
+                tk = _usage_tokens(chunk)
+                if tk and (tk["input"] or tk["output"] or tk["total"]):
+                    usage_tokens = tk
                 yield ChatGenerationChunk(message=chunk)
         except Exception as exc:  # noqa: BLE001
             self._record("stream", (time.perf_counter() - start) * 1000, False, error=str(exc))
             raise self._wrap_error(exc, "stream") from exc
-        self._record("stream", (time.perf_counter() - start) * 1000, True, tokens=_usage_tokens(last))
+        self._record("stream", (time.perf_counter() - start) * 1000, True, tokens=usage_tokens)
         logger.info("[llm:%s] stream 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
 
     # ---- 异步调用 ----
@@ -362,16 +368,21 @@ class LoggedChatModel(BaseChatModel):
         self._log_start("astream")
         start = time.perf_counter()
         last = None
+        usage_tokens: dict[str, int] | None = None
         try:
             async for chunk in self._inner.astream(messages, stop=stop, **kwargs):
                 if not isinstance(chunk, BaseMessageChunk):
                     chunk = AIMessageChunk(**chunk.model_dump(exclude={"type"}))
                 last = chunk
+                # 流式用量聚合（与 _stream 一致）：取最后一次出现的有效用量，忽略全 0 占位
+                tk = _usage_tokens(chunk)
+                if tk and (tk["input"] or tk["output"] or tk["total"]):
+                    usage_tokens = tk
                 yield ChatGenerationChunk(message=chunk)
         except Exception as exc:  # noqa: BLE001
             self._record("astream", (time.perf_counter() - start) * 1000, False, error=str(exc))
             raise self._wrap_error(exc, "astream") from exc
-        self._record("astream", (time.perf_counter() - start) * 1000, True, tokens=_usage_tokens(last))
+        self._record("astream", (time.perf_counter() - start) * 1000, True, tokens=usage_tokens)
         logger.info("[llm:%s] astream 完成 latency=%.3fs", self.scenario, time.perf_counter() - start)
 
 

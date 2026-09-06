@@ -38,8 +38,8 @@ from app.llm.client import create_embeddings, get_chat_model, llm_service
 from app.llm.fake_model import FakeChatModel
 from app.rag.manager import RagManager
 
-from eval import semantic
-from eval.full import _GEN_METRICS, _to_score
+from eval.rag import semantic
+from eval.rag.full import _GEN_METRICS, _to_score
 
 BASE = Path(__file__).resolve().parent
 SET_PATH = BASE / "real_eval_set.jsonl"

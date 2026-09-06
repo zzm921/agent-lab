@@ -1,6 +1,6 @@
 """语义评测公共件：上下文拼装、生成 prompt、库外拒答 judge（供全面评测复用）。
 
-生成质量评分统一由 RAGAS 标准指标承担（见 eval/full.py），本模块不再手写
+生成质量评分统一由 RAGAS 标准指标承担（见 eval/rag/full.py），本模块不再手写
 faithfulness/answer_relevance 评分；仅保留 RAGAS 覆盖不了的部分：
 - 生成链路公共件：检索命中 → 与线上一致的上下文注入与生成 prompt；
 - 库外拒答判定：LLM-as-a-Judge 判定库外用例是否「拒绝回答而非编造」（grounded）。

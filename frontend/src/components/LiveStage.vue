@@ -7,6 +7,7 @@ import StreamingText from './StreamingText.vue'
 import ApprovalDialog from './ApprovalDialog.vue'
 import ErrorBanner from './ErrorBanner.vue'
 import GuardBanner from './GuardBanner.vue'
+import FeedbackBar from './FeedbackBar.vue'
 defineProps<{ stream: ChatStream }>()
 
 // 思考过程默认折叠，点击标题展开/收起（按步骤 id 独立记录）
@@ -937,6 +938,9 @@ const ROLE_LABEL: Record<string, string> = {
         <p class="text-emerald-300">✓ {{ stream.done.summary }}</p>
         <p class="mt-1 text-slate-400">统计：{{ JSON.stringify(stream.done.stats) }}</p>
       </section>
+
+      <!-- 在线评估闭环 · 用户反馈（仅 RAG 命中回答展示 👍/👎） -->
+      <FeedbackBar :stream="stream" />
     </div>
 
     <ApprovalDialog

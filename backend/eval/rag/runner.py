@@ -1,6 +1,6 @@
 """modular RAG 离线评测运行器：构建确定性方案 → 跑评测集 → 计算检索/路由/闸门指标。
 
-供 scripts/eval_modular.py（CLI 报告）与 tests/test_eval_regression.py（回归门禁）共用。
+供 scripts/eval_rag_l1.py（CLI 报告）与 tests/test_eval_regression.py（回归门禁）共用。
 - 默认（real_router=False）：路由注入评测集期望值，模块全部用规则/确定性实现，
   FakeEmbeddings 离线可跑、不依赖 Key——衡量「给定路由下模块链执行质量」；
 - real_router=True：使用真实 LLM 路由（需 Key），额外计算路由准确率。
@@ -43,7 +43,7 @@ from app.rag.routing.query_decompose import RuleQueryDecomposer
 from app.rag.routing.query_rewrite import RuleQueryRewriter
 from app.rag.schemes.modular import ModularRagScheme
 
-from eval.corpus import CORPUS
+from eval.rag.corpus import CORPUS
 
 # 评测集/报告路径（相对本包）
 _EVAL_SET_PATH = Path(__file__).resolve().parent / "eval_set.jsonl"
@@ -87,7 +87,7 @@ class _BM25Store(MemoryStore):
     _K1 = 1.5  # 词频饱和系数（BM25 标准参数）
     _B = 0.75  # 文档长度归一化系数（BM25 标准参数）
 
-    def __init__(self, embeddings, collection: str = "eval_modular"):
+    def __init__(self, embeddings, collection: str = "eval_rag_l1"):
         super().__init__(embeddings, collection)
         self._doc_terms: list[list[str]] = []
         self._df: dict[str, int] = {}
@@ -200,7 +200,7 @@ def _build_store():
 
     用确定性 BM25 后端替代 FakeEmbeddings（见 _BM25Store），保证检索指标有意义。
     """
-    store = _BM25Store(FakeEmbeddings(), collection="eval_modular")
+    store = _BM25Store(FakeEmbeddings(), collection="eval_rag_l1")
     for item in CORPUS:
         store.add(item["text"], {"chunk_id": item["id"]})
     return store

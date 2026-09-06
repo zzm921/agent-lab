@@ -94,7 +94,7 @@ function llmView(ev: RunEvent) {
     model: String(ev.model ?? ''),
     scenario: String(ev.scenario ?? ''),
     method: String(ev.method ?? ''),
-    latency: Number(ev.latency_ms ?? 0),
+    latency: Math.round(Number(ev.latency_ms ?? 0)),  // 毫秒取整展示，避免超长浮点
     success: ev.success === true,
     input: tk.input ?? 0,
     output: tk.output ?? 0,

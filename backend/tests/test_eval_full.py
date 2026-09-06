@@ -4,11 +4,11 @@
 - 不依赖 Key（FakeChatModel / FakeEmbeddings 占位）；
 - 断言逐用例均产出答案、链路无异常、报告结构完整；
 - fake 模式下 RAGAS 结构化输出解析失败属预期（占位文本非合法 JSON），
-  分数可能为 None、无评测意义；真实评分由 scripts/eval_full.py 在配置 Key 后运行。
+  分数可能为 None、无评测意义；真实评分由 scripts/eval_rag.py 在配置 Key 后运行。
 """
 from __future__ import annotations
 
-from eval import full, runner
+from eval.rag import full, runner
 
 
 def test_full_pipeline_smoke_runs() -> None:

@@ -1,0 +1,1 @@
+{"id": "agent_on_0001", "capability": "agent", "mode": "plan_execute", "branch": "normal", "query": "帮我查一下北京的天气", "must_call": ["search_weather"], "forbidden_tools": [], "answer_keywords": [], "reference": "", "origin": {"sample_id": "demo-agent-2", "vote": null, "reason": null, "ts": "2026-09-06T10:00:00+00:00", "version": "demo"}}

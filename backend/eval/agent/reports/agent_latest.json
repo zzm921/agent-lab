@@ -1,0 +1,291 @@
+{
+  "meta": {
+    "generated_at": "2026-09-06T04:48:07+00:00",
+    "mode": "任务层约束 + 架构层不变量（脚本化决策驱动真实 Harness，无真实 LLM）",
+    "modules": "create_agent / StateGraph + StreamEventsMiddleware + AgentHarness",
+    "eval_cases": 8
+  },
+  "overall": {
+    "cases": 8,
+    "passed": 8,
+    "pass_rate": 1.0,
+    "must_call_rate": 1.0,
+    "sequence_match_rate": 1.0,
+    "args_ok_rate": 1.0,
+    "forbidden_hits": 0,
+    "arch_failures": 0,
+    "approval_cases": 1,
+    "loop_guard_cases": 1,
+    "error_cases": 0,
+    "avg_elapsed_ms": 40.7,
+    "modes": {
+      "react": {
+        "cases": 5,
+        "passed": 5,
+        "arch_failures": 0
+      },
+      "plan_execute": {
+        "cases": 1,
+        "passed": 1,
+        "arch_failures": 0
+      },
+      "reflection": {
+        "cases": 1,
+        "passed": 1,
+        "arch_failures": 0
+      },
+      "multi_agent": {
+        "cases": 1,
+        "passed": 1,
+        "arch_failures": 0
+      }
+    },
+    "branches": {
+      "single_tool": {
+        "cases": 1,
+        "passed": 1
+      },
+      "two_step": {
+        "cases": 1,
+        "passed": 1
+      },
+      "mixed_tools": {
+        "cases": 1,
+        "passed": 1
+      },
+      "forbidden_command": {
+        "cases": 1,
+        "passed": 1
+      },
+      "loop_guard": {
+        "cases": 1,
+        "passed": 1
+      },
+      "plan_two_step": {
+        "cases": 1,
+        "passed": 1
+      },
+      "reflection_pass": {
+        "cases": 1,
+        "passed": 1
+      },
+      "multi_delegation": {
+        "cases": 1,
+        "passed": 1
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "agent-001",
+      "branch": "single_tool",
+      "mode": "react",
+      "query": "计算 100/4 的结果",
+      "executed": [
+        "calculator"
+      ],
+      "must_call": [
+        "calculator"
+      ],
+      "sequence": [
+        "calculator"
+      ],
+      "must_ok": true,
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 48.3,
+      "passed": true
+    },
+    {
+      "id": "agent-002",
+      "branch": "two_step",
+      "mode": "react",
+      "query": "先算 2+2，再把结果乘以 3，结果是多少？",
+      "executed": [
+        "calculator",
+        "calculator"
+      ],
+      "must_call": [
+        "calculator"
+      ],
+      "sequence": [
+        "calculator",
+        "calculator"
+      ],
+      "must_ok": true,
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 32.2,
+      "passed": true
+    },
+    {
+      "id": "agent-003",
+      "branch": "mixed_tools",
+      "mode": "react",
+      "query": "先查一下当前时间，再计算 7*6 的结果",
+      "executed": [
+        "time_now",
+        "calculator"
+      ],
+      "must_call": [
+        "calculator",
+        "time_now"
+      ],
+      "sequence": [
+        "time_now",
+        "calculator"
+      ],
+      "must_ok": true,
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 31.9,
+      "passed": true
+    },
+    {
+      "id": "agent-004",
+      "branch": "forbidden_command",
+      "mode": "react",
+      "query": "帮我执行命令 pwd 查看当前目录",
+      "executed": [],
+      "must_call": [],
+      "sequence": null,
+      "must_ok": true,
+      "sequence_match": null,
+      "args_ok": null,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": true,
+      "done": false,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 23.2,
+      "passed": true
+    },
+    {
+      "id": "agent-005",
+      "branch": "loop_guard",
+      "mode": "react",
+      "query": "连续计算 1+1、2+2、3+3 的结果",
+      "executed": [
+        "calculator",
+        "calculator"
+      ],
+      "must_call": [
+        "calculator"
+      ],
+      "sequence": [
+        "calculator",
+        "calculator"
+      ],
+      "must_ok": true,
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": true,
+      "error": false,
+      "elapsed_ms": 27.5,
+      "passed": true
+    },
+    {
+      "id": "agent-101",
+      "branch": "plan_two_step",
+      "mode": "plan_execute",
+      "query": "先查一下当前时间，再计算 7*6 的结果",
+      "executed": [
+        "time_now",
+        "calculator"
+      ],
+      "must_call": [
+        "time_now",
+        "calculator"
+      ],
+      "sequence": null,
+      "must_ok": true,
+      "sequence_match": null,
+      "args_ok": null,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 45.0,
+      "passed": true
+    },
+    {
+      "id": "agent-201",
+      "branch": "reflection_pass",
+      "mode": "reflection",
+      "query": "介绍一下公司年假制度",
+      "executed": [],
+      "must_call": [],
+      "sequence": null,
+      "must_ok": true,
+      "sequence_match": null,
+      "args_ok": null,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 33.2,
+      "passed": true
+    },
+    {
+      "id": "agent-301",
+      "branch": "multi_delegation",
+      "mode": "multi_agent",
+      "query": "计算 2+2 的结果并做简要分析",
+      "executed": [
+        "compute",
+        "calculator",
+        "analyze"
+      ],
+      "must_call": [
+        "calculator"
+      ],
+      "sequence": null,
+      "must_ok": true,
+      "sequence_match": null,
+      "args_ok": null,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "arch_failures": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 84.4,
+      "passed": true
+    }
+  ]
+}

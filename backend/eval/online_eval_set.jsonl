@@ -1,0 +1,1 @@
+{"id": "on_0001", "branch": "multihop", "query": "多跳检索和分解检索有什么区别？", "expected": {"retrieval_need": true, "retrieval_mode": "hybrid", "complexity": "multihop", "generation_mode": "citation"}, "relevant": ["d1", "d2"], "answer_keywords": [], "reference": "", "origin": {"sample_id": "demo-rag-1", "vote": null, "reason": null, "ts": "2026-09-06T10:00:00+00:00", "version": "demo"}}

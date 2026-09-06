@@ -1,9 +1,9 @@
-"""modular RAG 全面评测脚本：一份报告覆盖路由/检索/生成/拒答四类维度。
+"""RAG 全面评测脚本：一份报告覆盖路由/检索/生成/拒答四类维度。
 
 用法（在 backend/ 目录下）：
-    python scripts/eval_full.py          # 真实评测：LLM 生成 + RAGAS 标准评分（需 Key）
-    python scripts/eval_full.py --fake   # 离线冒烟：验证链路可跑通（分数无评测意义）
-    python scripts/eval_full.py --report PATH  # 指定报告输出路径（默认 eval/reports/full.json）
+    python scripts/eval_rag.py          # 真实评测：LLM 生成 + RAGAS 标准评分（需 Key）
+    python scripts/eval_rag.py --fake   # 离线冒烟：验证链路可跑通（分数无评测意义）
+    python scripts/eval_rag.py --report PATH  # 指定报告输出路径（默认 eval/rag/reports/rag_full.json）
 
 输出：
     - 控制台：路由准确率 + 检索分支表 + 生成质量汇总 + 拒答率 + 失败用例明细
@@ -18,7 +18,7 @@ from pathlib import Path
 # 允许在 backend 任意相对路径下执行：把 backend/ 加入 sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval import full  # noqa: E402
+from eval.rag import full  # noqa: E402
 
 # 分支展示顺序与中文名
 _BRANCH_ORDER = ["no_retrieval", "simple", "rewrite", "decompose", "multihop", "out_of_kb"]
@@ -106,16 +106,16 @@ def _print_failures(records: list[dict]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="modular RAG 全面评测（路由/检索/生成/拒答）")
+    parser = argparse.ArgumentParser(description="RAG 全面评测（确定性 BM25 检索 + LLM 生成/评分）")
     parser.add_argument("--fake", action="store_true", help="离线冒烟模式（Fake 模型，分数无评测意义）")
     parser.add_argument("--top-k", type=int, default=3, help="最终保留命中数（默认 3）")
-    parser.add_argument("--report", default="eval/reports/full.json", help="报告输出路径")
+    parser.add_argument("--report", default="eval/rag/reports/rag_full.json", help="报告输出路径")
     args = parser.parse_args()
 
     records, report = full.run(top_k=args.top_k, fake=args.fake)
     full.save_report(report, args.report)
 
-    print("=== modular RAG 全面评测报告 ===")
+    print("=== RAG 全面评测报告 ===")
     print(f"模式: {report['meta']['mode']} | top_k={args.top_k} | "
           f"语料 {report['meta']['corpus_size']} 条 | 用例 {report['meta']['eval_cases']} 条")
     print()

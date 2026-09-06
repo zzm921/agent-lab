@@ -317,9 +317,16 @@ class DashScopeChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=msg)])
 
     def _stream(self, messages, stop=None, run_manager=None, **kwargs) -> Iterator[ChatGenerationChunk]:
-        """流式调用：逐 token 产出，reasoning_content 与 content 分别透出。"""
+        """流式调用：逐 token 产出，reasoning_content 与 content 分别透出。
+
+        token 用量（usage）位置因模型/供应商而异：可能附着在末块、内容块或独立尾块；
+        这里跟踪「最后见到的 usage」，并在「已见 usage 但最后一个产出块未携带」时补发
+        独立尾块——保证上层（LLMService._stream/_astream）无论取哪一块都能记账。
+        """
         payload = self._payload(list(messages), stream=True)
         it = iter(Generation.call(**payload))
+        last_usage: dict[str, int] | None = None
+        last_chunk_had_usage = False
         while True:
             try:
                 resp = next(it)
@@ -335,20 +342,24 @@ class DashScopeChatModel(BaseChatModel):
             choices = output.get("choices") if isinstance(output, dict) else []
             usage = getattr(resp, "usage", None)
             usage_meta = None
-            # token 用量：非流式在 resp.usage；流式通常附着在末块，偶见独立尾块（无内容）。
+            # token 用量：非流式在 resp.usage；流式附着位置不固定（末块/内容块/独立尾块）。
             # 统一提取后写入 chunk.usage_metadata，供上层记账（_usage_tokens 只认 usage_metadata）。
-            if usage is not None and usage.get("total_tokens", 0):
+            # 不做 total_tokens>0 判定：个别模型只回 input_tokens（或 usage 块不含 total），
+            # 要求 total 非 0 会把整块丢弃导致记账为 0。
+            if usage:
                 usage_meta = {
                     "input_tokens": int(usage.get("input_tokens", 0) or 0),
                     "output_tokens": int(usage.get("output_tokens", 0) or 0),
                     "total_tokens": int(usage.get("total_tokens", 0) or 0),
                 }
+                last_usage = usage_meta
             if not choices:
                 # 无内容块：携带用量则产出空块（下游合并/记账会用到），否则跳过
                 if usage_meta is not None:
                     yield ChatGenerationChunk(
                         message=AIMessageChunk(content="", usage_metadata=usage_meta)
                     )
+                    last_chunk_had_usage = True
                 continue
             msg = choices[0].get("message") or {}
             reasoning = _content_text(msg.get("reasoning_content") or "")
@@ -361,4 +372,10 @@ class DashScopeChatModel(BaseChatModel):
             )
             if usage_meta is not None:
                 chunk.usage_metadata = usage_meta
+            last_chunk_had_usage = usage_meta is not None
             yield ChatGenerationChunk(message=chunk)
+        # 兜底：已见 usage 但最后产出块未携带（usage 附着在中间块）时补发独立尾块
+        if last_usage is not None and not last_chunk_had_usage:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(content="", usage_metadata=last_usage)
+            )

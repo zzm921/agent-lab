@@ -33,6 +33,27 @@ export async function fetchQuota(): Promise<{ enabled: boolean; limit: number; r
   return resp.json()
 }
 
+/** 提交单轮对话的用户反馈（POST /api/feedback，按 session_id + query 匹配当日在线样本行回填 vote）。
+ * 仅当本轮存在知识库检索命中时前端才展示反馈按钮，与后端「无检索命中不落样本」对齐。 */
+export async function submitFeedback(payload: {
+  session_id: string
+  query: string
+  vote: 'up' | 'down'
+  reason?: string
+}): Promise<{ ok: boolean; matched: boolean; updated: boolean; disabled?: boolean }> {
+  const clientId = getClientId()
+  const resp = await fetch('/api/feedback', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(clientId ? { 'X-Client-Id': clientId } : {}),
+    },
+    body: JSON.stringify(payload),
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  return resp.json()
+}
+
 /** 找到第一个事件块结束位置（空行 \n\n 或 \r\n\r\n），无则返回 -1 */
 function findBlockEnd(buf: string): number {
   const a = buf.indexOf('\n\n')

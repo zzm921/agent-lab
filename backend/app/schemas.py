@@ -58,3 +58,10 @@ class MemoryWriteRequest(BaseModel):
     importance: float = Field(default=0.5, ge=0, le=1, description="重要度 0~1")
     scope: str = Field(default="session", description="写入范围：session（会话）| global（全局常驻）")
     session_id: str = Field(default="", description="scope=session 时的目标会话")
+
+
+class FeedbackRequest(BaseModel):
+    session_id: str = Field(description="会话 id（定位样本行；同一会话可能多轮）")
+    query: str = Field(description="原始提问（定位样本行）")
+    vote: str = Field(description="up | down")
+    reason: str = Field(default="", description="可选自由文本（点踩时建议填写原因）")

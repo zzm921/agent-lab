@@ -14,9 +14,9 @@
 
 | 层 | 入口 | 数据 | 检索 | 是否需 Key | 用途 |
 |---|---|---|---|---|---|
-| L1 确定性回归 | `scripts/eval_modular.py` | 手造语料 `eval/corpus.py` + 26 条 `eval_set.jsonl` | 确定性 BM25 + 注入期望路由 | 否 | CI 回归门禁（`pytest tests/test_eval_regression.py`） |
-| L2 手写 judge | `scripts/eval_semantic.py` | 同上 | 同上 | `LLM_API_KEY` | 忠实度/相关性/库外不编造率 |
-| L3 RAGAS | `scripts/eval_ragas.py` | 同上 | 同上 | +`EMBEDDING_API_KEY` | 标准库交叉校准 |
+| L1 确定性回归 | `scripts/eval_rag_l1.py` | 手造语料 `eval/rag/corpus.py` + 26 条 `eval/rag/eval_set.jsonl` | 确定性 BM25 + 注入期望路由 | 否 | CI 回归门禁（`pytest tests/test_eval_regression.py`） |
+| 全面评测（生成+RAGAS+拒答） | `scripts/eval_rag.py` | 同上 | 确定性 BM25 | `LLM_API_KEY` | 生成质量 + RAGAS 标准评分 + 库外拒答判定 |
+| 真实链路评测 | `scripts/eval_rag_real.py` | 真实语料 `eval/rag/real_eval_set.jsonl` | 真实 Qdrant/ES（modular/agentic） | +`EMBEDDING_API_KEY`、需建库 | 上线前验证真实检索链路 |
 
 ### 1.2 缺口
 
@@ -88,10 +88,10 @@
 **设计要点**：
 
 1. **不阻塞流式**：采集钩子放在 `stream()` 末尾（拿到 answer 之后），用 `asyncio.to_thread` 或独立后台任务写文件，SSE 已结束、不影响首字节延迟。
-2. **结构化 JSONL 落盘**：与 `eval/reports/*.json` 风格一致，按日分文件：
+2. **结构化 JSONL 落盘**：与 `eval/rag/reports/*.json` 风格一致，按日分文件：
 
    ```
-   eval/samples/online_20260828.jsonl
+   eval/rag/samples/online_20260828.jsonl
    {"sample_id": "...", "session_id": "...", "ts": "...", "query": "...", "effective_query": "...",
     "mode": "react", "rag_scheme": "modular", "generation_mode": "citation",
     "insufficient": false, "retrieved_ids": ["c01"], "answer": "...", "elapsed_ms": 812.3,
@@ -155,7 +155,7 @@
 
 ### 4.2 真实检索回归报告
 
-新增 `eval/online_runner.py`，与 `eval/runner.py` 的区别：
+新增 `eval/rag/online_runner.py`，与 `eval/rag/runner.py` 的区别：
 
 | | 离线 runner | 在线 runner |
 |---|---|---|
@@ -163,7 +163,7 @@
 | 语料 | 手造 42 条 | 生产 `KNOWLEDGE_CORPUS`（云帆制度全文） |
 | 指标 | Recall/Precision/MRR（有金标） | 路由准确率 / keyword_coverage / answerable / judge 语义分 / 耗时 |
 
-产出 `eval/reports/online_latest.json`（meta 里标注 `retrieval: production vector + real LLM router`，与离线报告明确区分）。
+产出 `eval/rag/reports/online_latest.json`（meta 里标注 `retrieval: production vector + real LLM router`，与离线报告明确区分）。
 
 ### 4.3 触发方式
 
@@ -187,7 +187,7 @@
 
 ## 6. P2（设计）：影子评分与告警
 
-- **影子评分**：线上返回答案后，异步用 `rag_judge` 场景 LLM 对 `(query, answer, retrieved_contexts)` 打分（faithfulness/answer_relevance，复用 [eval/semantic.py](file:///c:/Users/ASUS/Desktop/workspace/my-agent/backend/eval/semantic.py) 的 `_judge_prompt`），分数写回样本行。
+- **影子评分**：线上返回答案后，异步用 `rag_judge` 场景 LLM 对 `(query, answer, retrieved_contexts)` 打分（faithfulness/answer_relevance，复用 [eval/rag/semantic.py](file:///c:/Users/ASUS/Desktop/workspace/my-agent/backend/eval/rag/semantic.py) 的 `_judge_prompt`），分数写回样本行。
 - **漂移告警**：按周聚合平均 faithfulness/answer_relevance，与上周均值比较，下滑超阈值（建议 ±0.3，按 0~5 分制）触发告警日志 + 报告 `drift` 标记。
 - **成本控制**：影子 judge 有 LLM 调用费，按比例采样（默认 30%）可配；`eval_shadow_enabled` 开关，默认关闭。
 
@@ -236,8 +236,8 @@
 |---|---|
 | 线上入口（采集挂载点） | `backend/app/api/chat.py` → `AgentRunner.stream` |
 | 采样数据源 | `backend/app/agents/runner.py`（`rag_context`/`generation_mode`/`insufficient`/answer） |
-| 离线评测底座（在线 runner 参考） | `backend/eval/runner.py` / `semantic.py` / `ragas_eval.py` |
-| 评测集格式 | `backend/eval/eval_set.jsonl` |
-| judge prompt（影子评分复用） | `backend/eval/semantic.py::_judge_prompt` |
+| 离线评测底座（在线 runner 参考） | `backend/eval/rag/runner.py` / `semantic.py` / `ragas_eval.py` |
+| 评测集格式 | `backend/eval/rag/eval_set.jsonl` |
+| judge prompt（影子评分复用） | `backend/eval/rag/semantic.py::_judge_prompt` |
 | 配置 | `backend/app/config.py` |
 | 前端反馈按钮位置 | `frontend/src/components/ChatPanel.vue` |

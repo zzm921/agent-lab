@@ -14,7 +14,15 @@ from app.core.rate_limit import DailyQuota
 from app.llm.client import create_embeddings, llm_service
 from app.memory.session_store import SessionStore
 from app.rag.manager import RagManager
-from app.schemas import ApproveRequest, FaultRequest, McpToggleRequest, StopRequest, StreamRequest
+from app.schemas import (
+    ApproveRequest,
+    FaultRequest,
+    FeedbackRequest,
+    McpToggleRequest,
+    StopRequest,
+    StreamRequest,
+)
+from app.telemetry.sample import append_orphan_feedback, apply_feedback
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -235,6 +243,22 @@ async def stop_run(req: StopRequest):
     """停止指定会话的后端执行：立即取消后台图任务，避免继续消耗 token。"""
     get_runner().stop(req.session_id)
     return {"ok": True}
+
+
+@router.post("/feedback")
+async def feedback(req: FeedbackRequest):
+    """用户反馈回填（在线评估闭环）：按 session_id + query 匹配当日样本行，回填 vote/reason。
+
+    - 反馈不计入每日对话配额（与对话解耦）；
+    - 未匹配（样本 TTL 清理 / 本轮未采集 / 参数篡改）时记入 orphan_feedback.jsonl 供排查，不报错；
+    - eval_online_enabled 关闭时直接返回 disabled，不落 orphan（避免噪音）。
+    """
+    if not settings.eval_online_enabled:
+        return {"ok": True, "matched": False, "updated": False, "disabled": True}
+    matched, updated = apply_feedback(req.session_id, req.query, req.vote, req.reason)
+    if not matched:
+        append_orphan_feedback(req.session_id, req.query, req.vote, req.reason)
+    return {"ok": True, "matched": matched, "updated": updated}
 
 
 @router.get("/faults")

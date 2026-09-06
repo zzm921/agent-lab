@@ -1,9 +1,9 @@
-"""modular RAG 离线评测脚本：跑全量评测集 → 检索/路由/闸门指标 → 分支报告。
+"""RAG L1 确定性回归评测脚本：跑全量评测集 → 检索/路由/闸门指标 → 分支报告。
 
 用法（在 backend/ 目录下）：
-    python scripts/eval_modular.py                 # 注入期望路由的确定性回归评测（离线，无需 Key）
-    python scripts/eval_modular.py --real-router   # 使用真实 LLM 路由，评测路由准确率（需配置 Key）
-    python scripts/eval_modular.py --report PATH   # 指定报告输出路径（默认 eval/reports/latest.json）
+    python scripts/eval_rag_l1.py                 # 注入期望路由的确定性回归评测（离线，无需 Key）
+    python scripts/eval_rag_l1.py --real-router   # 使用真实 LLM 路由，评测路由准确率（需配置 Key）
+    python scripts/eval_rag_l1.py --report PATH   # 指定报告输出路径（默认 eval/rag/reports/rag_l1.json）
 
 输出：
     - 控制台：按分支汇总表 + 失败用例明细（召回<1 / 未可答 / 关键词未覆盖）
@@ -19,7 +19,7 @@ from pathlib import Path
 # 允许在 backend 任意相对路径下执行：把 backend/ 加入 sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval import runner  # noqa: E402
+from eval.rag import runner  # noqa: E402
 
 # 分支展示顺序
 _BRANCH_ORDER = ["no_retrieval", "simple", "rewrite", "decompose", "multihop", "out_of_kb"]
@@ -81,16 +81,16 @@ def _print_failures(records: list[dict]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="modular RAG 离线评测")
+    parser = argparse.ArgumentParser(description="RAG L1 确定性回归评测（路由/检索/闸门）")
     parser.add_argument("--real-router", action="store_true", help="使用真实 LLM 路由评测路由准确率（需 Key）")
     parser.add_argument("--top-k", type=int, default=3, help="最终保留命中数（默认 3）")
-    parser.add_argument("--report", default="eval/reports/latest.json", help="报告输出路径")
+    parser.add_argument("--report", default="eval/rag/reports/rag_l1.json", help="报告输出路径")
     args = parser.parse_args()
 
     records, report = runner.run(top_k=args.top_k, real_router=args.real_router)
     runner.save_report(report, args.report)
 
-    print("=== modular RAG 离线评测报告 ===")
+    print("=== RAG L1 确定性回归报告 ===")
     print(f"路由模式: {report['meta']['modules']} | top_k={args.top_k} | "
           f"语料 {report['meta']['corpus_size']} 条 | 用例 {report['meta']['eval_cases']} 条")
     print(f"路由准确率: {report['routing_accuracy']:.3f} ({_fmt(report['routing_accuracy'] * report['meta']['eval_cases'])}/{report['meta']['eval_cases']})")

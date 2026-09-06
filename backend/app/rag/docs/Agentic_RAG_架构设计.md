@@ -186,13 +186,12 @@ START → route ──(检索无关)──→ END（寒暄直接生成）
 
 ## 10. 评测与诊断
 
-- 全量评测：`scripts/eval_real_full.py --scheme agentic`（报告 `eval/reports/real_full_agentic.json`）；
+- 全量评测：`scripts/eval_rag_real.py --scheme agentic`（报告 `eval/rag/reports/rag_real_agentic.json`）；
   agent 轨迹聚合：`avg_events` / `avg_tool_exec` / `correction_rate`（纠错率）/
   `correction_success_rate`（纠错有效性：发生纠错的用例中 Self-RAG 闸门终判可答的比例）/
   `avg_tokens`（角色 LLM token 均值）/ `tool_calls` / `role_llm_calls`（各角色调用分布）；
   评测期五角色场景温度归零（轨迹可复现，线上默认温度不受影响）；
-- 逐用例轨迹：`real_full.py` 每条记录含 `agent.total_events/tool_exec/tools/corrections/role_llm_calls/tokens`；
-- 挑战题对比：`scripts/diag_agentic_compare.py`（默认 r21/r24/r25）——对照 modular vs agentic 的卷分布、evidence 覆盖与逐步轨迹（`#seq [role/action]`）；
+- 逐用例轨迹：`real.py` 每条记录含 `agent.total_events/tool_exec/tools/corrections/role_llm_calls/tokens`；
 - 单测：`tests/test_agentic_rag.py`（42 用例，FakeChatModel 脚本化角色决策 + 规则回退 + 护栏/预算/熔断断言 + astream 事件序列 + manager 透传 + LLM 场景配置，全程离线）。
 
 ## 11. 已知取舍

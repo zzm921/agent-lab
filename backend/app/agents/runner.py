@@ -23,6 +23,7 @@ from app.llm.service import LLMService
 from app.memory.consolidate import maybe_consolidate
 from app.memory.proactive import maybe_recall as proactive_recall
 from app.security import InputGuard
+from app.telemetry.sample import append_online_sample
 from app.telemetry.sink import ACTIVE_SINK
 from app.telemetry.store import get_run_store
 
@@ -73,6 +74,10 @@ class AgentRunner:
         self._bg_tasks: set[asyncio.Task] = set()
         # 上下文管理与压缩管线（snip/micro/auto-compact，大文件落盘在工具结果层挂钩）
         self.context_manager = ContextManager(settings)
+        # 在线评测采样：本轮评估信号（effective_message/generation_mode/insufficient/hits），
+        # 由 _stream_impl 无条件记录（RAG 未命中/未启用时 retrieved_ids=[]，仍可覆盖纯 agent 域），
+        # stream 收口落盘后交给采样器写样本（是否落盘由采样器按「有命中或有工具调用」判定）。
+        self._last_eval_signals: dict[str, dict] = {}
 
     def _scenario_llm(self, scenario: str):
         """取指定场景的模型：有 LLMService 走场景配置，否则回退单模型。"""
@@ -405,6 +410,8 @@ class AgentRunner:
         rag_context = None
         effective_message = message
         generation_mode = None
+        complexity = None
+        retrieval_mode = None
         insufficient = False
         async for ev in scheme.astream(message, self.settings.rag_top_k, **stream_kwargs):
             yield ev
@@ -413,6 +420,8 @@ class AgentRunner:
                 effective_message = ev["rewrites"][0]
             elif ev["type"] == "classify":
                 generation_mode = ev.get("generation_mode") or generation_mode
+                complexity = ev.get("complexity") or complexity
+                retrieval_mode = ev.get("retrieval_mode") or retrieval_mode
             elif ev["type"] == "retrieve":
                 # retrieve 事件携带实际用于检索的 query（modular 已含指代消解结果），
                 # 作为无 rewrite 事件场景的兜底（如未消解但有查询改写时保持原文）。
@@ -433,6 +442,8 @@ class AgentRunner:
             rag_context=rag_context,
             effective_message=effective_message,
             generation_mode=generation_mode,
+            complexity=complexity,
+            retrieval_mode=retrieval_mode,
             insufficient=insufficient,
         )
 
@@ -523,6 +534,25 @@ class AgentRunner:
             ACTIVE_SINK.reset(token)
             if not sink.closed:
                 sink.close(status="pending" if sink.paused else "")
+            # 在线评测采样：收口后异步写样本（不阻塞 SSE 已结束的返回）。
+            # 仅当开启采样、存在检索命中、且本轮确已落 run 记录（sink 非空）时执行；
+            # 采集失败静默，绝不影响主流程。
+            if getattr(self.settings, "eval_online_enabled", True):
+                try:
+                    # 信号每轮都有（RAG 未命中/未启用时 retrieved_ids=[]）；是否落盘由采样器判定
+                    # （有 RAG 命中或有工具调用才落，寒暄跳过），不阻塞 SSE 已结束的返回。
+                    signals = self._last_eval_signals.pop(session_id, None)
+                    if signals:
+                        await asyncio.to_thread(
+                            append_online_sample,
+                            session_id,
+                            client_key,
+                            sink.meta,
+                            sink.events,
+                            signals,
+                        )
+                except Exception:  # noqa: BLE001 — 采样失败不影响主流程
+                    pass
             try:
                 await gen.aclose()
             except Exception:  # noqa: BLE001 — 内层收尾失败不影响运行记录
@@ -560,6 +590,7 @@ class AgentRunner:
         # 最后一条 retrieve 事件里的 hits 用于上下文注入。
         rag_context = None
         insufficient = False
+        rag_result: dict = {}  # RAG 前置检索结果（未启用 RAG 时为空，采样信号回退默认值）
         generation_mode = None  # 语义路由产出的生成策略（citation/comparison/direct），注入主 LLM 时使用
         # 注入给主 LLM 的用户消息：默认原消息；modular 指代消解后用它产出的消解 query 替换，
         # 避免主 LLM 对「他/这…」二次解析（把指代词误指回上轮问题主语）导致答非所问。
@@ -603,6 +634,17 @@ class AgentRunner:
             effective_message = rag_result.get("effective_message") or message
             generation_mode = rag_result.get("generation_mode")
             insufficient = rag_result.get("insufficient", False)
+        # 在线评测采样：每轮无条件记录评估信号，供 stream 收口落盘后写样本（见 stream 的 finally）。
+        # complexity/retrieval_mode 来自语义路由（classify 事件），随样本落盘供回流脚本还原路由决策；
+        # RAG 未命中/未启用时 retrieved_ids=[]，样本层将按 capability=agent 分流（纯 agent 域回流）。
+        self._last_eval_signals[session_id] = {
+            "effective_message": effective_message,
+            "generation_mode": generation_mode,
+            "complexity": rag_result.get("complexity"),
+            "retrieval_mode": rag_result.get("retrieval_mode"),
+            "insufficient": insufficient,
+            "retrieved_ids": [h.get("id") for h in (rag_context or {}).get("hits") or []],
+        }
         inputs = await self._make_inputs(
             graph,
             config,

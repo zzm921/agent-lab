@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from eval import runner
+from eval.rag import runner
 
 
 def _run() -> tuple[list[dict], dict]:

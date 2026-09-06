@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     llm_price_input_per_1m: float = 0.3
     llm_price_output_per_1m: float = 0.6
 
+    # 在线评测采样（线上评估闭环 P0）：真实对话的轻量样本落盘 JSONL（按日分文件），
+    # 供用户反馈回填（POST /api/feedback）与失败样本回流评测集（scripts/eval_online.py）。
+    # 与 telemetry 运行记录互补：样本面向回流评测、长期保留；离线评测不依赖本开关。
+    eval_online_enabled: bool = True  # 总开关（关闭则不采集，反馈 API 无样本可回填）
+    eval_sample_dir: str = "./eval/samples"  # 样本根目录（相对 backend 根解析，自动创建）
+    eval_online_set_path: str = "./eval/online_eval_set.jsonl"  # RAG 域回流评测集输出路径（回归池）
+    eval_online_agent_set_path: str = "./eval/online_agent_eval_set.jsonl"  # Agent 域回流评测集输出路径（回归池）
+    eval_online_fix_set_path: str = "./eval/online_fix_set.jsonl"  # 修复池：点踩/异常样本（金标待人工修正后转回归池）
+
     # 护栏：工具调用上限与熔断
     tool_max_calls: int =10 # 单轮最多工具调用次数，达到后拒绝后续调用
     circuit_fail_threshold: int = 3  # 同一会话内“同一工具+相同参数”连续失败次数，达到即熔断该参数调用（换参重试放行）
