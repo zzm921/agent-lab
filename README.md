@@ -8,7 +8,7 @@
 
 Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI Agent 技术平台，目标是系统呈现 Agent 从理论到工程的关键技术栈：
 
-- **讲解**：落地页以「4 大标签 × 39 张能力卡」组织 AI Agent 知识体系（Agent 工程演进 / Agent 范式 / RAG 范式与工程 / 协议），每张卡有图文正文与核心代码片段；
+- **讲解**：落地页以「4 大标签 × 40 张能力卡」组织 AI Agent 知识体系（Agent 工程演进 / Agent 范式 / RAG 范式与工程 / 协议），每张卡有图文正文与核心代码片段；
 - **演示**：进入实验室，推理模式、RAG 方案、提示词策略、审批策略、工具能力等**真实运行**，并通过 SSE 事件流把思考、工具调用、检索、审批过程逐步展示出来；
 - **对比**：同一任务可在不同推理模式 / 提示词策略 / RAG 方案下并排运行，直观对比差异；
 - **实验**：技术方案一键点选切换、工具开关即时增删、故障注入（13 种类型）验证容错、示例一键填入，边改边看。
@@ -289,7 +289,7 @@ my-agent/
 │   │       ├── content.py
 │   │       ├── memory.py
 │   │       └── sandbox.py
-│   ├── content/                 # 能力卡 Markdown（tags.md 权威索引，4 标签 × 39 卡，落地页 /api/content 实时解析）
+│   ├── content/                 # 能力卡 Markdown（tags.md 权威索引，4 标签 × 40 卡，落地页 /api/content 实时解析）
 │   ├── eval/                    # 评测体系：RAG + Agent 双子包 + 在线闭环
 │   │   ├── agent/               #   Agent 评测（task_set 52 条 + arch_specs + runner/full + reports）
 │   │   ├── rag/                 #   RAG 评测（eval_set / real_eval_set + runner/full/real/semantic + reports）

@@ -1,7 +1,7 @@
 """Agent 全量评测 CLI：L0/L1 离线断言 + L2 LLM-judge 答案评分 + 企业级补充维度。
 
 用法（在 backend/ 目录下）：
-    python scripts/eval_agent.py                    # 真实 LLM 评分（需 LLM_API_KEY / EMBEDDING_API_KEY）
+    python scripts/eval_agent.py                    # 真实 LLM 评分（仅需 LLM_API_KEY，agent_judge 场景，不复用 RAGAS）
     python scripts/eval_agent.py --fake             # 离线冒烟，仅验证链路（分数无评测意义）
     python scripts/eval_agent.py --runs 3 --real    # 鲁棒性：真实 LLM 驱动行为层，每用例跑 3 次统计成功率（需 Key）
     python scripts/eval_agent.py --report PATH      # 指定报告输出路径（默认 eval/agent/reports/agent.json）

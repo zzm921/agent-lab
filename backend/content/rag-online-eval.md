@@ -101,4 +101,4 @@ python scripts/eval_online.py --dry-run        # 只打印筛选统计，不写�
 ## 演进与关联
 
 - **演进**：影子评分（无人工反馈时用 LLM 自动评分补样本标签）、告警（回流集分数劣化自动告警）、Prompt 版本化（把提示词当代码做版本管理）；
-- **关联**：observability-eval（可观测性与评估，运行记录是样本的完整版）、agent-eval（离线评测体系，回流集的消费方）、与 Harness 可观测性、CI 回归门禁互补。
+- **关联**：observability-eval（可观测性与评估，运行记录是样本的完整版）、agent-eval / rag-eval（离线评测体系，回流集的消费方）、与 Harness 可观测性、CI 回归门禁互补。

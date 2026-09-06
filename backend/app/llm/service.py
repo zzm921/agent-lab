@@ -144,10 +144,16 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "params": {"temperature": 0.1, "max_tokens": 400, "enable_thinking": False},
     },
     {
-        "scenario": "rag_judge",  # L2 语义评测 judge（LLM-as-a-Judge）：输出结构化评分，低随机 + 关闭思考
+        "scenario": "rag_judge",  # RAG 语义评测 judge（LLM-as-a-Judge）：输出结构化评分，低随机 + 关闭思考
         "provider": "dashscope",
         "model": "qwen3.5-flash",
         "params": {"temperature": 0.1, "max_tokens": 300, "enable_thinking": False},
+    },
+    {
+        "scenario": "agent_judge",  # Agent 答案质量评测 judge（LLM-as-a-Judge）：逐指标判卷（正确性/相关性/忠实度），低随机 + 关闭思考
+        "provider": "dashscope",
+        "model": "qwen3.5-flash",
+        "params": {"temperature": 0.1, "max_tokens": 800, "enable_thinking": False},
     },
     {
         "scenario": "rag_ragas",  # RAGAS 内部 LLM（全面评测语义评分）：高频小 JSON 提取，关闭思考加速

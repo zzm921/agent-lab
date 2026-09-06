@@ -1,69 +1,76 @@
 ---
 id: agent-eval
-name: Agent 与 RAG 离线评测体系
-shortDesc: 行为层确定性 + 语义层 LLM 的双层评测：L0 任务层 / L1 架构层 / L2 答案质量三层金标，覆盖 RAG 路由·检索·闸门·生成与 Agent 轨迹·协议·答案。
+name: Agent 离线评测体系
+shortDesc: 企业级 Agent 评测：能力 ≠ 一致性；L0 任务层 / L1 架构层确定性断言挂 CI 门禁 + L2 LLM-as-Judge 答案质量，附成功率/成本/延迟企业补充维度。
 icon: chart-bar
 difficulty: adv
-tags: [Evaluation, Agent-Eval, RAG-Eval, LLM-as-Judge, CI-Gate]
+tags: [Evaluation, Agent-Eval, LLM-as-Judge, CI-Gate]
 techFilters: []
 accent: '#10b981'
 experience: false
 prompts:
   - 如何量化衡量一个 agent 做得好不好？
-  - 评测指标都有哪些、各自怎么判定？
+  - 企业级 agent 评测和 benchmark 有什么本质区别？
+  - 单次跑 90% 成功率的 agent 为什么还不能上生产？
   - 评测为什么分确定性层和语义层？
 ---
 ## 概述
 
-评测体系按 **RAG** 与 **Agent** 两套独立指标展开，共享同一个核心设计：**行为层全确定性、可进 CI 门禁；语义层用 LLM 评分、衡量真实质量**。金标按三层组织——任务层（agent 无关）→ 架构层（按架构独立）→ 答案层（金标参考答案）。
+评测 Agent 与传统软件测试是两回事：**非确定性**（同输入不同输出）、**Prompt 即源代码**（改一行 Prompt 行为可能巨变）、**依赖会自己动**（模型服务端更新无 Changelog）。业界（AWS ADLC / LangSmith / NVIDIA / τ-bench）收敛出的共识是：**公开 benchmark 衡量原始能力，应用级 eval 衡量"你的系统在你的业务上能不能每次都交付"**——评测必须建立在自有数据、自有失败模式之上。
 
-```
-一次执行的事件流（轨迹）
-   ├─ L0 任务层断言   确定性：工具约束 / 轨迹 / 参数
-   ├─ L1 架构层断言   确定性：协议不变量（计划 / 评审 / 委派）
-   └─ L2 答案评分     LLM：忠实度 / 相关性 / 正确性
-```
+本卡给出企业级 Agent 评测方法论，并以本项目落地对照：**L0 任务层 + L1 架构层确定性断言挂 CI 门禁，L2 答案质量用 LLM-as-Judge，外加成功率 / 成本 / 延迟企业补充维度与在线失败样本回流**。
 
 ## 为什么这样设计（核心哲学）
 
-1. **评测单元是轨迹，不是单次输出**——最终答案正确但第 14 步调错工具、靠运气检索对了文档，这类隐藏失败只有评轨迹才抓得住。
-2. **确定性层与语义层必须分界**——行为层用脚本模型驱动真实执行链，零 LLM、零 Key、可复现 → 才能当 CI 回归门禁；语义层有模型波动、成本高 → 只做质量报告。
-3. **评测实现没有通用的，通用的是指标与框架**——指标（recall / faithfulness / 工具选择准确率）和评测流程（分层金标 / LLM-as-Judge / CI 门禁）可复用；金标集（任务定义、工具列表、策略约束）必须业务特定。
-4. **符号层比对永远不该用 LLM**——工具名、参数、序列是确定性比对（集合包含 / 子串包含 / 序列相等），LLM 只补语义层判断（轨迹合理性、参数语义等价）。
+1. **能力 ≠ 一致性**——能力回答"能不能做到"，一致性回答"每次都能做到吗"。τ-bench 用 **pass^k**（同一任务连续 k 次全成功才算过）暴露一致性：单次跑分 60% 多的顶级 function-calling agent，pass^8 跌到 25% 以下。真实用户不会让你重试到成功，一致性是生产可信度的底线指标。
+2. **评测单元是完整轨迹 / 对话线程，不是单次输出**——任务完成与用户满意度跨轮涌现；最终答案正确但第 14 步调错工具、靠运气检索对了，这类隐藏失败只有评轨迹才抓得住（NVIDIA 将轨迹日志作为一阶评测输入）。
+3. **三层评估框架**（业界共识）——推理层看规划对不对、行动层看工具选对/参数对/顺序合理、整体执行看任务完成与效率。约 40% 的 agent 失败出在行动层（选错工具或参数传错），不拆层就不知道改哪。
+4. **确定性层与语义层必须分界**——行为层（工具选择 / 轨迹 / 参数）是符号级比对（集合包含 / 子串包含 / 序列相等），用脚本模型驱动真实执行链，零 LLM、零 Key、可复现 → 可当 CI 回归门禁；语义层（答案质量）有模型波动与成本，只做质量报告。
+5. **评测实现没有通用的，通用的是指标与框架**——指标（TSR / 工具选择准确率 / 忠实度）与流程（分层金标 / LLM-as-Judge / CI 门禁 / 失败回流）可复用；金标集（任务定义、工具列表、策略约束）必须业务特定。
+6. **公开基准可信度要打折**——2026 年 UC Berkeley RDI 证明八个主流 Agent 基准都能被 reward-hack 到接近满分；静态基准还有污染（测试泄露进训练集）与饱和（头部模型贴顶）问题。基准用于选模型起步，不能替代自有 eval。
 
-## 一、RAG 评测指标
+## 一、企业级评测：评什么、怎么评
 
-### 确定性层（离线可复现）
+### 六类指标族（企业测量维度）
 
-| 指标 | 判定方法 |
-|---|---|
-| 路由准确率 | 路由四维决策（是否检索 / 检索模式 / 复杂度 / 生成模式）与金标期望逐维全对才算命中 |
-| Recall 召回率 | \|命中 ∩ 相关分块\| ÷ \|相关分块\|（漏没漏） |
-| Precision 精确率 | \|命中 ∩ 相关分块\| ÷ 返回条数（脏不脏） |
-| MRR | 首个相关分块的 1/位置，无则 0，按用例平均 |
-| 关键词覆盖 | 任一金标答案关键词出现在命中块文本中 |
-| 可答率 / 澄清率 | 检索上下文是否足以作答 / 资料不足时是否主动澄清而非硬答 |
+| 维度 | 指标 | 说明 |
+|---|---|---|
+| 任务成功率 | Task Success Rate（TSR） | 任务 = 意图 + 约束；全部约束满足才记成功（端状态判定：τ-bench 比对最终数据库状态，而非对话文本） |
+| 工具调用准确率 | Tool Call Accuracy | 工具选择 precision / recall、参数 schema 合规（约 40% agent 失败源于此层） |
+| 轨迹一致性 / 进度率 | Trajectory Conformance / Progress Rate | 关键动作序列比对；允许等价替代路径，不做逐位死匹配 |
+| 推理质量 | Reasoning Quality | 计划合理性、评审质量（结构化 LLM-as-Judge，非字符串匹配） |
+| 效率 | 成本 / 延迟 | 每任务 token 消耗、工具调用次数、p50/p95 延迟，对照显式预算 |
+| 稳定性 / 一致性 | pass^k / N 次成功率 | 同任务重复 N 次全部成功才算过——一致性是生产准入线 |
 
-### 语义层（LLM 评分）
+### 五种评估方法（按成本与信任度选择，需组合使用）
 
-| 指标 | 通用评测方法 |
-|---|---|
-| Faithfulness / Groundedness 忠实度 | **主张级验证**：答案拆成原子断言，逐个判定能否从事实源（检索上下文）推断；分数 = 被支持断言 ÷ 总断言。防幻觉核心指标 |
-| Answer Relevance 相关性 | 由答案反向生成问题，与原始提问算嵌入相似度，取平均 |
-| Correctness 正确性 | 对照金标 reference：事实语义一致度 + 金标要点覆盖度，双维加权 |
-| Context Precision 上下文精确度 | 检索块逐位置检查对金标的支撑，按位置加权——越靠前且相关得分越高 |
-| Abstention / Refusal 拒答 | 库外问题必须"拒绝回答而非编造"，独立判定 grounded |
+| 方法 | 适用 | 成本 / 信任度 |
+|---|---|---|
+| 代码式确定性断言（code-based） | 规则可表达的硬约束（工具集合、参数存在性、结束状态） | 最低 / 最高 |
+| 参考答案比对（reference-based） | 有金标要点（F1 / 关键词覆盖 / 语义相似） | 低 / 中 |
+| LLM-as-Judge | 开放式质量（忠实度、相关性、正确性） | 中 / 需校准 |
+| 无参考指标（reference-free） | 无金标时的输出属性（perplexity 等） | 中 / 中 |
+| 人工标注 | 高价值样本、Judge 校准基准 | 高 / 最高 |
 
-## 二、Agent 评测指标
+> LLM-as-Judge 的边界：MT-Bench 上强 judge 与人类一致性可达 80%+，但 judge 有位置偏差 / 自夸偏差 / 冗长偏差，且多步智能体场景下"只看最终回答"会漏掉过程错误。需人工抽样校准（Cohen's Kappa）并约束评分依据（给 judge 工具证据 / 轨迹，而非只给回答）。
+
+### 离线 vs 在线
+
+- **离线 eval**：金标用例 + 已知参考答案，回答"改动后有没有变好"，可挂 CI/PR 门禁；
+- **在线 eval**：生产轨迹监控，无 ground truth 时评质量模式与安全，抓失败样本 → 人工标注 → 回流成回归用例（Flywheel）。二者缺一不可：离线管变更、在线管漂移。
+
+## 二、本项目落地：L0 任务层 + L1 架构层（确定性 CI 门禁）
+
+金标按三层组织——任务层（agent 无关）→ 架构层（按架构独立）→ 答案层（金标参考答案）。行为层全部离线确定性，脚本化模型驱动真实 Harness（create_agent / StateGraph + 事件中间件），52 条金标用例。
 
 ### L0 任务层（agent 无关金标）
 
-| 指标 | 判定方法 |
-|---|---|
-| Task Success Rate 通过率 | 全部约束 AND 聚合，全过才记成功 |
-| Tool Selection Accuracy 工具选择准确率 | 执行工具集 ⊇ 必调集（漏选）；执行集 ∩ 违禁集 == 空（误选） |
-| Trajectory Conformance 轨迹一致性 | 执行序列与金标序列逐位置严格相等（strict match） |
-| Argument Fidelity 参数保真度 | 金标关键字段在实参中存在且值包含期望内容（子串校验） |
+| 指标 | 判定方法 | 对应业界 |
+|---|---|---|
+| Task Success Rate 通过率 | 全部约束 AND 聚合，全过才记成功 | TSR / 端状态判定 |
+| Tool Selection Accuracy 工具选择准确率 | 执行工具集 ⊇ 必调集（漏选）；执行集 ∩ 违禁集 == 空（误选） | Tool Call Accuracy |
+| Trajectory Conformance 轨迹一致性 | 执行序列与金标序列逐位置严格相等（react 精确轨迹即契约） | 轨迹评测 |
+| Argument Fidelity 参数保真度 | 金标关键字段在实参中存在且值包含期望内容（子串校验） | 参数 schema 合规 |
 
 ### L1 架构层（协议不变量，按架构独立）
 
@@ -74,6 +81,8 @@ prompts:
 | multi_agent | 委派 compute / analyze 两个 worker |
 | react | 无固定不变量，轨迹约束下沉到用例级 |
 
+> 架构不变量是"防协议退化"的护栏：计划事件丢失、评审永远不通过、编排者不再委派 worker，任何该架构用例都会暴露。
+
 ### 特殊结局控制（护栏合规）
 
 - **审批**：高危工具必须触发审批、不得被自动执行、不得报错；
@@ -82,35 +91,51 @@ prompts:
 
 ### 企业补充维度（鲁棒性 / 成本 / 性能）
 
-- **成功率**：多跑 N 次，通过次数 ÷ N（真实 LLM 驱动下才有统计意义）；
-- **成本**：平均模型调用次数、总 / 平均 token 消耗；
+- **成功率**：多跑 N 次，通过次数 ÷ N（`--runs N --real` 用真实 LLM 驱动才有统计意义，对齐 pass^k 语义：全部运行通过才算过）；
+- **成本**：平均模型调用次数、总 / 平均 token 消耗（usage_metadata 记账，fake 恒 0）；
 - **延迟分布**：min / p50 / p95 / max / avg。
 
-### L2 答案质量（与 RAG 同口径，事实源不同）
+## 三、L2 答案质量（企业级 LLM-as-Judge）
 
-忠实度 / 相关性 / 正确性定义不变，但 **Faithfulness 的事实源 = 工具执行证据**（`tool(参数) → 结果`）——衡量答案是否依据工具返回说话、防凭记忆编造。无工具证据的用例只评前两项；审批拦截 / 轮数超限用例无最终答案，不进 L2。
+不复用 RAGAS（RAGAS 以检索上下文为事实源，面向 RAG 链路设计；Agent 的事实源是工具执行证据，企业做法是自定义 judge 逐指标判卷）。用独立 `agent_judge` 场景（关闭思考、低随机），每指标一个结构化评分 prompt（rubric 内嵌，输出分数 + 依据）：
 
-## 三、执行机制
+| 指标 | 判定 rubric（judge prompt 内嵌） | 输出 |
+|---|---|---|
+| 正确性 Correctness | 对照金标 reference：事实一致性 0.5 + 要点覆盖 0.5（语义等价，不逐字） | `{"score", "key_points_hit", "missing_points", "reason"}` |
+| 相关性 Relevancy | 回答是否直接、完整回应问题（不答非所问 / 不回避核心诉求） | `{"score", "reason"}` |
+| 忠实度 Faithfulness | 主张级验证：答案拆原子断言，逐条对照**工具执行证据**判定支持度（防幻觉核心） | `{"claims", "score", "reason"}` |
+
+- **忠实度的事实源 = 工具执行证据**（`tool(参数) → 结果`）——衡量答案是否依据工具返回说话、防凭记忆编造；
+- **确定性旁证**：`answer_keywords` 关键词覆盖（子串匹配，无 LLM）作为正确性的低层符号信号；
+- 无工具证据的用例只评正确性/相关性；审批拦截 / 轮数上限用例无最终答案，不进 L2（`answer_scored=False`）；
+- judge 输入 = 用户问题 + 最终答案 + 工具执行证据 + 金标 reference（按指标取子集）——judge 依据过程证据判卷，而非"只看回答"的空判；
+- `--fake` 冒烟仅验证链路（占位文本解析必败 → 分数 None，无评测意义）。
+
+## 四、执行机制
 
 1. **脚本化模型驱动真实执行链**：Fake 模型按预设剧本依次出牌，产生确定性事件流 → 隔离生成随机性，评分链路本身可验证；
 2. **依赖注入**：模型经构造器注入，Fake 可替换 → 离线可测性；
 3. **一次执行、三层共享事件流**：L2 是 L1 的超集，只在其上叠加答案提取、证据构造、LLM 评分，不重复执行用例；
-4. **成本计数包装**：包装模型统计每次调用的 token，Fake 恒 0、真实模式有真实成本。
+4. **成本计数包装**：包装模型统计每次调用的 token，Fake 恒 0、真实模式有真实成本；
+5. **评分模型独立**：L2 用独立 `agent_judge` 场景（温度 0.1 / 关闭思考）逐指标判卷，不复用 RAGAS，仅需 LLM_API_KEY（无需 Embedding）；
+6. **运行入口**：`python scripts/eval_agent_l1.py`（行为层门禁，无需 Key）/ `python scripts/eval_agent.py --fake`（L2 链路冒烟）/ `python scripts/eval_agent.py`（真实评分，需 Key）/ `--runs N --real`（鲁棒性成功率）。
 
-## 四、与业界方法论对照
+## 五、与业界方法论对照
 
 | 业界实践 | 我们的对应 |
 |---|---|
-| 轨迹评测（评测单元 = 轨迹） | L0/L1 基于完整事件流断言 |
+| 轨迹评测（评测单元 = 轨迹，τ-bench / SWE-bench 端状态判定） | L0/L1 基于完整事件流断言 + 确定性结束状态（done / 审批 / 熔断） |
 | 四轴框架（任务完成 / 工具选择 / 轨迹质量 / 成本延迟） | L0 + 企业补充维度 |
-| 端状态判定（tau-bench：判数据库 diff 而非对话） | 确定性结束状态判定（done / 审批 / 熔断） |
-| LLM-as-Judge 校准（binary 输出 / 人工校准 / κ） | L2 复用成熟评分实现，κ 校准列为演进 |
-| CI 门禁（eval-on-PR，按维度设阈值） | 行为层全确定性可挂 CI |
+| 三层评估框架（推理 / 行动 / 整体执行） | L1 架构层（推理/协议） + L0 工具层（行动） + L2/Task Success（整体） |
+| pass^k 一致性（τ-bench） | `--runs N` 成功率：全部运行通过才算过 |
+| LLM-as-Judge 校准（binary 输出 / 人工校准 / κ） | L2 自定义 agent_judge 逐指标判卷，κ 校准列为演进 |
+| CI 门禁（eval-on-PR，按维度设阈值） | 行为层（L0/L1）全确定性可挂 CI |
 | 生产失败回流（失败样本 → 回归用例） | 已落地：在线样本回流（回归池 / 修复池，见 rag-online-eval 卡片） |
+| 公开基准（SWE-bench / GAIA / τ-bench） | 用于模型选型起点，不替代自有 eval |
 
-复合错误定律：端到端成功率 ≈ 每步成功率乘积——95% 单步的 agent 走 8 步只剩约 66%，这是轨迹评测必要性的硬论证。
+复合错误定律：端到端成功率 ≈ 每步成功率乘积——95% 单步的 agent 走 8 步只剩约 66%，这正是"评轨迹、测一致性"必要性的硬论证，也是 pass^k 比 pass@1 更接近生产真实的原因。
 
-## 五、与可观测性的关系
+## 六、与可观测性的关系
 
 可观测性与测评是**两件事，但数据上依赖**：可观测性回答"运行时发生了什么"（记录 + 回放），测评回答"做得好不好"（金标 + 打分）。类比：行车记录仪 vs 驾考。
 
@@ -120,22 +145,25 @@ prompts:
 | 工程独立 | 离线评测自包含：脚本模型驱动执行链、自采集事件流，不依赖生产可观测系统，可独立挂 CI |
 | 生产闭环 | 生产 trace 抓失败 → 人工标注 → 回流成评测回归用例 → 防止同类 bug 再上线（Flywheel） |
 
-```
-可观测性（记录）                测评（评判）
-生产 trace / 事件流 ──提供数据──→ 金标断言 + 评分
-      ↑                              │
-      └──────── 失败样本回流 ←────────┘
-```
+自包含离线评测已落地；生产侧闭环也已打通：真实对话采样（仅检索命中 / 工具调用才落）→ 前端 👍/👎 反馈回填 → `scripts/eval_online.py` 回流回归池 / 修复池——未点踩样本的线上真实轨迹还原为回归用例的 `mode` / `must_call`，点踩样本进修复池人工修正金标后转回归，见 [rag-online-eval](rag-online-eval.md)。
 
-自包含离线评测已落地；生产侧闭环也已打通：真实对话采样（仅检索命中 / 工具调用才落）→ 前端 👍/👎 反馈回填 → `scripts/eval_online.py` 回流回归池 / 修复池——未点踩样本的线上真实轨迹还原为回归用例的 `mode` / `must_call`，点踩样本进修复池人工修正金标后转回归，见下节与 [rag-online-eval](rag-online-eval.md)。
+## 七、已知短板与演进
 
-## 六、已知短板与演进
-
-- **错误恢复未量化**：工具失败后重试 / 降级 / 升级的行为指标缺失（业界六维框架的第 4 维）；
-- **生产闭环待完善**：在线回流已打通，但回归池用例的 `answer_keywords / reference` 仍依赖人工补全；点踩样本的金标修正尚未自动化；
+- **错误恢复未量化**：工具失败后重试 / 降级 / 升级的行为指标缺失（业界鲁棒性维度的缺口）；
 - **Judge 未做人工校准**：应用 Cohen's Kappa 验证 LLM 评分与人工标注的一致性；
-- **参数校验为字面匹配**：日期格式等价等语义级参数校验未做。
+- **参数校验为字面匹配**：日期格式等价等语义级参数校验未做；
+- **在线回流金标补全依赖人工**：回归池用例的 `answer_keywords / reference` 需人工复核，点踩样本的金标修正尚未自动化；
+- **影子评分未落地**：无人工反馈时用 LLM 自动打标的在线补标签机制（NVIDIA / LangSmith 均列为生产标配）。
+
+## 参考来源
+
+- [AWS 企业智能体之旅：为什么评估（Evaluation）是一切的起点](https://aws.amazon.com/cn/blogs/china/part-1-enterprise-intelligent-why-evaluation/) 与 [评估企业级智能体：从原型验证到生产就绪](https://aws.amazon.com/cn/blogs/china/part-2-enterprise-intelligent-validation/)（ADLC、能力 vs 一致性、两支柱框架）
+- [LangChain · How to Evaluate LLMs and Agents](https://www.langchain.com/resources/how-to-evaluate-llms)（两层评测、五种评估方法）
+- [LangChain · LLM Evals: Production Monitoring](https://www.langchain.com/articles/llm-evals)（离线 vs 在线、失败样本回流成回归测试）
+- [NVIDIA · Mastering Agentic Techniques: AI Agent Evaluation](https://developer.nvidia.com/blog/mastering-agentic-techniques-ai-agent-evaluation)（轨迹一阶信号、TSR、工具调用准确率）
+- [SWE-bench vs τ-bench vs GAIA: Which Agent Benchmark Actually Predicts Production](https://dreaming.press/posts/swe-bench-vs-tau-bench-vs-gaia.html)（pass^k 一致性、三基准正交性）
+- [AI Agent Benchmarks 2026](https://rapidclaw.dev/blog/ai-agent-benchmarks-2026)（五类核心指标、reward-hacking 可信度危机）
 
 ## 关联卡片
 
-observability-eval（可观测性与评估）、rag-online-eval（线上闭环）、cost-governance（成本治理）、hitl（人在回路审批）。
+observability-eval（可观测性与评估）、rag-eval（RAG 评测体系，共享评分引擎）、rag-online-eval（线上闭环与失败回流）、cost-governance（成本治理）、hitl（人在回路审批）。

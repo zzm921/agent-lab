@@ -19,7 +19,7 @@ tags:
   - id: rag
     title: RAG 范式与工程
     description: 五代 RAG 范式演进（naive → advanced → modular → 图谱 → 智能体，总表导航打头），叠加离线处理 / 在线混合检索 / 专项增强（Self-RAG / CRAG / HyDE / RAPTOR）等工程策略与插件。
-    cards: [rag, text-to-sql, kb-routing, rag-online-eval, naive-rag, advanced-rag, modular-rag, graph-rag, agentic-rag, rag-variants, offline-processing, online-hybrid-retrieval]
+    cards: [rag, text-to-sql, kb-routing, rag-online-eval, rag-eval, naive-rag, advanced-rag, modular-rag, graph-rag, agentic-rag, rag-variants, offline-processing, online-hybrid-retrieval]
   - id: protocol
     title: 协议 · Protocol
     description: Agent ↔ 工具、Agent ↔ Agent 的互操作标准；函数调用 → MCP → A2A 的演进。
