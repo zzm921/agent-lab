@@ -20,10 +20,10 @@ MCP（Model Context Protocol）是 AI 工具调用的「USB 标准」——一�
 
 一句话：**工具不再写死在 Agent 里，而是像插件一样挂在外面，Agent 运行时按需连接、发现、调用、断开。**
 
-本项目把 MCP 落成**一条完整可运行的链路**，并且默认开启、服务启动即就绪，页面侧边栏可随时关闭，直观对比「有 MCP / 无 MCP」的能力差异：
+本项目把 MCP 落成**一条完整可运行的链路**，默认关闭、页面侧边栏可随时开启，开启后服务启动即自动连接，直观对比「有 MCP / 无 MCP」的能力差异：
 
 - **服务端（MCP Server）**：自建 `mcp-info` **只读**信息服务（FastMCP + **stdio 传输**，由在线服务启动时以子进程自动拉起），提供 `now / system_info / env_get` 三个**纯只读**工具——只返回当前时间、系统信息与白名单环境变量，**没有任何写入 / 修改副作用**；
-- **客户端（MCP Client）**：后端 `McpManager` 默认开启（`MCP_ENABLED=true`），**服务启动时自动连接 + 发现工具** → 工具以 `mcp-info:xxx` 能力出现在页面，可逐个启用/示例/对话调用；页面「MCP 服务」开关**只控制这些能力是否进入目录**（服务连接在启动时已建立、与开关无关），关闭则能力从目录消失。
+- **客户端（MCP Client）**：后端 `McpManager` 默认关闭（`MCP_ENABLED=false`），**开启后服务启动时自动连接 + 发现工具** → 工具以 `mcp-info:xxx` 能力出现在页面，可逐个启用/示例/对话调用；页面「MCP 服务」开关**只控制这些能力是否进入目录**（服务连接在开启时已建立、与开关无关），关闭则能力从目录消失。
 
 ## 为什么需要
 
@@ -116,7 +116,7 @@ app = mcp.streamable_http_app()   # 可选：独立 HTTP 部署时用 uvicorn ap
 
 ### 二、MCP Client 端（`backend/app/capabilities/mcp.py`）
 
-后端 `McpManager` 是 MCP 客户端：读取 `.env` 里注册的 server 配置，**服务启动时默认连接**（`MCP_ENABLED=true`，stdio 以子进程自动拉起 server）；**连接在启动时建立并保持**，页面开关只决定 MCP 能力是否进入能力目录（转成 LangChain 工具注入 Agent 的开关）。
+后端 `McpManager` 是 MCP 客户端：读取 `.env` 里注册的 server 配置，默认关闭（`MCP_ENABLED=false`）；**开启后服务启动时自动连接**（stdio 以子进程自动拉起 server）；**连接在启动时建立并保持**，页面开关只决定 MCP 能力是否进入能力目录（转成 LangChain 工具注入 Agent 的开关）。
 
 伪代码：
 
@@ -124,7 +124,7 @@ app = mcp.streamable_http_app()   # 可选：独立 HTTP 部署时用 uvicorn ap
 class McpManager:
     def __init__(self, servers_json="{}", enabled=True):
         self.servers = parse(servers_json)   # {"mcp-info": {"command": "python", "args": ["-m", "app.mcp_server.info_server"]}}
-        self.enabled = enabled               # 页面开关：是否在能力目录中使用 MCP（默认开启）
+        self.enabled = enabled               # 页面开关：是否在能力目录中使用 MCP（默认关闭）
         self.capabilities: list[dict] = []   # 已发现的能力（是否暴露由 registry.list 按 enabled 过滤）
         self.tools_by_id: dict = {}          # cap_id -> LangChain 工具
         self._contexts: dict = {}            # 持有传输上下文，防 GC 关流
@@ -186,13 +186,13 @@ async def mcp_toggle(req: McpToggleRequest):
 
 ### 四、前端「MCP 服务」开关与分组（`useCapabilities.ts` + `CapabilitySidebar.vue`）
 
-- 状态：`mcpEnabled` 初始 `false`，`loadMcp()` 从后端 `/api/mcp` 读取（后端默认 `MCP_ENABLED=true`）；`builtinCaps` / `mcpCaps` 按 `source` 分组；
+- 状态：`mcpEnabled` 初始 `false`，`loadMcp()` 从后端 `/api/mcp` 读取（后端默认 `MCP_ENABLED=false`）；`builtinCaps` / `mcpCaps` 按 `source` 分组；
 - 交互：`setMcpEnabled(v)` → `POST /api/mcp` 成功后重新拉能力列表；
-- 展示：侧边栏「MCP 服务」分组有开关——**开启态**（默认）显示「MCP 服务已连接 · 能力 N 个」+ fuchsia「MCP」徽标卡片（可逐个开关/示例/故障注入）；**关闭态**显示「MCP 能力已停用 — 仅使用内置能力」；内置能力单列一组，直观对比有无 MCP。
+- 展示：侧边栏「MCP 服务」分组有开关——**开启态**显示「MCP 服务已连接 · 能力 N 个」+ fuchsia「MCP」徽标卡片（可逐个开关/示例/故障注入）；**关闭态**（默认）显示「MCP 能力已停用 — 仅使用内置能力」；内置能力单列一组，直观对比有无 MCP。
 
 ### 五、端到端流程：有无 MCP 的对比
 
-| 阶段 | 有 MCP（默认开启） | 无 MCP（页面点选关闭） |
+| 阶段 | 有 MCP（页面点选开启） | 无 MCP（默认关闭） |
 |------|-------------------|----------------------|
 | 能力目录 | 内置能力 + 3 个 `mcp-info:*`（fuchsia MCP 徽标，独立分组） | 只有内置能力（计算器/时间/搜索/沙箱…） |
 | 侧边栏 | 「MCP 服务已连接 · 能力 N 个」 | 「MCP 服务」开关关闭，虚线框提示未启用 |
@@ -241,7 +241,7 @@ async function setMcpEnabled(v: boolean) {   // 页面开关
 - 工具以独立服务存在，与 Agent 解耦，新增/下线能力不改主程序代码；
 - 标准化协议：同一 MCP Server 可被任意支持 MCP 的 Agent 复用；
 - 只读服务零副作用：演示热插拔不产生脏数据，env 白名单避免敏感信息泄露；
-- 默认开启（服务启动即就绪）+ 页面可关闭 + 分组展示，能力热插拔直观可见，降级友好（连接失败不影响对话）。
+- 默认关闭、页面可开启 + 分组展示，能力热插拔直观可见，降级友好（连接失败不影响对话）。
 
 **边界**
 

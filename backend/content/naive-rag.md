@@ -75,7 +75,7 @@ Naive RAG（朴素 RAG / Vanilla RAG / Standard RAG）是 RAG 的最原始形态
 
 **一个直观的对照样例**：问「发票什么时候交」——即便语料已补充独立的「发票提交时限：…15 个自然日内上传 OA」声明，naive 的纯稠密固定切块仍可能因**问法与原文措辞不一致**（「交」vs「提交时限」）而召回不准；advanced 的 Query 重写会生成「发票提交时限规定 / 发票报销截止日期规定 / 发票上交流程及时限要求」等变体，配合 ES BM25 关键词路精确命中。同一问题切换 naive / advanced，检索卡片即可看到改写变体与召回差异——这就是「关键词盲区」的具象演示。
 
-> 它是其余方案的度量基准：advanced / modular / graph / agentic 的所有优化都以「比 naive 召回得更准、答得更全」为目标。当前已落地 naive / advanced / modular 三方案，graph / agentic 仍在同一框架上规划扩展。
+> 它是其余方案的度量基准：advanced / modular / graph / agentic 的所有优化都以「比 naive 召回得更准、答得更全」为目标。当前已落地 naive / advanced / modular / agentic 四方案，graph 仍在同一框架上规划扩展。
 
 ## 推荐 Prompt
 

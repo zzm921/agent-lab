@@ -79,11 +79,11 @@ Agent 工程有一组高频词：**Prompt 工程、Context 工程、Harness 工�
 
 | 层 | 本项目实现 |
 |---|---|
-| Prompt 工程 | [runner.py](file:///c:/Users/ASUS/Desktop/workspace/my-agent/backend/app/agents/runner.py) 的 `STRATEGY_PROMPTS`（standard / few_shot / cot）、`TOOL_RETRY_HINT` 工具重试规范、`_augment_query` 按 `generation_mode`（direct/citation/comparison）拼装的指令段 |
+| Prompt 工程 | [runner.py](file:///d:/workspace/my-agent-lab/backend/app/agents/runner.py) 的 `STRATEGY_PROMPTS`（standard / few_shot / cot）、`TOOL_RETRY_HINT` 工具重试规范、`_augment_query` 按 `generation_mode`（direct/citation/comparison）拼装的指令段 |
 | Context 工程 | `_augment_query` 把检索命中 + 来源清单 + generation_mode 指令动态注入用户消息；modular RAG 的指代消解、HyDE 假想文档、context_compress 语义去重、跨轮 seed 复用（`_last_hits`）、answerability 判定不足时强制追问 |
-| Harness 工程 | [harness.py](file:///c:/Users/ASUS/Desktop/workspace/my-agent/backend/app/agents/harness.py) 的 AgentHarness（审批策略 / 资源上限 / 止损 / 统计 / 工具计数）、[tools_builder.py](file:///c:/Users/ASUS/Desktop/workspace/my-agent/backend/app/agents/tools_builder.py)、middleware 层（`StreamEventsMiddleware` 事件流、`ModelCallLimitMiddleware` 轮数上限、`WorkerEventsMiddleware` 子代理事件） |
+| Harness 工程 | [harness.py](file:///d:/workspace/my-agent-lab/backend/app/agents/harness.py) 的 AgentHarness（审批策略 / 资源上限 / 止损 / 统计 / 工具计数）、[tools_builder.py](file:///d:/workspace/my-agent-lab/backend/app/agents/tools_builder.py)、middleware 层（`StreamEventsMiddleware` 事件流、`ModelCallLimitMiddleware` 轮数上限、`WorkerEventsMiddleware` 子代理事件） |
 | Loop 工程 | 反馈与终止机制：`ModelCallLimitMiddleware` 强制轮数上限、reflection 的评审通过判定（`passed`）、plan_execute 的步骤完成 / 失败重规划判定、HITL 审批门——都是"证据 + 停止条件"的具体落点 |
-| Graph 工程 | [runner.py](file:///c:/Users/ASUS/Desktop/workspace/my-agent/backend/app/agents/runner.py) 统一图运行器（StateGraph + checkpointer + HITL `interrupt`/`resume` + 条件边）；四种范式均编译为图，由 runner 统一 `ainvoke` |
+| Graph 工程 | [runner.py](file:///d:/workspace/my-agent-lab/backend/app/agents/runner.py) 统一图运行器（StateGraph + checkpointer + HITL `interrupt`/`resume` + 条件边）；四种范式均编译为图，由 runner 统一 `ainvoke` |
 
 **Agent 范式（另一条轴线，modes/）**——本项目四种范式都是 Graph 上的不同拓扑，不是工程层的定义：
 

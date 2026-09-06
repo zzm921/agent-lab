@@ -76,7 +76,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
   - 未完成：无网络隔离（compose 注明需自补策略）；local 兜底后端在宿主 `shell=True` 执行、无文件系统 / 网络 / 资源隔离；黑名单为 20 条静态子串、无命令结构解析 / 白名单扩展；沙箱池全局持锁串行执行；`allowed_host_paths` 硬编码需人工对齐
 - **可观测性与评估** — 相关技术：`backend/eval/` + `scripts/eval_*` 三层离线评测 + 在线闭环 + 运行记录（单进程 Trace）
   - **RAG 评测**：L1 确定性回归（路由 / 检索 / 充分性闸门）→ L2 语义评分 → L3 RAGAS 生成质量 → 真实链路评测（modular / agentic，真实 Qdrant/ES 检索 + 真实 LLM）
-  - **Agent 评测**：L0 任务层 + L1 架构层（协议不变量）确定性断言 → L2 LLM-as-Judge 答案质量（忠实度 / 相关性 / 正确性），52 条金标用例（`agent_task_set.jsonl`）
+  - **Agent 评测**：L0 任务层 + L1 架构层（协议不变量）确定性断言 → L2 LLM-as-Judge 答案质量（忠实度 / 相关性 / 正确性），52 条金标用例（`task_set.jsonl`）
   - **在线闭环**：真实对话采样落库（仅检索命中 / 工具调用才落，按日 JSONL）→ 前端 👍/👎 反馈回填（`POST /api/feedback`）→ `scripts/eval_online.py` 失败样本回流（回归池 / 修复池，关键分支全量 + 兜底抽样 + 去重 + git commit 溯源）
   - **运行记录**：SSE 事件流 + LLM 调用明细 + 聚合统计落盘，前端「运行记录」面板回放（审批暂停续写同一 run_id）
   - 未完成：跨进程 Trace（OpenTelemetry）、指标看板（Prometheus/Grafana）、SLO 告警、Prompt 版本化
@@ -85,12 +85,9 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ### 记忆
 
-> 技术说明：让 Agent 具备跨会话的记忆能力：写入 → 语义召回 → 注入上下文；存储层支持多后端可替换。**记忆 ≠ RAG**：记忆是数据（有「写入—巩固—更新—遗忘」生命周期），RAG 是检索机制；本项目记忆走工具通道（memory_recall）+ 常驻注入，RAG 走前置检索，两轨对照。
-
-- **多后端向量存储** — 相关技术：`StoreBackend` 统一接口，Qdrant（Prefetch + RRF 真混合）/ Elasticsearch（kNN + rank.rrf / 旧版 BM25）/ 内存三后端 + `MultiBackendStore` 多路融合，构造期自动选路、失败回退内存
-  - 未完成：ES 混合检索需 8.8+ 且无版本门槛校验（8.0~8.7 会构造 RRF 失败）；选路 / 回退仅在启动构造期一次，运行期不探测不重连；真混合仅 Qdrant 后端、内存 / 多后端退化为多路融合；多线程共享 Embedding 客户端无并发上限
+> 技术说明：让 Agent 具备跨会话的记忆能力：写入 → 语义召回 → 注入上下文。**记忆 ≠ RAG**：记忆是数据（有「写入—巩固—更新—遗忘」生命周期），RAG 是检索机制；本项目记忆走工具通道（memory_recall）+ 常驻注入，RAG 走前置检索，两轨对照。
 - **跨轮长期记忆** — 相关技术：`LongMemoryStore` 向量 + 元数据 JSONL 持久化 + 语义去重（≥0.92 更新）+ LRU/TTL 遗忘治理；写入工具 memory_write（kind / importance / scope）+ 召回工具 memory_recall（规范化注入块 + 老化提示 + UNTRUSTED 注入隔离）；常驻记忆**按客户端（设备指纹/IP）隔离**、会话启动注入 system（importance ≥0.7 的 top-k）；轮末自动提取巩固后台静默（独立轻量场景 memory_consolidate，关闭 thinking，实测 48s→3s），按 LLM 判定 scope 自动分流——长期偏好/约束写常驻库跨会话生效、临时上下文写会话库；**L2 主动语义召回**（每轮系统驱动把当前对话转 query 召回并注入 user，只对本轮生效）——企业级四件套：selector 轻量 LLM 触发判断（判无需直接跳过）→ 会话库+常驻库合并召回按 id 去重 → 会话级已见去重（跨轮不重复注入）→ top-k + 字符预算封顶；另有写指令确定性跳过（记住/忘掉类不需背景，先于 selector）＋ L1/L2 去重打通（首轮 seed 常驻 id，避免与常驻注入双份）；异常全吞不阻断主链路；管理 API + 前端「记忆管理」面板 + SSE 事件卡片
-  - 未完成：单机内存索引 + JSONL 形态（云端演进为对象存储 + 向量库分层）；无跨进程记忆同步
+  - 未完成：无跨进程记忆同步
 
 ### 上下文工程
 
@@ -120,7 +117,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ## 总结
 
-**已实现**：react、plan_execute、reflection、函数调用（calculator / time_now / web_search / run_command）、提示词策略、RAG（naive / advanced / modular / agentic + HyDE）、HITL 审批门、MCP 工具热插拔、容错·重试·熔断、沙箱、多后端向量存储、跨轮长期记忆、上下文管理与压缩、安全防护、SSE 流式输出、技术路径点选、源码展示、可观测性与评估（运行记录 + RAG/Agent 三层离线评测 + 在线闭环）。
+**已实现**：react、plan_execute、reflection、函数调用（calculator / time_now / web_search / run_command）、提示词策略、RAG（naive / advanced / modular / agentic + HyDE）、HITL 审批门、MCP 工具热插拔、容错·重试·熔断、沙箱、跨轮长期记忆、上下文管理与压缩、安全防护、SSE 流式输出、技术路径点选、源码展示、可观测性与评估（运行记录 + RAG/Agent 三层离线评测 + 在线闭环）。
 
 **待实现**：
 - 未正式启动（有雏形）：multi_agent
@@ -169,9 +166,8 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | `EMBEDDING_BASE_URL` | 否 | 默认 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `EMBEDDING_MODEL` | 否 | 默认 `text-embedding-v3` |
 | `RAG_ENABLED` | 否 | 知识库检索总开关，默认 `true`（能力后端默认就绪）；`false` 整体关闭。每轮是否检索由前端「知识库检索」开关控制 |
-| `RAG_MIN_SCORE` | 否 | 最小相关度阈值，默认 `0.6`；命中相似度低于该值直接丢弃（不注入上下文），全部被丢弃则本轮不注入。naive 为 cosine、advanced 为 rerank 归一分数 |
 | `MCP_SERVERS` | 否 | JSON，声明 stdio 或 streamable HTTP 的 MCP Server（本项目自带 `mcp-info` 只读 server） |
-| `MCP_ENABLED` | 否 | 默认 `true`：服务启动时自动连接并发现已配置的 MCP Server（stdio 以子进程拉起 `mcp-info`），无需手动启动 |
+| `MCP_ENABLED` | 否 | 默认 `false`：默认关闭；设为 `true` 时服务启动自动连接并发现已配置的 MCP Server（stdio 以子进程拉起 `mcp-info`），页面侧边栏也可手动开启 |
 | `SECURITY_ENABLED` | 否 | 安全防护总开关，默认 `true` |
 | `GUARD_INPUT` | 否 | 输入 Guardrail：越狱 / 提示注入特征拦截，命中短路并礼貌拒绝，默认 `true` |
 | `GUARD_OUTPUT` | 否 | 输出 Guardrail：敏感数据泄露全文扫描 + 阻断提示，默认 `true` |
@@ -234,7 +230,7 @@ python scripts/ingest_modular.py   # modular / agentic 方案（语义分块，�
 ## 目录结构
 
 ```
-my-agent/
+agent-lab/
 ├── backend/                     # FastAPI 后端（LangGraph + MCP + RAG + 记忆）
 │   ├── app/
 │   │   ├── main.py              # 应用入口：CORS / 路由 / 前端静态托管
@@ -268,7 +264,7 @@ my-agent/
 │   │   ├── tools/               # 工具：calculator / time_now / web_search / run_command / memory / retry
 │   │   ├── mcp_server/          # 自带 mcp-info 只读 server（stdio，无写入副作用）
 │   │   │   └── info_server.py
-│   │   ├── memory/              # 会话 + 长期记忆（写入/巩固/召回）+ 多后端存储
+│   │   ├── memory/              # 会话 + 长期记忆（写入/巩固/召回）
 │   │   │   ├── session_store.py
 │   │   │   ├── long_memory.py   #   LongMemoryStore：语义去重 + LRU/TTL + 常驻注入
 │   │   │   ├── consolidate.py   #   轮末自动提取巩固（后台静默，scope 全局/会话分流）
@@ -320,12 +316,10 @@ my-agent/
 │   ├── index.html
 │   ├── package.json
 │   └── tailwind.config.js / postcss.config.js / tsconfig.json
-├── docs/                        # 架构 / 部署 / 测试 / 知识体系 文档
+├── docs/                        # 架构 / 部署 / 测试 文档
 │   ├── architecture.md
 │   ├── deployment.md
-│   ├── testing.md
-│   ├── AI Agent 技术演变路径与实现方案.md
-│   └── AI Agent 知识体系细化（6标签21卡片）.md
+│   └── testing.md
 ├── deploy/
 │   └── opensandbox/             # OpenSandbox 沙箱部署编排
 │       └── docker-compose.yml
