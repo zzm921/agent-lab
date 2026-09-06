@@ -8,7 +8,7 @@
 
 Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI Agent 技术平台，目标是系统呈现 Agent 从理论到工程的关键技术栈：
 
-- **讲解**：落地页以「6 大标签 × 21 张能力卡」组织 AI Agent 知识体系（提示词工程 / 上下文工程 / RAG / Agent / Harness / 协议），每张卡有图文正文与核心代码片段；
+- **讲解**：落地页以「4 大标签 × 39 张能力卡」组织 AI Agent 知识体系（Agent 工程演进 / Agent 范式 / RAG 范式与工程 / 协议），每张卡有图文正文与核心代码片段；
 - **演示**：进入实验室，推理模式、RAG 方案、提示词策略、审批策略、工具能力等**真实运行**，并通过 SSE 事件流把思考、工具调用、检索、审批过程逐步展示出来；
 - **对比**：同一任务可在不同推理模式 / 提示词策略 / RAG 方案下并排运行，直观对比差异；
 - **实验**：技术方案一键点选切换、工具开关即时增删、故障注入（13 种类型）验证容错、示例一键填入，边改边看。
@@ -17,17 +17,17 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ## 功能清单
 
-按技术领域分组；每个领域先说明其技术点，再列出具体能力；完成度为**实际工程完成度**，未到 100% 的均列出明确缺口。
+按技术领域分组；每个领域先说明其技术点，再列出具体能力；未完成项均列出明确缺口。
 
 ### Agent 策略（推理模式）
 
 > 技术说明：Agent 的核心是「思考 - 行动」循环范式。本项目统一基于 LangChain `create_agent`（模型 ⇄ 工具循环）与 LangGraph `StateGraph`（显式构图）构建，用自定义 `AgentMiddleware` 收敛各模式差异（事件流 / HITL / 反思 / 多代理），统一接入轮数上限、审批与故障注入。
 
-- **react**（90%）— 相关技术：`create_agent` + `AgentMiddleware`（思考-行动-观察循环）
+- **react** — 相关技术：`create_agent` + `AgentMiddleware`（思考-行动-观察循环）
   - 未完成：无单轮输出长度（max_tokens）上限；超轮数终止依赖抛异常兜底而非图内优雅分支
-- **plan_execute**（90%）— 相关技术：LangGraph `StateGraph`（planner → executor ⇄ tools → replanner 条件边，replan 上限 = max_iterations/2）
+- **plan_execute** — 相关技术：LangGraph `StateGraph`（planner → executor ⇄ tools → replanner 条件边，replan 上限 = max_iterations/2）
   - 未完成：步骤严格串行、无并行执行；计划只存内存检查点、重启即失（不落盘）；replan 次数硬编码推导、不上报、不可独立调优；计划解析仅按行去符号，无结构化 schema
-- **reflection**（90%）— 相关技术：`ReflectionMiddleware`（generator ⇄ tools → critic 条件循环，PASS / FAIL 判定）
+- **reflection** — 相关技术：`ReflectionMiddleware`（generator ⇄ tools → critic 条件循环，PASS / FAIL 判定）
   - 未完成：评审是「流式文本 + 字符串匹配判定」，无结构化 LLM-as-a-Judge 评分器；修订是否真正改进无量化验证，可能空转到 max_iter；反思轮数与 max_iterations 耦合、无独立配置；不保留多稿对比
 - **multi_agent**（雏形，未正式完成）— 相关技术：Orchestrator（create_agent）+ compute/analyze Worker（`convert_runnable_to_tool` 包装）
   - 未完成：worker 名单硬编码（compute / analyze）、无动态注册；编排者顺序调用 worker、无并行调度；结果仅靠 LLM 文本整合、无结构化聚合与冲突解决；worker 无独立状态（无 checkpointer）
@@ -36,7 +36,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 > 技术说明：模型以结构化 JSON 发起工具调用。工具经 `bind_tools` 转 function schema 注入 `create_agent` 工具循环，`tools_builder` 按前端勾选组装，不可用能力置灰「不适配」。
 
-- **calculator / time_now / web_search / run_command**（80%）— 相关技术：AST 白名单安全求值 / 本地时间 / DuckDuckGo HTML 抓取 / OpenSandbox 或本地子进程 + 危险命令拦截
+- **calculator / time_now / web_search / run_command** — 相关技术：AST 白名单安全求值 / 本地时间 / DuckDuckGo HTML 抓取 / OpenSandbox 或本地子进程 + 危险命令拦截
   - 未完成：无并行工具调用（for 循环逐个执行）；无通用自定义工具注册接口（新增内置工具需同时改 builtin.py 与 registry.py）；web_search 强依赖 DuckDuckGo 页面结构（改版即失效）、结果数/超时硬编码；run_command 依赖用户自部署 OpenSandbox，local 兜底 `shell=True` 有注入面、黑名单为子串匹配可绕过、所有会话共享同一工作目录
 - **结构化输出**（JSON Schema 约束）— 已在路由 / 规划等内部场景使用；独立能力模块 → **待实现**
 
@@ -44,22 +44,22 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 > 技术说明：通过提示词模板控制模型行为。前端选择器切换策略，后端按策略拼装 System Prompt 并下发 `prompt_result` 事件。
 
-- **prompt-strategy**（70%）— 相关技术：standard / few_shot / cot 三条 System Prompt 模板
+- **prompt-strategy** — 相关技术：standard / few_shot / cot 三条 System Prompt 模板
   - 未完成：仅三条硬编码字符串，无自定义提示词 / 模板变量注入；策略只作用于首轮 system 前缀，后续轮次完全不受影响；few_shot 仅文本示例、cot 仅「请逐步思考」指令，无结构化解析与验证
 
 ### RAG
 
 > 技术说明：从语料建库到在线检索的完整链路：文档解析 → 切块/分块 → 向量化入库 → 多路召回 → 融合/重排 → 压缩 → 生成。本项目落地四套方案（naive / advanced / modular / agentic）并在实验室点选对比；检索命中注入上下文，回答可引用来源。
 
-- **naive RAG**（100%）— 相关技术：固定 500 字切块（100 重叠）+ 纯稠密向量检索
+- **naive RAG** — 相关技术：固定 500 字切块（100 重叠）+ 纯稠密向量检索
   - 定位说明：作为**对照基线**，刻意不做任何增强（无改写 / 重排 / 混合 / 压缩），用于对比展示缺陷
-- **advanced RAG**（80%）— 相关技术：结构感知父子分块 / 语义分块 + 混合检索（稠密 + 本地 n-gram 稀疏，RRF 融合）+ Rerank 精排 + 父块回填
+- **advanced RAG** — 相关技术：结构感知父子分块 / 语义分块 + 混合检索（稠密 + 本地 n-gram 稀疏，RRF 融合）+ Rerank 精排 + 父块回填
   - 未完成：稀疏检索是本地字符 n-gram 哈希向量（md5 → 2^16 桶），非真 BM25（真 BM25 仅在可选 ES 后端）；重排依赖外部 API（qwen3-rerank），无 Key 时回退「原分 + 字符二元组」的简单词法重排；无上下文压缩与充分性闸门；语义分块被结构分块旁路（真实语料走结构感知路径）；HyDE 无缓存
-- **modular RAG**（90%）— 相关技术：语义路由（五维决策 D1/D3/D4/D5）→ 执行计划 → 动态编排模块（改写 / 指代消解 / 分解 / HyDE / 多跳规划-执行-验证 / 语义去重 / 压缩 / 充分性闸门），闸门前置 + 有界升级增量补缺
+- **modular RAG** — 相关技术：语义路由（五维决策 D1/D3/D4/D5）→ 执行计划 → 动态编排模块（改写 / 指代消解 / 分解 / HyDE / 多跳规划-执行-验证 / 语义去重 / 压缩 / 充分性闸门），闸门前置 + 有界升级增量补缺
   - 未完成：D2 多知识库路由**明确不做**（单语料）；执行计划是确定性规则映射（if-else 枚举），非 LLM 生成 / 可插拔配置；compress 不覆盖 simple / multihop 路径；无模块级独立消融实验（现有评测为整链路 L1/L2/L3）；classifier 纯 LLM、无 Key 时 modular 不可路由
 - **RAG 专项增强**（rag-variants）— HyDE（假想文档生成，融入稠密路召回）**已实现**；Self-RAG / CRAG / RAPTOR → **待实现**（Self-RAG / CRAG 已在智能体式 RAG 卡以角色编排形态实现，此卡为独立模块插件形态）
 - **知识图谱 RAG**（graph-rag）— 相关技术：实体-关系建模 + 多跳推理 → **待实现**
-- **智能体式 RAG**（agentic-rag，Self-RAG / CRAG / Adaptive-RAG，85%）— 相关技术：LangGraph 多角色状态机（路由 / 规划 / 评审 / 纠错 / 校验）+ 工具注册表（4 个库内检索工具 + 五类护栏）+ 预算治理（步数 / 纠错轮数 / token / 墙钟超时 / 单工具上限 / 角色熔断）+ 双闭环（CRAG 逐条证据评审 + Self-RAG 支持度校验）+ 逐事件 SSE 轨迹
+- **智能体式 RAG**（agentic-rag，Self-RAG / CRAG / Adaptive-RAG）— 相关技术：LangGraph 多角色状态机（路由 / 规划 / 评审 / 纠错 / 校验）+ 工具注册表（4 个库内检索工具 + 五类护栏）+ 预算治理（步数 / 纠错轮数 / token / 墙钟超时 / 单工具上限 / 角色熔断）+ 双闭环（CRAG 逐条证据评审 + Self-RAG 支持度校验）+ 逐事件 SSE 轨迹
   - 未完成：无多级缓存（查询 / Embedding / 检索结果三级缓存）；无规则路由 / 快速通道（纯 LLM 路由，规则仅在无 Key / 失败 / 超预算时降级兜底）；无监控告警（token / 时延 / 熔断等已记账但无看板与主动告警）；无检索级权限过滤与脱敏（库内结果按可信数据直进上下文）；多知识库路由（D2）明确不做（单语料）；工具仅限库内只读检索（无写操作 / 外部 API）
 - **离线数据处理 / 建库**（offline-processing）— 语义分块 + 建库脚本 + 文本指纹幂等重建**已实现**；完整解析（OCR / PDF / docx / 表格图片 / 公式）与多语料增量挂载 → **待实现**
 - **在线混合检索策略**（online-hybrid-retrieval）— RRF 融合（K=60）**已实现**；加权 RRF / 多方式融合对比、独立参数化实验 → **待实现**
@@ -68,30 +68,35 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 > 技术说明：把 Agent 从「能跑」做到「可靠」：审批（人机协作）、容错（重试/熔断）、隔离（沙箱），保证真实生产环境的可控与鲁棒。
 
-- **审批门（HITL）**（90%）— 相关技术：LangGraph `interrupt` 暂停 + `Command(resume=...)` 恢复；同 superstep 多 interrupt 合并批量审批
+- **审批门（HITL）** — 相关技术：LangGraph `interrupt` 暂停 + `Command(resume=...)` 恢复；同 superstep 多 interrupt 合并批量审批
   - 未完成：策略仅 always / never 两档，无「仅危险操作」条件策略与 per-tool 独立策略；无审批超时自动拒绝（可无限期悬挂）；批量审批只能对所有工具统一决策，无法逐工具分别批/拒/改；无审批审计日志
-- **容错·重试·熔断**（80%）— 相关技术：工具层透明重试（瞬时错误指数退避 + 抖动）+ Agent 层思考后重试；按「工具+参数签名」键的三态熔断（closed/open/half-open）+ 13 种故障注入
+- **容错·重试·熔断** — 相关技术：工具层透明重试（瞬时错误指数退避 + 抖动）+ Agent 层思考后重试；按「工具+参数签名」键的三态熔断（closed/open/half-open）+ 13 种故障注入
   - 未完成：熔断键含完整参数，换参即视为新键，本质「同参短路」而非工具整体熔断；无 QPS / 并发维度熔断；重试 / 退避参数仅全局、无 per-tool 覆盖；工具层重试会重复执行有副作用工具（无幂等）；熔断 / 重试状态仅内存、重启即失
-- **沙箱**（70%）— 相关技术：OpenSandbox（Docker 服务端）或 local 子进程执行，危险命令黑名单 + 强制 HITL + 超时 / 输出截断
+- **沙箱** — 相关技术：OpenSandbox（Docker 服务端）或 local 子进程执行，危险命令黑名单 + 强制 HITL + 超时 / 输出截断
   - 未完成：无网络隔离（compose 注明需自补策略）；local 兜底后端在宿主 `shell=True` 执行、无文件系统 / 网络 / 资源隔离；黑名单为 20 条静态子串、无命令结构解析 / 白名单扩展；沙箱池全局持锁串行执行；`allowed_host_paths` 硬编码需人工对齐
-- **可观测性与评估** — RAGAS 语义评测（L3）与语义回归（L2）**部分实现**（`backend/eval/` + `scripts/eval_*`）；Trace 全链路追踪、指标监控完整接入 → **待实现**
-- **安全**（60%）— 相关技术：输入 Guardrail（规则拦截越狱/提示注入，命中短路 + 礼貌拒绝 + `guard_refused` 事件）；输出 Guardrail + 敏感数据脱敏（`StreamMasker` 流式实时脱敏手机号/身份证/银行卡/密钥 + 全文阻断提示，落库亦脱敏）；来源可信分级（web 搜索 / 命令输出 / 记忆召回 = 不可信外部来源，注入隔离指令与数据；知识库 = 受控内部语料 = 可信来源，不隔离）
+- **可观测性与评估** — 相关技术：`backend/eval/` + `scripts/eval_*` 三层离线评测 + 在线闭环 + 运行记录（单进程 Trace）
+  - **RAG 评测**：L1 确定性回归（路由 / 检索 / 充分性闸门）→ L2 语义评分 → L3 RAGAS 生成质量 → 真实链路评测（modular / agentic，真实 Qdrant/ES 检索 + 真实 LLM）
+  - **Agent 评测**：L0 任务层 + L1 架构层（协议不变量）确定性断言 → L2 LLM-as-Judge 答案质量（忠实度 / 相关性 / 正确性），52 条金标用例（`agent_task_set.jsonl`）
+  - **在线闭环**：真实对话采样落库（仅检索命中 / 工具调用才落，按日 JSONL）→ 前端 👍/👎 反馈回填（`POST /api/feedback`）→ `scripts/eval_online.py` 失败样本回流（回归池 / 修复池，关键分支全量 + 兜底抽样 + 去重 + git commit 溯源）
+  - **运行记录**：SSE 事件流 + LLM 调用明细 + 聚合统计落盘，前端「运行记录」面板回放（审批暂停续写同一 run_id）
+  - 未完成：跨进程 Trace（OpenTelemetry）、指标看板（Prometheus/Grafana）、SLO 告警、Prompt 版本化
+- **安全** — 相关技术：输入 Guardrail（规则拦截越狱/提示注入，命中短路 + 礼貌拒绝 + `guard_refused` 事件）；输出 Guardrail + 敏感数据脱敏（`StreamMasker` 流式实时脱敏手机号/身份证/银行卡/密钥 + 全文阻断提示，落库亦脱敏）；来源可信分级（web 搜索 / 命令输出 / 记忆召回 = 不可信外部来源，注入隔离指令与数据；知识库 = 受控内部语料 = 可信来源，不隔离）
   - 未完成：服务端工具白名单强制；RBAC 权限管控；敏感操作审计日志
 
 ### 记忆
 
 > 技术说明：让 Agent 具备跨会话的记忆能力：写入 → 语义召回 → 注入上下文；存储层支持多后端可替换。**记忆 ≠ RAG**：记忆是数据（有「写入—巩固—更新—遗忘」生命周期），RAG 是检索机制；本项目记忆走工具通道（memory_recall）+ 常驻注入，RAG 走前置检索，两轨对照。
 
-- **多后端向量存储**（80%）— 相关技术：`StoreBackend` 统一接口，Qdrant（Prefetch + RRF 真混合）/ Elasticsearch（kNN + rank.rrf / 旧版 BM25）/ 内存三后端 + `MultiBackendStore` 多路融合，构造期自动选路、失败回退内存
+- **多后端向量存储** — 相关技术：`StoreBackend` 统一接口，Qdrant（Prefetch + RRF 真混合）/ Elasticsearch（kNN + rank.rrf / 旧版 BM25）/ 内存三后端 + `MultiBackendStore` 多路融合，构造期自动选路、失败回退内存
   - 未完成：ES 混合检索需 8.8+ 且无版本门槛校验（8.0~8.7 会构造 RRF 失败）；选路 / 回退仅在启动构造期一次，运行期不探测不重连；真混合仅 Qdrant 后端、内存 / 多后端退化为多路融合；多线程共享 Embedding 客户端无并发上限
-- **跨轮长期记忆**（95%）— 相关技术：`LongMemoryStore` 向量 + 元数据 JSONL 持久化 + 语义去重（≥0.92 更新）+ LRU/TTL 遗忘治理；写入工具 memory_write（kind / importance / scope）+ 召回工具 memory_recall（规范化注入块 + 老化提示 + UNTRUSTED 注入隔离）；常驻记忆**按客户端（设备指纹/IP）隔离**、会话启动注入 system（importance ≥0.7 的 top-k）；轮末自动提取巩固后台静默（独立轻量场景 memory_consolidate，关闭 thinking，实测 48s→3s），按 LLM 判定 scope 自动分流——长期偏好/约束写常驻库跨会话生效、临时上下文写会话库；**L2 主动语义召回**（每轮系统驱动把当前对话转 query 召回并注入 user，只对本轮生效）——企业级四件套：selector 轻量 LLM 触发判断（判无需直接跳过）→ 会话库+常驻库合并召回按 id 去重 → 会话级已见去重（跨轮不重复注入）→ top-k + 字符预算封顶；另有写指令确定性跳过（记住/忘掉类不需背景，先于 selector）＋ L1/L2 去重打通（首轮 seed 常驻 id，避免与常驻注入双份）；异常全吞不阻断主链路；管理 API + 前端「记忆管理」面板 + SSE 事件卡片
+- **跨轮长期记忆** — 相关技术：`LongMemoryStore` 向量 + 元数据 JSONL 持久化 + 语义去重（≥0.92 更新）+ LRU/TTL 遗忘治理；写入工具 memory_write（kind / importance / scope）+ 召回工具 memory_recall（规范化注入块 + 老化提示 + UNTRUSTED 注入隔离）；常驻记忆**按客户端（设备指纹/IP）隔离**、会话启动注入 system（importance ≥0.7 的 top-k）；轮末自动提取巩固后台静默（独立轻量场景 memory_consolidate，关闭 thinking，实测 48s→3s），按 LLM 判定 scope 自动分流——长期偏好/约束写常驻库跨会话生效、临时上下文写会话库；**L2 主动语义召回**（每轮系统驱动把当前对话转 query 召回并注入 user，只对本轮生效）——企业级四件套：selector 轻量 LLM 触发判断（判无需直接跳过）→ 会话库+常驻库合并召回按 id 去重 → 会话级已见去重（跨轮不重复注入）→ top-k + 字符预算封顶；另有写指令确定性跳过（记住/忘掉类不需背景，先于 selector）＋ L1/L2 去重打通（首轮 seed 常驻 id，避免与常驻注入双份）；异常全吞不阻断主链路；管理 API + 前端「记忆管理」面板 + SSE 事件卡片
   - 未完成：单机内存索引 + JSONL 形态（云端演进为对象存储 + 向量库分层）；无跨进程记忆同步
 
 ### 上下文工程
 
 > 技术说明：管理 Agent 的上下文窗口：压缩、规划、缓存，控制成本与延迟。压缩能力已随 runner 四模式接入（读时压缩，不写回检查点）。
 
-- **上下文管理与压缩**（90%）— 相关技术：四层压缩管线（大输出落盘 → snip-compact 对话修剪 → micro-compact 工具占位 → auto-compact LLM 摘要，成本递增），统一挂载 `_make_inputs`，四模式一次生效；`context` SSE 事件前端卡片可视化
+- **上下文管理与压缩** — 相关技术：四层压缩管线（大输出落盘 → snip-compact 对话修剪 → micro-compact 工具占位 → auto-compact LLM 摘要，成本递增），统一挂载 `_make_inputs`，四模式一次生效；`context` SSE 事件前端卡片可视化
   - 未完成：auto-compact（LLM 摘要）默认关闭，需配置开启；run_command 仍在工具层先截断 4000 字符、落盘接管的是截断后文本（全文落盘未接管）；摘要记忆仅进程内存、不跨进程持久化；压缩只作用于副本每轮重复执行（无写回检查点）
 - **上下文缓存与渐进式披露**（Prompt Caching / JIT 按需加载）→ **待实现**
 
@@ -99,7 +104,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 > 技术说明：Agent 与外部世界交互的标准协议：MCP（工具服务化）与 A2A（智能体间通信）。
 
-- **MCP 工具热插拔**（85%）— 相关技术：stdio / Streamable HTTP 双传输，启动自动连接 + `load_mcp_tools` 工具发现注册，连接失败标记「不适配」不注入，自带 mcp-info 只读 server（now / system_info / env_get）
+- **MCP 工具热插拔** — 相关技术：stdio / Streamable HTTP 双传输，启动自动连接 + `load_mcp_tools` 工具发现注册，连接失败标记「不适配」不注入，自带 mcp-info 只读 server（now / system_info / env_get）
   - 未完成：无断线重连 / 健康探测（连接仅在启动 / 首开建立一次，失败后不重试）；无 OAuth / token 刷新（仅 headers / env 直传）；工具 schema 无项目层校验；自带 info server 仅只读信息、无鉴权
 - **A2A 智能体通信**（发现 / 委托 / 协作开放协议）→ **待实现**
 - **计算机操作代理**（computer-use，看截图 / 移鼠标 / 点按钮）→ **待实现**
@@ -108,20 +113,21 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 > 技术说明：跨所有模式生效的横向能力：技术路径点选、流式输出、源码展示。
 
-- **技术路径点选（能力热插拔）**（100%）— 相关技术：`POST /api/stream` 参数化动态组装 Agent 模式 / 提示词模板 / RAG 方案 / 工具集
-- **SSE 流式输出**（85%）— 相关技术：`EventSourceResponse` + `asyncio.Queue` 顺序驱动 + 统一事件协议（thinking / message / tool_* / plan / retrieve / approval_request 等）
+- **技术路径点选（能力热插拔）** — 相关技术：`POST /api/stream` 参数化动态组装 Agent 模式 / 提示词模板 / RAG 方案 / 工具集
+- **SSE 流式输出** — 相关技术：`EventSourceResponse` + `asyncio.Queue` 顺序驱动 + 统一事件协议（thinking / message / tool_* / plan / retrieve / approval_request 等）
   - 未完成：无应用级心跳 / 保活事件（HITL 等待、慢检索期间连接无活性信号）；无断线重连 / 事件续传（断线需整轮重发）；事件无序号 / 无 schema 校验
-- **真实源码展示**（100%）— 相关技术：`GET /api/source/{module}` 实时读取后端真实源码
+- **真实源码展示** — 相关技术：`GET /api/source/{module}` 实时读取后端真实源码
 
 ## 总结
 
-**已实现（含完成度）**：react 90%、plan_execute 90%、reflection 90%、函数调用（4 工具）80%、提示词策略 70%、RAG（naive 100% / advanced 80% / modular 90% / agentic 85% + HyDE）、HITL 90%、MCP 85%、容错·重试·熔断 80%、沙箱 70%、多后端向量存储 80%、跨轮长期记忆 95%、上下文管理与压缩 90%、安全防护 60%、SSE 85%、技术路径点选 100%、源码展示 100%。
+**已实现**：react、plan_execute、reflection、函数调用（calculator / time_now / web_search / run_command）、提示词策略、RAG（naive / advanced / modular / agentic + HyDE）、HITL 审批门、MCP 工具热插拔、容错·重试·熔断、沙箱、多后端向量存储、跨轮长期记忆、上下文管理与压缩、安全防护、SSE 流式输出、技术路径点选、源码展示、可观测性与评估（运行记录 + RAG/Agent 三层离线评测 + 在线闭环）。
 
 **待实现**：
 - 未正式启动（有雏形）：multi_agent
-- 实现待落地：知识图谱 RAG、RAG 专项增强其余插件（RAPTOR 等）、上下文缓存与渐进式披露、计算机操作代理、A2A、可观测性完整接入、结构化输出独立模块
+- 实现待落地：知识图谱 RAG、RAG 专项增强其余插件（RAPTOR 等）、上下文缓存与渐进式披露、计算机操作代理、A2A、结构化输出独立模块
+- 可观测性余量：跨进程 Trace（OpenTelemetry）、指标看板（Prometheus/Grafana）、SLO 告警、Prompt 版本化
 - 安全余量：服务端工具白名单、RBAC 权限管控、敏感操作审计日志
-- 增强项：离线建库完整解析（OCR / PDF / 表格 / 公式）、在线混合检索参数化实验、模块级消融评估
+- 增强项：离线建库完整解析（OCR / PDF / 表格 / 公式）、在线混合检索参数化实验、模块级消融评估、LLM-judge 人工校准（Cohen's Kappa）
 
 **明确暂不实现**（边界声明）：多知识库路由（D2）、结构化查询（Text-to-SQL）。
 
@@ -183,6 +189,11 @@ cd ../backend && uvicorn app.main:app --port 8000   # 直接访问 http://localh
 | `MEMORY_PROACTIVE_THRESHOLD` | 否 | 主动召回相似度阈值，默认 `0.3`（不达标不注入） |
 | `MEMORY_PROACTIVE_TOP_K` | 否 | 主动召回每轮注入条数上限，默认 `3` |
 | `MEMORY_PROACTIVE_MAX_CHARS` | 否 | 主动召回注入字符预算，默认 `400`（超预算截断） |
+| `EVAL_ONLINE_ENABLED` | 否 | 在线评测采样总开关（真实对话落轻量样本 JSONL，供反馈回填与回流评测集），默认 `true` |
+| `EVAL_SAMPLE_DIR` | 否 | 在线样本根目录，默认 `./eval/samples`（按日分文件 `online_YYYYMMDD.jsonl`） |
+| `EVAL_ONLINE_SET_PATH` | 否 | 在线回流 RAG 回归池输出路径，默认 `./eval/online_eval_set.jsonl` |
+| `EVAL_ONLINE_AGENT_SET_PATH` | 否 | 在线回流 Agent 回归池输出路径，默认 `./eval/online_agent_eval_set.jsonl` |
+| `EVAL_ONLINE_FIX_SET_PATH` | 否 | 修复池输出路径（点踩样本，金标待人工修正后转回归池），默认 `./eval/online_fix_set.jsonl` |
 
 RAG 向量库数据在**线上前**通过建库脚本预建（在线服务启动时只加载、不现场入库）：
 
@@ -205,6 +216,7 @@ python scripts/ingest_modular.py   # modular / agentic 方案（语义分块，�
 | POST | `/api/stream` | SSE 流式对话（模式/能力/策略/审批策略/RAG 方案） |
 | POST | `/api/approve` | HITL 审批（批准/拒绝/修改） |
 | POST | `/api/stop` | 停止当前流式任务 |
+| POST | `/api/feedback` | 用户反馈回填（点赞/点踩 + 可选原因，匹配当日在线样本，在线评测闭环） |
 | GET | `/api/rag/schemes` | RAG 方案目录（naive / advanced / modular / agentic） |
 | GET | `/api/memory` | 记忆列表（scope=session/global，可按 kind 过滤） |
 | POST | `/api/memory` | 手动写入一条记忆（scope 决定写会话库 / 全局常驻库） |
@@ -277,16 +289,18 @@ my-agent/
 │   │       ├── content.py
 │   │       ├── memory.py
 │   │       └── sandbox.py
-│   ├── content/                 # 21 张能力卡 Markdown（落地页 /api/content 实时解析）
-│   ├── eval/                    # RAGAS 语义评测 / 离线回归 / 报告
-│   │   ├── runner.py
-│   │   ├── semantic.py
-│   │   ├── ragas_eval.py
-│   │   ├── eval_set.jsonl
-│   │   └── reports/
+│   ├── content/                 # 能力卡 Markdown（tags.md 权威索引，4 标签 × 39 卡，落地页 /api/content 实时解析）
+│   ├── eval/                    # 评测体系：RAG + Agent 双子包 + 在线闭环
+│   │   ├── agent/               #   Agent 评测（task_set 52 条 + arch_specs + runner/full + reports）
+│   │   ├── rag/                 #   RAG 评测（eval_set / real_eval_set + runner/full/real/semantic + reports）
+│   │   ├── samples/             #   在线样本（按日 online_*.jsonl + orphan_feedback.jsonl）
+│   │   ├── online_eval_set.jsonl       # 在线回流 RAG 回归池
+│   │   ├── online_agent_eval_set.jsonl # 在线回流 Agent 回归池
+│   │   └── online_fix_set.jsonl        # 修复池（点踩样本，金标待人工修正）
 │   ├── scripts/                 # 建库与评测脚本
 │   │   ├── ingest_naive.py / ingest_advanced.py / ingest_modular.py
-│   │   └── eval_modular.py / eval_ragas.py / eval_semantic.py
+│   │   └── eval_rag.py / eval_rag_l1.py / eval_rag_real.py
+│   │       eval_agent.py / eval_agent_l1.py / eval_online.py
 │   ├── tests/                   # pytest（Fake 模型 + mock MCP，不联网）
 │   ├── .env.example
 │   ├── pytest.ini
