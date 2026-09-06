@@ -1,27 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { theme, toggleTheme } from '../composables/useTheme'
 
-interface Health {
-  status: string
-  model: string
-  mcp_configured: boolean
-  embedding_configured: boolean
-}
-
-const health = ref<Health | null>(null)
 const route = useRoute()
-
-async function fetchHealth() {
-  try {
-    const res = await fetch('/api/health')
-    if (res.ok) health.value = await res.json()
-  } catch {
-    health.value = null
-  }
-}
-onMounted(fetchHealth)
 </script>
 
 <template>
@@ -87,16 +68,6 @@ onMounted(fetchHealth)
             <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
           </svg>
         </button>
-        <span :class="health ? 'text-emerald-400' : 'text-rose-400'">
-          {{ health ? '后端在线' : '后端未连接' }}
-        </span>
-        <span v-if="health" class="rounded bg-slate-800 px-2 py-0.5 text-slate-300">{{ health.model }}</span>
-        <span v-if="health" class="rounded bg-slate-800 px-2 py-0.5" :class="health.mcp_configured ? 'text-emerald-400' : 'text-slate-500'">
-          MCP {{ health.mcp_configured ? '已连接' : '未配置' }}
-        </span>
-        <span v-if="health" class="rounded bg-slate-800 px-2 py-0.5" :class="health.embedding_configured ? 'text-emerald-400' : 'text-amber-400'">
-          Embedding {{ health.embedding_configured ? '已配置' : '未配置' }}
-        </span>
       </div>
     </div>
   </header>

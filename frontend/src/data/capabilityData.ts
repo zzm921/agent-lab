@@ -33,6 +33,12 @@ export interface LandingCapability {
   prompts: string[]
   /** 纯知识卡置 false：隐藏「立即体验」按钮与完成度徽标 */
   experience: boolean
+  /** 重点知识卡：置顶展示（frontmatter featured: true） */
+  featured: boolean
+  /** 新技术卡：紧随重点卡之后（frontmatter new: true） */
+  isNew: boolean
+  /** 所属大标签（分类）id 列表，用于卡片上渲染大标签徽标（tags.md 归属推导） */
+  categoryIds: string[]
   /** 详情抽屉正文 Markdown */
   content: string
 }
@@ -50,6 +56,16 @@ export interface KnowledgeTag {
   cards: LandingCapability[]
   /** 可选二级分组（如工程演进标签内的 Prompt 层 / Context 层 / Harness 层），仅影响展示分段 */
   groups?: KnowledgeGroup[]
+}
+
+/** 大标签（分类）→ 徽标颜色，与 tags.md 的标签 id 对齐 */
+export const CATEGORY_COLORS: Record<string, string> = {
+  'agent-engineering': '#7c5cff',
+  agent: '#38bdf8',
+  rag: '#f59e0b',
+  protocol: '#22d3a8',
+  eval: '#f43f5e',
+  ops: '#10b981',
 }
 
 export interface TechStackItem {

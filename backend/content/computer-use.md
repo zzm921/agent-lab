@@ -1,5 +1,6 @@
 ---
 id: computer-use
+new: true
 name: 计算机操作代理
 shortDesc: 看截图、移鼠标、点按钮、敲键盘——任何有界面的软件都能成为 Agent 的工具。
 icon: monitor

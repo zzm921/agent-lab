@@ -1,6 +1,7 @@
 ---
 id: plan-execute
-name: 计划执行
+featured: true
+name: Plan-and-Execute
 shortDesc: 先拆解任务为子步骤，再逐个执行，复杂任务的成功率大幅提升。
 icon: list
 difficulty: int

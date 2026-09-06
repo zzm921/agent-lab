@@ -1,5 +1,6 @@
 ---
 id: graph-rag
+new: true
 name: 知识图谱 RAG
 shortDesc: 实体-关系建模 + 多跳推理，回答"跨文档关联"的全局性问题。
 icon: globe

@@ -1,5 +1,6 @@
 ---
 id: multi-agent
+featured: true
 name: 多智能体编排
 shortDesc: Orchestrator 统一调度多个专业 Agent，各司其职协作完成复杂任务。
 icon: network

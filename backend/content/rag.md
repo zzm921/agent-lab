@@ -1,5 +1,6 @@
 ---
 id: rag
+featured: true
 name: 检索增强生成
 shortDesc: RAG 知识总表：五代范式演进路线 + 各类型 RAG 导航总览。
 icon: database

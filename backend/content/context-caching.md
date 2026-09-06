@@ -1,5 +1,6 @@
 ---
 id: context-caching
+new: true
 name: 上下文缓存与渐进式披露
 shortDesc: Prompt Caching 复用前缀 KV 缓存降本降延迟；渐进式披露 / JIT 检索让模型只按需加载上下文。
 icon: zap

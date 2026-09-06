@@ -1,5 +1,6 @@
 ---
 id: memgpt
+new: true
 name: MemGPT / 分层记忆 Agent
 shortDesc: 借鉴 OS 虚拟内存，把上下文当作"分页内存"换入换出，实现长程记忆与复杂任务。
 icon: history

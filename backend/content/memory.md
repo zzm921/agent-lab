@@ -1,5 +1,6 @@
 ---
 id: memory
+featured: true
 name: 跨轮长期记忆
 shortDesc: 跨会话记住关键事实并按语义召回，Agent 不再每次从零开始。
 icon: history

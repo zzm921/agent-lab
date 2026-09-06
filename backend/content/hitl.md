@@ -1,5 +1,6 @@
 ---
 id: hitl
+featured: true
 name: 审批门（人在回路）
 shortDesc: 执行前审批机制，关键决策暂停等人工确认，安全与效率的平衡。
 icon: check

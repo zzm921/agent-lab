@@ -1,5 +1,6 @@
 ---
 id: react
+featured: true
 name: ReAct 边想边做
 shortDesc: 观察 → 思考 → 行动 → 观察，让 Agent 像人一样边想边做、每一步都可追溯。
 icon: brain

@@ -48,6 +48,8 @@ interface CardPayload {
   prompts?: string[]
   prompt?: string
   experience?: boolean
+  featured?: boolean
+  new?: boolean
   body: string
 }
 
@@ -91,8 +93,17 @@ function normalizeCard(card: CardPayload): LandingCapability | null {
         ? [card.prompt]
         : [],
     experience: card.experience !== false,
+    featured: card.featured === true,
+    isNew: card.new === true,
+    categoryIds: [],
     content: typeof card.body === 'string' ? card.body : '',
   }
+}
+
+/** 排序：重点（featured）优先 → 新技术（new）次之 → 保持原顺序（稳定排序） */
+function sortByPriority(cards: LandingCapability[]): LandingCapability[] {
+  const score = (c: LandingCapability) => (c.featured ? 2 : 0) + (c.isNew ? 1 : 0)
+  return [...cards].sort((a, b) => score(b) - score(a))
 }
 
 /**
@@ -131,24 +142,52 @@ export function useContentData() {
         for (const group of tag.groups ?? []) {
           flatIds.push(...(group.cards ?? []))
         }
-        const cards = flatIds
-          .map((id) => cardMap.get(id))
-          .filter((card): card is LandingCapability => Boolean(card))
-        const groups = (tag.groups ?? []).map((g) => ({
-          title: g.title,
-          cards: (g.cards ?? [])
+        const cards = sortByPriority(
+          flatIds
             .map((id) => cardMap.get(id))
             .filter((card): card is LandingCapability => Boolean(card)),
+        )
+        const groups = (tag.groups ?? []).map((g) => ({
+          title: g.title,
+          cards: sortByPriority(
+            (g.cards ?? [])
+              .map((id) => cardMap.get(id))
+              .filter((card): card is LandingCapability => Boolean(card)),
+          ),
         }))
         knowledgeTags.push({ id: tag.id, title: tag.title, description: tag.description ?? '', cards, groups })
         allCards.push(...cards)
       }
+
+      // 卡片可跨分类重复展示（如生产与治理 ↔ 工程演进 Harness 层）：全量列表按 id 去重，避免重复渲染
+      const deduped: LandingCapability[] = []
+      const seen = new Set<string>()
       for (const card of allCards) {
+        if (seen.has(card.id)) continue
+        seen.add(card.id)
+        deduped.push(card)
+      }
+
+      // 由 tags.md 归属推导每张卡的大标签（分类）id 列表
+      const categoryIdsOf = new Map<string, string[]>()
+      for (const tag of knowledgeTags) {
+        for (const card of tag.cards) {
+          const ids = categoryIdsOf.get(card.id) ?? []
+          if (!ids.includes(tag.id)) ids.push(tag.id)
+          categoryIdsOf.set(card.id, ids)
+        }
+      }
+      const capsWithCategory = deduped.map((c) => ({
+        ...c,
+        categoryIds: categoryIdsOf.get(c.id) ?? [],
+      }))
+
+      for (const card of deduped) {
         contents[card.id] = card.content
       }
 
       tags.value = knowledgeTags
-      caps.value = allCards
+      caps.value = capsWithCategory
       cardContent.value = contents
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)

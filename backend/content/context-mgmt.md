@@ -1,5 +1,6 @@
 ---
 id: context-mgmt
+featured: true
 name: 上下文管理与压缩
 shortDesc: 上下文窗口有限，用「大输出落盘 → 对话修剪 → 工具占位 → LLM 摘要」分层压缩，让长对话不"忘事"、不超限。
 icon: cube

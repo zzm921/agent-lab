@@ -1,5 +1,6 @@
 ---
 id: rewoo
+new: true
 name: ReWOO 范式
 shortDesc: Planner / Worker / Solver 三段解耦，用变量占位省去"观察后重规划"，token 高效。
 icon: zap

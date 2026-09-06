@@ -1,5 +1,6 @@
 ---
 id: function-calling
+featured: true
 name: 函数调用
 shortDesc: 模型以结构化 JSON 直接发起工具调用；各家私有格式，是 MCP 的前身。
 icon: cpu

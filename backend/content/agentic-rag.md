@@ -1,5 +1,6 @@
 ---
 id: agentic-rag
+new: true
 name: 智能体式 RAG
 shortDesc: 让 Agent 自主决定"何时检索、检索几次、结果靠不靠谱"——多角色编排 + 工具注册表 + 预算治理。
 icon: compass

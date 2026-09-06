@@ -1,6 +1,7 @@
 ---
 id: reflection
-name: 反思修订机制
+featured: true
+name: Reflection
 shortDesc: 草稿—批评—修订三阶段迭代输出，自我批判让答案质量跃迁一个档次。
 icon: refresh
 difficulty: adv

@@ -1,5 +1,6 @@
 ---
 id: agent-eval
+featured: true
 name: Agent 离线评测体系
 shortDesc: 企业级 Agent 评测：能力 ≠ 一致性；L0 任务层 / L1 架构层确定性断言挂 CI 门禁 + L2 LLM-as-Judge 答案质量，附成功率/成本/延迟企业补充维度。
 icon: chart-bar

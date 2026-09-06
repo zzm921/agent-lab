@@ -1,5 +1,6 @@
 ---
 id: llm-compiler
+new: true
 name: LLMCompiler 范式
 shortDesc: 把计划编译成 DAG，无依赖步骤并行执行，让 Agent 像编译器一样调度任务。
 icon: code-bracket

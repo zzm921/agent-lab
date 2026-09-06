@@ -1,5 +1,6 @@
 ---
 id: a2a
+new: true
 name: A2A 智能体通信
 shortDesc: Agent 间发现、委托与协作的开放协议，跨框架互操作的"普通话"。
 icon: arrows-right-left

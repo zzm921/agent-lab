@@ -1,7 +1,8 @@
 ---
 id: mcp
-name: MCP 工具热插拔
-shortDesc: 基于 Model Context Protocol，工具像插件一样按需加载，无需重启服务。
+featured: true
+name: MCP
+shortDesc: Model Context Protocol——以标准化方式连接外部工具与数据源，让 Agent 的能力可声明、可发现、可复用。
 icon: plug
 difficulty: adv
 completeLevel: 90

@@ -8,6 +8,7 @@ import ArchitectureOverview from '../components/ArchitectureOverview.vue'
 import { useContentData } from '../composables/useContentData'
 import {
   ARCH_LAYERS,
+  CATEGORY_COLORS,
   LAB_PRESET_STORAGE_KEY,
   MODE_AGENT_LABELS,
   type LandingCapability,
@@ -27,14 +28,55 @@ const visibleCards = computed(() => {
   return tag ? tag.cards : []
 })
 
-/** 卡片区段：有二级分组的标签按组渲染，无分组整体平铺；全部能力时平铺全部卡片 */
+/** 每个区段默认只展示的卡片数量，超出部分折叠收起 */
+const COLLAPSE_LIMIT = 6
+
+/** 已展开的区段 key 集合（key = 分类 id / 分组标题 / __featured__） */
+const expandedSections = ref<Set<string>>(new Set())
+
+function toggleSection(key: string) {
+  const next = new Set(expandedSections.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedSections.value = next
+}
+
+/** 折叠状态下只显示前 COLLAPSE_LIMIT 张卡片 */
+function shownCards(key: string, cards: LandingCapability[]) {
+  return expandedSections.value.has(key) || cards.length <= COLLAPSE_LIMIT
+    ? cards
+    : cards.slice(0, COLLAPSE_LIMIT)
+}
+
+/** 卡片区段：全部能力 = 重点推荐 + 各分类（剔除重点卡避免重复）；分类下按组渲染或整体平铺 */
 const cardSections = computed(() => {
-  if (activeTag.value === 'all') return [{ title: null, cards: caps.value }]
+  if (activeTag.value === 'all') {
+    const sections: { key: string; title: string | null; cards: LandingCapability[] }[] = []
+    const featured = caps.value.filter((c) => c.featured)
+    if (featured.length) sections.push({ key: '__featured__', title: '重点推荐', cards: featured })
+    for (const tag of tags.value) {
+      const rest = tag.cards.filter((c) => !c.featured)
+      if (rest.length) sections.push({ key: tag.id, title: tag.title, cards: rest })
+    }
+    return sections
+  }
   const tag = tags.value.find((t) => t.id === activeTag.value)
   if (!tag) return []
-  if (tag.groups && tag.groups.length) return tag.groups.map((g) => ({ title: g.title, cards: g.cards }))
-  return [{ title: null, cards: tag.cards }]
+  if (tag.groups && tag.groups.length) {
+    return tag.groups.map((g) => ({ key: `${tag.id}:${g.title}`, title: g.title, cards: g.cards }))
+  }
+  return [{ key: tag.id, title: null, cards: tag.cards }]
 })
+
+/** 大标签颜色：按分类 id 取色，未知回退主题主色 */
+function catColor(id: string) {
+  return CATEGORY_COLORS[id] ?? '#7c5cff'
+}
+
+/** 大标签标题：按分类 id 反查 tags 清单 */
+function catTitle(id: string) {
+  return tags.value.find((t) => t.id === id)?.title ?? id
+}
 
 /** 卡片对应的智能体名称（仅真实 Agent 卡有 mode；知识/工具卡返回 null 不显示） */
 function agentOf(cap: LandingCapability) {
@@ -272,13 +314,25 @@ function iconPath(name: string) {
         </div>
 
         <template v-else>
-          <template v-for="section in cardSections" :key="section.title ?? '__all__'">
-            <h4 v-if="section.title" class="mb-3 mt-8 text-sm font-medium text-slate-400">
-              {{ section.title }}
-            </h4>
+          <template v-for="section in cardSections" :key="section.key">
+            <div
+              v-if="section.title || section.cards.length > COLLAPSE_LIMIT"
+              class="mb-3 mt-8 flex flex-wrap items-center gap-3"
+            >
+              <h4 v-if="section.title" class="text-sm font-medium text-slate-400">{{ section.title }}</h4>
+              <span class="text-xs text-slate-600">{{ section.cards.length }} 项</span>
+              <button
+                v-if="section.cards.length > COLLAPSE_LIMIT"
+                type="button"
+                class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-400 transition hover:border-white/25 hover:text-white"
+                @click="toggleSection(section.key)"
+              >
+                {{ expandedSections.has(section.key) ? '收起' : `展开全部（${section.cards.length}）` }}
+              </button>
+            </div>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div
-            v-for="cap in section.cards"
+            v-for="cap in shownCards(section.key, section.cards)"
             :key="cap.id"
             class="group flex cursor-pointer flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-white/20 hover:bg-white/[0.05]"
             @click="openDetail(cap)"
@@ -293,6 +347,18 @@ function iconPath(name: string) {
                 </svg>
               </div>
               <div class="flex flex-wrap justify-end gap-1.5">
+                <span
+                  v-if="cap.featured"
+                  class="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300"
+                >
+                  重点
+                </span>
+                <span
+                  v-if="cap.isNew"
+                  class="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300"
+                >
+                  NEW
+                </span>
                 <span
                   v-if="agentOf(cap)"
                   class="rounded-md bg-indigo-500/15 px-2 py-0.5 text-[10px] font-medium text-indigo-300"
@@ -313,7 +379,25 @@ function iconPath(name: string) {
 
             <h4 class="mt-4 text-base font-semibold text-white">{{ cap.name }}</h4>
             <p class="mt-2 text-xs leading-relaxed text-slate-400">{{ cap.shortDesc }}</p>
-            <p class="mt-2 text-[11px] text-slate-500">{{ cap.tags.join(' ') }}</p>
+            <div class="mt-3 flex flex-wrap items-center gap-1.5">
+              <span
+                v-for="cid in cap.categoryIds"
+                :key="cid"
+                class="rounded-md px-2 py-0.5 text-[10px] font-semibold"
+                :style="{ background: `${catColor(cid)}22`, color: catColor(cid) }"
+              >
+                {{ catTitle(cid) }}
+              </span>
+            </div>
+            <div class="mt-2 flex flex-wrap gap-1">
+              <span
+                v-for="t in cap.tags"
+                :key="t"
+                class="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-500"
+              >
+                {{ t }}
+              </span>
+            </div>
 
             <div class="mt-5 flex items-center justify-between gap-2 pt-4 border-t border-white/10">
               <button
@@ -411,7 +495,29 @@ function iconPath(name: string) {
             </svg>
           </div>
           <h2 class="mt-4 text-2xl font-semibold text-white">{{ detailCap.name }}</h2>
-          <div class="mt-3 flex flex-wrap gap-2">
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <span
+              v-if="detailCap.featured"
+              class="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300"
+            >
+              重点
+            </span>
+            <span
+              v-if="detailCap.isNew"
+              class="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300"
+            >
+              NEW
+            </span>
+            <span
+              v-for="cid in detailCap.categoryIds"
+              :key="cid"
+              class="rounded-md px-2 py-0.5 text-[11px] font-semibold"
+              :style="{ background: `${catColor(cid)}22`, color: catColor(cid) }"
+            >
+              {{ catTitle(cid) }}
+            </span>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-1.5">
             <span
               v-for="tag in detailCap.tags"
               :key="tag"

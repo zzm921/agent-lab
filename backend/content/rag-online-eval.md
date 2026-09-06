@@ -1,5 +1,6 @@
 ---
 id: rag-online-eval
+new: true
 name: 线上 RAG 自动评测闭环
 shortDesc: 在线采集 → 用户反馈 → 定期回流评测 → 失败样本回流，让"线上是不是变好了"有数据回答。
 icon: chart-bar

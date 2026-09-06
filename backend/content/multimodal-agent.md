@@ -1,5 +1,6 @@
 ---
 id: multimodal-agent
+new: true
 name: 多模态 Agent
 shortDesc: 让 Agent 能"看"——图像 / UI / 图表理解与视觉操作（OCR、截图、屏幕交互）。
 icon: monitor

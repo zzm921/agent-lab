@@ -1,5 +1,6 @@
 ---
 id: agent-skills
+new: true
 name: Agent Skills 技能封装
 shortDesc: 把可复用的专业能力打包成"技能"（含提示词、脚本与说明），按需注入上下文（AGENTS.md / Claude Skills）。
 icon: cube
