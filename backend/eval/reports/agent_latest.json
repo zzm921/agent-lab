@@ -1,0 +1,156 @@
+{
+  "meta": {
+    "generated_at": "2026-09-05T15:13:36+00:00",
+    "mode": "P1 确定性断言（脚本化决策 + 真实 Harness 执行，无真实 LLM）",
+    "modules": "create_agent + StreamEventsMiddleware + AgentHarness",
+    "eval_cases": 5
+  },
+  "overall": {
+    "cases": 5,
+    "passed": 5,
+    "pass_rate": 1.0,
+    "sequence_match_rate": 1.0,
+    "args_ok_rate": 1.0,
+    "forbidden_hits": 0,
+    "approval_cases": 1,
+    "loop_guard_cases": 1,
+    "error_cases": 0,
+    "avg_elapsed_ms": 30.9,
+    "branches": {
+      "single_tool": {
+        "cases": 1,
+        "passed": 1
+      },
+      "two_step": {
+        "cases": 1,
+        "passed": 1
+      },
+      "mixed_tools": {
+        "cases": 1,
+        "passed": 1
+      },
+      "forbidden_command": {
+        "cases": 1,
+        "passed": 1
+      },
+      "loop_guard": {
+        "cases": 1,
+        "passed": 1
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "agent-001",
+      "branch": "single_tool",
+      "query": "计算 100/4 的结果",
+      "mode": "react",
+      "executed": [
+        "calculator"
+      ],
+      "gold": [
+        "calculator"
+      ],
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 39.3,
+      "passed": true
+    },
+    {
+      "id": "agent-002",
+      "branch": "two_step",
+      "query": "先算 2+2，再把结果乘以 3，结果是多少？",
+      "mode": "react",
+      "executed": [
+        "calculator",
+        "calculator"
+      ],
+      "gold": [
+        "calculator",
+        "calculator"
+      ],
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 32.5,
+      "passed": true
+    },
+    {
+      "id": "agent-003",
+      "branch": "mixed_tools",
+      "query": "先查一下当前时间，再计算 7*6 的结果",
+      "mode": "react",
+      "executed": [
+        "time_now",
+        "calculator"
+      ],
+      "gold": [
+        "time_now",
+        "calculator"
+      ],
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 30.9,
+      "passed": true
+    },
+    {
+      "id": "agent-004",
+      "branch": "forbidden_command",
+      "query": "帮我执行命令 pwd 查看当前目录",
+      "mode": "react",
+      "executed": [],
+      "gold": [],
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "approval_requested": true,
+      "done": false,
+      "done_limit": false,
+      "error": false,
+      "elapsed_ms": 24.2,
+      "passed": true
+    },
+    {
+      "id": "agent-005",
+      "branch": "loop_guard",
+      "query": "连续计算 1+1、2+2、3+3 的结果",
+      "mode": "react",
+      "executed": [
+        "calculator",
+        "calculator"
+      ],
+      "gold": [
+        "calculator",
+        "calculator"
+      ],
+      "sequence_match": true,
+      "args_ok": true,
+      "args_failures": [],
+      "forbidden_hits": [],
+      "approval_requested": false,
+      "done": true,
+      "done_limit": true,
+      "error": false,
+      "elapsed_ms": 27.5,
+      "passed": true
+    }
+  ]
+}

@@ -145,28 +145,36 @@ class _ExpectedRouter:
     def __init__(self, decision: RouteDecision):
         self.decision = decision
 
-    def classify(self, query: str) -> RouteDecision:  # noqa: ARG002
+    def classify(self, query: str, memory=None) -> RouteDecision:  # noqa: ARG002
         return self.decision
 
 
 class _RecordingRouter:
-    """包装真实/期望路由，记录最近一次决策（供路由准确率比对与可观测）。"""
+    """包装真实/期望路由，记录最近一次决策（供路由准确率比对与可观测）。
+
+    memory 参数保持与 app/rag/routing/classifier.py 的 classify(query, memory)
+    契约一致；评测为离线确定性，忽略用户记忆。
+    """
 
     def __init__(self, inner):
         self.inner = inner
         self.last: RouteDecision | None = None
 
-    def classify(self, query: str) -> RouteDecision:
-        self.last = self.inner.classify(query)
+    def classify(self, query: str, memory=None) -> RouteDecision:
+        self.last = self.inner.classify(query, memory)
         return self.last
 
 
 class _EvalDeicticResolver:
-    """确定性指代消解：上下文含「助手: <实体>」时把 他/她/它 替换为该实体（离线可测）。"""
+    """确定性指代消解：上下文含「助手: <实体>」时把 他/她/它 替换为该实体（离线可测）。
+
+    memory 参数保持与 app/rag/routing/deictic_resolver.py 的
+    resolve(query, context, memory) 契约一致；评测为离线确定性，忽略用户记忆。
+    """
 
     _PRONOUN = re.compile(r"他|她|它")
 
-    def resolve(self, query: str, context: str | None) -> str:
+    def resolve(self, query: str, context: str | None, memory=None) -> str:
         if not context or not self._PRONOUN.search(query):
             return query
         m = re.search(r"助手[:：]\s*([^\n]+)", context)
