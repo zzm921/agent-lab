@@ -41,13 +41,19 @@ function agentOf(cap: LandingCapability) {
   return cap.mode ? MODE_AGENT_LABELS[cap.mode] : null
 }
 
-// Markdown 渲染配置：代码块交给 highlight.js 高亮（未知语言回退 plaintext）
+// Markdown 渲染配置：代码块交给 highlight.js 高亮（未知语言回退 plaintext）；外部链接新窗口打开
 marked.use({
   renderer: {
     code({ text, lang }) {
       const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
       const html = hljs.highlight(text, { language }).value
       return `<pre class="markdown-code"><code class="hljs language-${language}">${html}</code></pre>`
+    },
+    link({ href, title, text }) {
+      const external = /^https?:\/\//.test(href)
+      const attrs = external ? ' target="_blank" rel="noopener noreferrer"' : ''
+      const titleAttr = title ? ` title="${title}"` : ''
+      return `<a href="${href}"${titleAttr}${attrs}>${text}</a>`
     },
   },
 })

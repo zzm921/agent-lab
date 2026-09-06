@@ -86,7 +86,7 @@ Schema 链接与剪枝 → 实体值对齐 → 受约束生成 → 验证与自�
 
 ## 本项目的做法（见另一个项目）
 
-modular-rag 明示暂未实现结构化查询（边界清楚），结构化能力由独立项目 **retail-text2sql-agent** 落地。其实现路径（Agent + RAG）：
+modular-rag 明示暂未实现结构化查询（边界清楚），结构化能力由独立项目 [retail-text2sql-agent（零售数据 Text-to-SQL Agent）](https://github.com/zzm921/retail-text2sql-agent) 落地。其实现路径（Agent + RAG）：
 
 ```
 理解问题 → 抽取关键词 → 三路并行召回（字段·向量 / 取值·ES全文 / 指标·向量）
