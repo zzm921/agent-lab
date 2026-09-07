@@ -17,7 +17,7 @@ defineProps<{ steps: string[]; currentStep?: number; status?: string }>()
       <div class="pt-0.5">
         <p
           class="text-sm"
-          :class="i === currentStep ? 'text-white' : (currentStep ?? -1) >= 0 && i < currentStep ? 'text-slate-500 line-through' : 'text-slate-400'"
+          :class="i === currentStep ? 'text-white' : (currentStep ?? -1) >= 0 && i < (currentStep ?? -1) ? 'text-slate-500 line-through' : 'text-slate-400'"
         >
           {{ s }}
         </p>

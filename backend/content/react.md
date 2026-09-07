@@ -129,7 +129,9 @@ def build_react_agent(llm, tools, emit, settings, checkpointer, harness):
 关键细节：
 
 - `StreamEventsMiddleware`：模型输出按 `reasoning_content → thinking` 事件、`content → message` 事件逐 token 下发；工具调用前经护栏层（审批 / 熔断 / 次数上限 / 重试上限）把关，「想干」不等于「能随便干」；
-- `ModelCallLimitMiddleware`：达到轮数上限（`max_steps`）即强制终止并转为 done 而非 error，防止无限烧 token。
+- `ModelCallLimitMiddleware`：达到轮数上限（`max_steps`）即强制终止并转为 done 而非 error，防止无限烧 token；
+- `AskFreeCallLimitMiddleware`（`ModelCallLimitMiddleware` 子类）：模型输出仅包含 `ask_user` 调用时不递增轮数——澄清提问 / 回答**不消耗执行预算**，避免因向用户确认信息提前终止任务；
+- `ask_user` 澄清中断**不依赖审批策略**：`do_approval = name == "ask_user" or should_approve(...)`，即使 `approval_policy=never` 也会暂停弹出「用户回复卡片」，用户逐题点选 / 输入 / 跳过，回复格式化为问答文本后继续。
 
 与通用要求的对应关系：
 

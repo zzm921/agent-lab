@@ -5,13 +5,15 @@ import type {
   AgentEvent,
   ApprovalPolicy,
   ApprovalRequest,
+  AskAnswer,
+  AskUserRequest,
   HitItem,
   ModeId,
   PromptStrategy,
   RagSchemeId,
 } from '../types/agent'
 
-export type StreamStatus = 'idle' | 'streaming' | 'waiting_approval' | 'done' | 'error'
+export type StreamStatus = 'idle' | 'streaming' | 'waiting_approval' | 'waiting_user' | 'done' | 'error'
 
 /** 工具调用条目（ToolCallBadge 使用） */
 export interface ToolCallEntry {
@@ -206,14 +208,20 @@ export interface ChatStream {
   /** 安全护栏拒绝/阻断提示（security.md 输入/输出 Guardrail 事件） */
   guard: { reason: string; matched?: string } | null
   approval: ApprovalRequest | null
+  /** HITL 用户提问澄清（ask_user 工具触发）：非空时等待用户回复，渲染回复卡片 */
+  askUser: AskUserRequest | null
   elapsed: number
   enabled: string[]
   strategy: PromptStrategy
   policy: ApprovalPolicy
   send: (params: SendParams) => Promise<void>
   decide: (decision: 'approve' | 'reject' | 'modify', modifiedArgs?: Record<string, unknown>) => Promise<void>
+  /** 用户回复提问澄清（ask_user）：answers 逐题回答与 questions 下标对齐；skip=true 表示跳过 */
+  reply: (answers: AskAnswer[]) => Promise<void>
   stop: () => void
   retry: () => void
+  /** 历史回放：用同一事件处理器重放已落盘的事件流，UI 与直播时完全一致（不触发网络请求） */
+  replay: (events: AgentEvent[]) => void
 }
 
 export function genId(): string {
@@ -320,7 +328,7 @@ export function useChatStream(): ChatStream {
     stream.elapsed = 0
     stopTimer()
     timer = setInterval(() => {
-      if (stream.status === 'streaming' || stream.status === 'waiting_approval') {
+      if (stream.status === 'streaming' || stream.status === 'waiting_approval' || stream.status === 'waiting_user') {
         stream.elapsed += 0.5
       }
     }, 500)
@@ -600,6 +608,9 @@ export function useChatStream(): ChatStream {
       case 'approval_request':
         stream.approval = { approval_id: ev.approval_id, tool_calls: ev.tool_calls }
         break
+      case 'ask_user_request':
+        stream.askUser = { approval_id: ev.approval_id, questions: ev.questions }
+        break
       case 'done':
         stream.done = { summary: ev.summary, stats: ev.stats }
         break
@@ -619,6 +630,11 @@ export function useChatStream(): ChatStream {
         handleEvent(ev)
         if (stream.approval) {
           stream.status = 'waiting_approval'
+          finishStreaming()
+          return
+        }
+        if (stream.askUser) {
+          stream.status = 'waiting_user'
           finishStreaming()
           return
         }
@@ -649,6 +665,7 @@ export function useChatStream(): ChatStream {
     stream.error = null
     stream.guard = null
     stream.approval = null
+    stream.askUser = null
     stream.elapsed = 0
     if (withUserStep) pushStep({ kind: 'user', text: params.message })
     if (params.sessionId) stream.sessionId = params.sessionId
@@ -695,6 +712,20 @@ export function useChatStream(): ChatStream {
     )
   }
 
+  /** 用户回复提问澄清（ask_user）：逐题回答与 questions 下标对齐；skip=true 表示跳过/无法回答 */
+  const reply = async (answers: AskAnswer[]) => {
+    const a = stream.askUser
+    if (!a) return
+    stream.askUser = null
+    stream.status = 'streaming'
+    controller = new AbortController()
+    await consume(
+      '/api/approve',
+      { approval_id: a.approval_id, decision: 'reply', answers },
+      controller.signal,
+    )
+  }
+
   const stop = () => {
     const sid = stream.sessionId
     if (controller) {
@@ -711,13 +742,34 @@ export function useChatStream(): ChatStream {
     }
     finishStreaming()
     stopTimer()
-    if (stream.status === 'streaming' || stream.status === 'waiting_approval') {
+    stream.approval = null
+    stream.askUser = null
+    if (stream.status === 'streaming' || stream.status === 'waiting_approval' || stream.status === 'waiting_user') {
       stream.status = 'idle'
     }
   }
 
   const retry = () => {
     if (lastParams) void run({ ...lastParams }, false)
+  }
+
+  /** 历史回放：清空面板后按事件顺序重放，与直播共用同一 handleEvent，保证 UI 一致。
+   * 仅重放事件、不触发任何网络请求；历史以审批暂停结束时保留审批卡片，允许续批。 */
+  function replay(events: AgentEvent[]) {
+    stopTimer()
+    finishStreaming()
+    stream.done = null
+    stream.error = null
+    stream.guard = null
+    stream.approval = null
+    stream.askUser = null
+    stream.elapsed = 0
+    stream.status = 'idle'
+    stream.steps.splice(0, stream.steps.length)
+    for (const ev of events) handleEvent(ev)
+    finishStreaming()
+    if (stream.approval) stream.status = 'waiting_approval'
+    if (stream.askUser) stream.status = 'waiting_user'
   }
 
   stream = reactive<ChatStream>({
@@ -731,14 +783,17 @@ export function useChatStream(): ChatStream {
     error: null,
     guard: null,
     approval: null,
+    askUser: null,
     elapsed: 0,
     enabled: [],
     strategy: 'standard',
     policy: 'always',
     send,
     decide,
+    reply,
     stop,
     retry,
+    replay,
   })
   return stream
 }

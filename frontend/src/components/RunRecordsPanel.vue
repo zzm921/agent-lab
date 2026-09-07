@@ -65,6 +65,7 @@ const TYPE_LABEL: Record<string, string> = {
   memory_read: '记忆召回',
   memory_constant: '常驻记忆',
   approval_request: '审批请求',
+  ask_user_request: '用户澄清',
   reflect: '反思',
   agent_event: 'Agent 事件',
   done: '完成',

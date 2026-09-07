@@ -262,3 +262,87 @@ async def test_react_multi_forced_tools_batch_reject(settings, registry, session
     assert len(tool_ends) == 2
     assert all(e["success"] is False for e in tool_ends)
     assert "done" in [e["type"] for e in resumed]
+
+
+def _ask_multi_question_tool(cid: str = "ask_1"):
+    """构造一次 ask_user 调用，一次提出两个澄清问题。"""
+    return AIMessage(
+        content="需要确认关键信息",
+        tool_calls=[
+            {
+                "name": "ask_user",
+                "args": {
+                    "questions": [
+                        {"question": "出发地是哪里？", "options": ["上海", "北京", "广州"]},
+                        {"question": "预算范围？", "options": ["500以内", "500-1000", "1000以上"]},
+                    ]
+                },
+                "id": cid,
+                "type": "tool_call",
+            }
+        ],
+    )
+
+
+async def test_ask_user_multi_question_flow(settings, registry, sessions):
+    """ask_user 多问题：一次中断携带全部 questions，回复 answers 后格式化问答返回并继续完成。"""
+    script = [_ask_multi_question_tool(), AIMessage(content="好的，已确认。")]
+    runner = await _approval_runner(settings, registry, sessions, script)
+    events = await collect_stream(runner, enabled=["calculator"])
+    req = next(e for e in events if e["type"] == "ask_user_request")
+    assert len(req["questions"]) == 2
+    assert req["questions"][0]["question"] == "出发地是哪里？"
+    assert req["questions"][0]["options"] == ["上海", "北京", "广州"]
+    assert "done" not in [e["type"] for e in events]  # 暂停等待用户回复
+
+    resumed = []
+    async for ev in runner.resume(
+        req["approval_id"],
+        "reply",
+        answers=[{"answer": "上海", "skip": False}, {"answer": "", "skip": True}],
+    ):
+        resumed.append(ev)
+    tool_end = next(e for e in resumed if e["type"] == "tool_end")
+    assert tool_end["success"] is True
+    assert "Q1 出发地是哪里？：上海" in tool_end["result"]
+    assert "Q2 预算范围？：用户跳过未回答" in tool_end["result"]
+    assert "done" in [e["type"] for e in resumed]
+
+
+async def test_ask_user_skip_all(settings, registry, sessions):
+    """用户全部跳过：格式化结果为逐题「跳过未回答」，Agent 收到后继续。"""
+    script = [_ask_multi_question_tool(), AIMessage(content="好的，跳过。")]
+    runner = await _approval_runner(settings, registry, sessions, script)
+    events = await collect_stream(runner, enabled=["calculator"])
+    req = next(e for e in events if e["type"] == "ask_user_request")
+
+    resumed = []
+    async for ev in runner.resume(req["approval_id"], "skip"):
+        resumed.append(ev)
+    tool_end = next(e for e in resumed if e["type"] == "tool_end")
+    assert tool_end["result"].count("用户跳过未回答") == 2
+    assert "done" in [e["type"] for e in resumed]
+
+
+async def test_plan_execute_ask_round_exempt(settings, registry, sessions):
+    """plan_execute 澄清轮不计入轮数上限：提问+回复后仍能跑完计划，不会提前达到 max_steps。
+
+    剧本：planner（不计）→ 确认步 ask_user（计 1）→ 回复后接续（豁免，仍计 1）→ 规划步（计 2）。
+    max_steps=2 时应正常完成；若无豁免，回复后接续调用会再计 1，规划步计 3 触发 max_steps 中断。
+    """
+    settings.max_steps = 2
+    script = [
+        AIMessage(content="确认信息\n规划行程"),
+        _ask_multi_question_tool(),
+        AIMessage(content="已执行确认步"),
+        AIMessage(content="已执行规划步"),
+    ]
+    runner = await _approval_runner(settings, registry, sessions, script)
+    events = await collect_stream(runner, mode="plan_execute", enabled=["calculator"])
+    req = next(e for e in events if e["type"] == "ask_user_request")
+
+    resumed = []
+    async for ev in runner.resume(req["approval_id"], "reply", answers=[{"answer": "上海", "skip": False}]):
+        resumed.append(ev)
+    done = next(e for e in resumed if e["type"] == "done")
+    assert "最大轮数" not in done["summary"], "澄清轮不应计入轮数上限导致提前停止"

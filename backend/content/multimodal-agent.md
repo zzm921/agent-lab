@@ -35,4 +35,4 @@ prompts:
 
 ## 演进与关联
 
-与 computer-use（桌面自动化）协同；Context 层补充"视觉上下文"。
+Context 层补充"视觉上下文"。

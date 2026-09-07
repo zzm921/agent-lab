@@ -1,10 +1,13 @@
-"""长期记忆管理 API 测试：GET 列表 / POST 写入 / DELETE 删除（注入 Fake 运行时）。"""
+"""长期记忆管理 API 测试：GET 列表 / POST 写入 / DELETE 删除 / 记忆梦游（注入 Fake 运行时）。"""
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.graph import MessagesState, StateGraph
 
 from app.api import chat
 from app.capabilities.mcp import McpManager
 from app.capabilities.registry import CapabilityRegistry
+from app.llm.fake_model import FakeChatModel
 from app.main import app
 from app.memory.session_store import SessionStore
 
@@ -16,6 +19,34 @@ def mem_registry(settings, embeddings, tmp_path):
     chat.set_runtime(sessions=sessions, registry=registry)
     yield sessions
     chat.set_runtime(sessions=None, registry=None, runner=None)
+
+
+class FakeDreamRunner:
+    """dream 端点仅用到 runner._scenario_llm 与 runner.settings：注入脚本化 Fake 模型。"""
+
+    def __init__(self, llm, settings):
+        self.llm = llm
+        self.settings = settings
+
+    def _scenario_llm(self, scenario):
+        return self.llm
+
+
+async def _seed_session(sessions, session_id: str) -> None:
+    """用最小 StateGraph 往 checkpointer 种入一条多轮对话，供 dream 端点读取。"""
+    graph = StateGraph(MessagesState)
+
+    async def _node(state):
+        return {"messages": [AIMessage(content="好的，已记住。")]}
+
+    graph.add_node("seed", _node)
+    graph.set_entry_point("seed")
+    graph.set_finish_point("seed")
+    app_graph = graph.compile(checkpointer=sessions.checkpointer)
+    await app_graph.ainvoke(
+        {"messages": [HumanMessage(content="我喜欢深色主题，主色是紫色")]},
+        {"configurable": {"thread_id": session_id}},
+    )
 
 
 def test_memory_api_write_list_delete(settings, embeddings, mem_registry):
@@ -91,3 +122,75 @@ def test_memory_api_audit(settings, embeddings, mem_registry):
     # scope 过滤：global 无记录（上面写的都是 session）
     resp = client.get("/api/memory/audit?scope=global")
     assert resp.json()["items"] == []
+
+
+def test_memory_api_dream(settings, embeddings, mem_registry):
+    """记忆梦游：无会话记录 → 400；有会话 → 返回结构化报告且真实落库。"""
+    client = TestClient(app)
+    # 无会话记录 → 400
+    resp = client.post("/api/memory/dream?session_id=no_such_session")
+    assert resp.status_code == 400
+
+    # 种入一条对话并注入脚本化提取模型
+    import asyncio
+
+    asyncio.run(_seed_session(mem_registry, "s_dream"))
+    llm = FakeChatModel(
+        script=[
+            AIMessage(
+                content=(
+                    '[{"text": "用户喜欢深色主题，主色是紫色", "type": "preference", '
+                    '"importance": 0.9}]'
+                )
+            )
+        ]
+    )
+    chat.set_runtime(runner=FakeDreamRunner(llm, settings))
+
+    resp = client.post("/api/memory/dream?session_id=s_dream")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == "s_dream"
+    # 提取 1 条、写入 1 条、无过滤
+    assert data["summary"]["extracted"] == 1
+    assert data["summary"]["written"] == 1
+    assert data["summary"]["dropped"] == 0
+    assert data["written"][0]["action"] == "add"
+    assert data["written"][0]["text"] == "用户喜欢深色主题，主色是紫色"
+    # 会话库 +1
+    assert data["summary"]["before"]["session"] == 0
+    assert data["summary"]["after"]["session"] == 1
+
+    # 真实落库：再次 GET 可见
+    resp = client.get("/api/memory?scope=session&session_id=s_dream")
+    assert any("主色是紫色" in it["text"] for it in resp.json()["items"])
+
+
+def test_memory_api_dream_tidy(settings, embeddings, mem_registry):
+    """记忆梦游 · 整理模式：读现有记忆 → LLM 建议直接落库 → 前后对比。"""
+    client = TestClient(app)
+    # 先写两条记忆（避免 add 自动合并）
+    store = mem_registry.long_memory("s_tidy", embeddings)
+    r1 = store.add_judged("用户喜欢深色主题", kind="preference", importance=0.8, decision="add")
+    r2 = store.add_judged("项目使用 TypeScript 编写", kind="preference", importance=0.7, decision="add")
+    llm = FakeChatModel(
+        script=[
+            AIMessage(
+                content=(
+                    '[{"action": "merge", "scope": "session", "ids": ["%s", "%s"], '
+                    '"text": "用户喜欢深色主题（已归档）", "kind": "preference", '
+                    '"importance": 0.85, "reason": "测试合并"}]' % (r1["id"], r2["id"])
+                )
+            )
+        ]
+    )
+    chat.set_runtime(runner=FakeDreamRunner(llm, settings))
+
+    resp = client.post("/api/memory/dream?session_id=s_tidy&mode=tidy")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["mode"] == "tidy"
+    assert data["summary"]["before"] == {"session": 2, "global": 0}
+    assert len(data["actions"]) == 1
+    assert data["actions"][0]["action"] == "merge"
+    assert data["actions"][0]["executed"] is True

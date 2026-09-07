@@ -27,8 +27,10 @@ class StreamRequest(BaseModel):
 
 class ApproveRequest(BaseModel):
     approval_id: str = Field(description="审批编号")
-    decision: str = Field(default="approve", description="approve | reject | modify")
+    decision: str = Field(default="approve", description="approve | reject | modify | reply | skip")
     modified_args: dict | None = Field(default=None, description="decision=modify 时提供的新参数")
+    reply: str | None = Field(default=None, description="提问澄清（decision=reply）时用户输入的回复文本（兼容单问）")
+    answers: list | None = Field(default=None, description="提问澄清（decision=reply）时逐题回答列表，与 questions 下标对齐")
 
 
 class StopRequest(BaseModel):

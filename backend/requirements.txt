@@ -8,6 +8,8 @@ dashscope>=1.14.0
 langchain>=1.0.0
 langchain-core>=0.3.0
 langgraph>=0.2.60
+# 会话 checkpointer 文件持久化（SQLite，多会话历史落盘，含 aiosqlite/sqlite-vec）
+langgraph-checkpoint-sqlite>=3.1.0
 langchain-mcp-adapters>=0.1.0
 mcp>=1.2.0
 opensandbox>=0.1.0

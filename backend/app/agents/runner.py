@@ -40,6 +40,17 @@ TOOL_RETRY_HINT = (
     "不要直接告诉用户工具不可用；仅在换参数后仍连续多次失败时，才可改用其它工具或如实向用户说明。"
 )
 
+# 澄清提问规范：缺失的用户私有信息应通过一次 ask_user 调用全部问清，避免一问一答多次往返
+# 浪费轮次（HITL 澄清交互不计入执行轮数，但逐问会导致交互次数过多、体验差）。
+ASK_USER_HINT = (
+    "澄清提问规范：当任务缺少只有用户能提供的信息（如出发地、预算、偏好、时间、同行人员等）时，"
+    "应通过一次 ask_user 工具调用把所有缺失信息作为 questions 列表一次性问全"
+    "（每项包含问题文本与候选选项，不要逐个提问、一问一答多次往返）。"
+    "用户可能跳过或无法回答部分问题；若收到「跳过未回答」类回复，"
+    "直接基于其余已确认信息继续推进，并在最终答复中说明所缺信息与假设，"
+    "不要重复追问同一问题。"
+)
+
 
 class AgentRunner:
     """持有会话配置，支持 stream（含中断暂停）与 resume（批准/拒绝/修改）。
@@ -241,7 +252,7 @@ class AgentRunner:
         if not msgs:
             base = STRATEGY_PROMPTS.get(strategy, STRATEGY_PROMPTS["standard"])
             # 常驻记忆置于 system 最前：模型最先看到用户画像/偏好，再读通用行为规范
-            content = f"{base}\n\n{TOOL_RETRY_HINT}"
+            content = f"{base}\n\n{TOOL_RETRY_HINT}\n\n{ASK_USER_HINT}"
             if constant_block is not None:
                 # stream 已在 RAG 之前预生成并 emit memory_constant，这里只复用块不重复 emit
                 content = f"{constant_block}\n\n{content}"
@@ -667,8 +678,11 @@ class AgentRunner:
                 self._schedule_consolidate(graph, config, session_id, memory_enabled, client_key)
             yield ev
 
-    async def resume(self, approval_id, decision, modified_args, client_key="default"):
+    async def resume(self, approval_id, decision, modified_args=None, reply=None, answers=None, client_key="default"):
         """通过审批号找到暂停的会话，恢复图执行并继续产出 SSE 事件。
+
+        decision：审批类型为 approval 时是 approve | reject | modify；
+        提问类型为 ask 时是 reply（附 answers 问答列表）| skip（用户跳过/无法回答）。
 
         client_key：审批方客户端标识（设备指纹/IP），用于定位并续写该会话 pending 的
         运行记录（同一 run_id，保证一轮对话只有一条完整记录）；与 stream 同源。
@@ -686,9 +700,15 @@ class AgentRunner:
         mode, tools = spec
         graph = self._build_graph(mode, tools, emit)
         # 同一 superstep 可能存在多个 pending interrupt（如一步内多个需审批的工具调用）：
-        # 需按 interrupt id 以 resume map 恢复（LangGraph 要求），单个时保持原样
+        # 需按 interrupt id 以 resume map 恢复（LangGraph 要求），单个时保持原样。
+        # 提问中断（ask）与审批中断（approval）的 resume 语义不同：
+        # - approval：{action, modified_args}
+        # - ask：{action: reply|skip, answers: [{answer, skip}, ...]}（与 questions 下标对齐）
         interrupt_ids = self.harness.approval_interrupt_ids(approval_id)
-        decision_value = {"action": decision, "modified_args": modified_args or {}}
+        if self.harness.approval_kind(approval_id) == "ask":
+            decision_value = {"action": "skip" if decision == "skip" else "reply", "answers": answers or []}
+        else:
+            decision_value = {"action": decision, "modified_args": modified_args or {}}
         if len(interrupt_ids) > 1:
             command = Command(resume={iid: decision_value for iid in interrupt_ids})
         else:
@@ -777,16 +797,28 @@ class AgentRunner:
         for run_task in snap.tasks or ():
             pending.extend(run_task.interrupts or ())
         if pending:
-            # 同一 superstep 可能产生多个 pending interrupt（如一步内多个需审批的工具调用），
-            # 合并为一次审批请求（前端弹窗已支持多工具调用批量审批），resume 时按 interrupt id 映射恢复
+            interrupt_ids = [intr.id for intr in pending]
+            thread_id = config["configurable"]["thread_id"]
+            # 提问澄清中断（ask_user 工具触发）：产 ask_user_request，前端渲染「用户回复卡片」
+            ask = [i for i in pending if (getattr(i, "value", {}) or {}).get("type") == "ask_user"]
+            if ask:
+                payload = ask[0].value or {}
+                approval_id = uuid.uuid4().hex
+                self.harness.register_approval(approval_id, thread_id, interrupt_ids, kind="ask")
+                yield {
+                    "type": "ask_user_request",
+                    "approval_id": approval_id,
+                    "questions": payload.get("questions") or [],
+                }
+                return
+            # 工具审批中断：合并为一次审批请求（前端弹窗已支持多工具调用批量审批），
+            # resume 时按 interrupt id 映射恢复
             tool_calls = []
-            interrupt_ids = []
             for intr in pending:
                 payload = getattr(intr, "value", {}) or {}
                 tool_calls.extend(payload.get("tool_calls", []))
-                interrupt_ids.append(intr.id)
             approval_id = uuid.uuid4().hex
-            self.harness.register_approval(approval_id, config["configurable"]["thread_id"], interrupt_ids)
+            self.harness.register_approval(approval_id, thread_id, interrupt_ids, kind="approval")
             yield {
                 "type": "approval_request",
                 "approval_id": approval_id,

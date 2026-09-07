@@ -22,6 +22,7 @@ from app.agents.harness import should_approve
 from app.core.errors import RetryableToolError
 from app.core.events import emit_text, event
 from app.security import StreamMasker, is_untrusted_tool, mask_sensitive, scan_output, wrap_untrusted
+from app.tools.ask_user import format_ask_reply, normalize_questions
 from app.tools.retry import format_tool_error, invoke_with_retry
 
 
@@ -157,6 +158,39 @@ async def stream_model_call(llm, messages, emit, *, tools=None, tool_choice=None
     return msg
 
 
+async def _handle_ask_user(request, emit, do_approval: bool):
+    """ask_user 特殊执行：触发 HITL 澄清中断，用户回复/跳过后格式化问答返回给模型。
+
+    仅主代理（do_approval=True，持 checkpointer）可中断；worker 无 checkpointer，
+    直接执行工具桩返回占位（子代理不应直接向用户提问，由编排者收敛）。
+    """
+    args = request.tool_call.get("args", {})
+    questions = normalize_questions(args)
+    emit(event("tool_start", tool="ask_user", args=args))
+    if do_approval:
+        if not questions:
+            # 参数无效：模型未提供有效 questions（空/无法解析）。不中断、不弹卡片，
+            # 返回结构化错误让模型重新组织参数，避免「用户未填写回复」这类无意义链路
+            # （卡片空 → 用户无法作答 → 模型反复追问死循环）。
+            reply = (
+                "ask_user 参数无效：questions 列表为空或无法解析。"
+                "请通过一次调用一次性列出所有缺失的关键信息，"
+                "每项为 {\"question\": \"问题文本\", \"options\": [\"候选答案\", ...]}。"
+            )
+            emit(event("tool_end", tool="ask_user", args=args, result=reply, success=False))
+            return ToolMessage(content=reply, tool_call_id=request.tool_call["id"])
+        decision = interrupt({"type": "ask_user", "questions": questions})
+        action = decision.get("action") if isinstance(decision, dict) else "reply"
+        # 回复按 answers 对齐格式化；跳过/无法回答时逐题标记「用户跳过未回答」
+        reply = format_ask_reply(questions, decision.get("answers") if action == "reply" else None)
+    else:
+        reply = "（等待用户回复）"
+    emit(event("tool_end", tool="ask_user", args=args, result=reply, success=True))
+    msg = ToolMessage(content=reply, tool_call_id=request.tool_call["id"])
+    msg.additional_kwargs["ask_reply"] = True  # 模式/轮次统计据此豁免澄清轮
+    return msg
+
+
 async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=None):
     """执行单个工具调用：护栏检查（熔断/次数上限）+ 可选 HITL 审批 + 工具事件 + 异常兜底。
 
@@ -168,6 +202,12 @@ async def _execute_tool_call(request, handler, emit, do_approval: bool, harness=
     args = call.get("args", {})
     cid = call.get("id")
     session_id = request.runtime.config["configurable"]["thread_id"]
+
+    # 提问分支：ask_user 触发 HITL 澄清（不审批、不常规执行），优先于所有护栏。
+    # 一次提问（questions 列表一次列全），中断等待用户回复；恢复后格式化问答返回给模型。
+    # 仅主代理（do_approval=True，持 checkpointer）支持中断；worker 无 checkpointer 走兜底执行。
+    if name == "ask_user":
+        return await _handle_ask_user(request, emit, do_approval)
 
     # 护栏：熔断 / 工具调用次数上限。命中直接短路，不执行也不触发审批。
     # 熔断按「工具+参数」计：相同参数重复失败才拦截，换参数重试始终放行
@@ -285,11 +325,14 @@ class StreamEventsMiddleware(AgentMiddleware):
         return ModelResponse(result=[msg], structured_response=None)
 
     async def awrap_tool_call(self, request, handler):
-        # 审批判定统一收敛到护栏层（harness.should_approve：always 或强制 HITL 工具）
+        # 审批判定统一收敛到护栏层（harness.should_approve：always 或强制 HITL 工具）。
+        # ask_user 无论审批策略如何都强制中断（澄清交互本质就是等待用户回复），
+        # 否则 approval_policy=never 时会被当作普通工具执行返回占位、无法弹出回复卡片。
         name = request.tool_call["name"]
+        do_approval = name == "ask_user" or should_approve(_approval_policy(request), name)
         return await _execute_tool_call(
             request, handler, self._emit,
-            should_approve(_approval_policy(request), name),
+            do_approval,
             harness=self._harness,
         )
 

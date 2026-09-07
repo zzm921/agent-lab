@@ -212,13 +212,22 @@ class AgentHarness:
     def tool_counter(self, session_id: str) -> list:
         return self._tool_counts.get(session_id) or [0]
 
-    # --- 审批会话映射 ---
-    def register_approval(self, approval_id: str, session_id: str, interrupt_ids=()) -> None:
-        self._approvals[approval_id] = {"session": session_id, "interrupt_ids": list(interrupt_ids)}
+    # --- 审批会话映射（kind：approval=工具审批，ask=用户提问澄清）---
+    def register_approval(self, approval_id: str, session_id: str, interrupt_ids=(), kind: str = "approval") -> None:
+        self._approvals[approval_id] = {
+            "session": session_id,
+            "interrupt_ids": list(interrupt_ids),
+            "kind": kind,
+        }
 
     def resolve_approval(self, approval_id: str) -> str | None:
         entry = self._approvals.get(approval_id)
         return entry["session"] if entry else None
+
+    def approval_kind(self, approval_id: str) -> str:
+        """中断类型：approval（工具审批）| ask（用户提问澄清），用于 resume 恢复语义。"""
+        entry = self._approvals.get(approval_id)
+        return entry["kind"] if entry else "approval"
 
     def approval_interrupt_ids(self, approval_id: str) -> list:
         """该次审批对应的 LangGraph interrupt id 列表（用于 resume 恢复）。"""

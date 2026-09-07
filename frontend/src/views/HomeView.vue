@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCapabilities } from '../composables/useCapabilities'
 import { useChatStream } from '../composables/useChatStream'
+import { useSessions } from '../composables/useSessions'
 import { LAB_PRESET_STORAGE_KEY } from '../data/capabilityData'
 import type { Capability, ModeId, PromptStrategy, ApprovalPolicy, RagSchemeId } from '../types/agent'
 import CapabilitySidebar from '../components/CapabilitySidebar.vue'
@@ -11,6 +12,7 @@ import ExampleFillHint from '../components/ExampleFillHint.vue'
 import MemoryPanel from '../components/MemoryPanel.vue'
 import RunRecordsPanel from '../components/RunRecordsPanel.vue'
 import SandboxFilesPanel from '../components/SandboxFilesPanel.vue'
+import SessionSidebar from '../components/SessionSidebar.vue'
 
 const route = useRoute()
 const {
@@ -34,6 +36,8 @@ const {
   clearHint,
 } = useCapabilities()
 const stream = useChatStream()
+/** 多会话管理：会话列表 / 当前会话（后端分配 id，localStorage 恢复） */
+const sessions = useSessions()
 
 const task = ref('')
 const validModes: ModeId[] = ['react', 'plan_execute', 'reflection', 'multi_agent']
@@ -56,6 +60,8 @@ const runsOpen = ref(false)
 /** 「每轮压缩」演示：保留最近 N 轮对话原文，更早历史每轮被压缩；0 关闭（用系统默认阈值） */
 const keepRounds = ref(3)
 const sidebarOpen = ref(false)
+/** 会话侧边栏开关（移动端抽屉） */
+const sessionsRailOpen = ref(false)
 const filesOpen = ref(false)
 const filesRefreshKey = ref(0)
 /** 输入框下方的快捷 Prompt：跳转卡片配置的 prompts 列表（content 驱动） */
@@ -93,7 +99,7 @@ onMounted(async () => {
     try {
       const stored = JSON.parse(sessionStorage.getItem(LAB_PRESET_STORAGE_KEY) ?? 'null')
       if (stored && stored.nonce === String(jump) && Array.isArray(stored.prompts)) {
-        jumpedPrompts = stored.prompts.filter((p): p is string => typeof p === 'string')
+        jumpedPrompts = stored.prompts.filter((p: unknown): p is string => typeof p === 'string')
       }
     } catch {
       /* sessionStorage 异常时忽略，走 URL 兜底 */
@@ -116,6 +122,13 @@ onMounted(async () => {
     task.value = String(route.query.prompt)
     presetPrompts.value = [task.value]
   }
+  // 会话恢复：加载会话列表；localStorage 中的上次会话已失效（TTL 清理/删除）时新建
+  await sessions.load()
+  const restored = sessions.sessions.value.some((s) => s.session_id === sessions.currentId.value)
+  if (!restored) await sessions.create()
+  stream.sessionId = sessions.currentId.value
+  // 恢复历史：刷新/重启后按已落盘事件流重放，看到上次会话的完整流水线
+  stream.replay(await sessions.loadEvents(sessions.currentId.value))
 })
 
 watch(exampleHint, (h) => {
@@ -131,7 +144,7 @@ const sending = ref(false)
 watch(
   () => stream.status,
   (s) => {
-    sending.value = s === 'streaming' || s === 'waiting_approval'
+    sending.value = s === 'streaming' || s === 'waiting_approval' || s === 'waiting_user'
   },
   { immediate: true },
 )
@@ -155,9 +168,18 @@ function onExample(cap: Capability) {
   applyExample(cap)
 }
 
-function send() {
+async function send() {
   if (!task.value.trim() || sending.value) return
   clearHint()
+  // 兜底：极少数情况（后端会话初始化失败）下先补建会话，保证本轮落在某个持久化会话内
+  if (!sessions.currentId.value) {
+    try {
+      await sessions.create()
+      stream.sessionId = sessions.currentId.value
+    } catch {
+      /* 仍失败则让后端自行分配（仅内存兜底） */
+    }
+  }
   void stream.send({
     message: task.value,
     mode: mode.value,
@@ -168,8 +190,64 @@ function send() {
     ragEnabled: ragEnabled.value,
     memoryEnabled: memoryEnabled.value,
     contextKeepRounds: keepRounds.value,
+    sessionId: sessions.currentId.value || undefined,
   })
   task.value = '' // 发送后清空输入框
+}
+
+/** 清空面板瞬态状态（切换/新建会话时调用，历史保留在后端，按 session_id 恢复） */
+function resetPanel() {
+  stream.done = null
+  stream.error = null
+  stream.guard = null
+  stream.approval = null
+  stream.askUser = null
+  stream.elapsed = 0
+  stream.steps.splice(0, stream.steps.length)
+}
+
+async function newSession() {
+  stream.stop()
+  resetPanel()
+  try {
+    await sessions.create()
+    stream.sessionId = sessions.currentId.value
+  } catch (e) {
+    sessions.sessionsError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function selectSession(id: string) {
+  if (sessions.currentId.value === id) return
+  stream.stop()
+  resetPanel()
+  sessions.switchTo(id)
+  stream.sessionId = id
+  // 切换会话：按该会话已落盘的事件流重放历史
+  stream.replay(await sessions.loadEvents(id))
+}
+
+async function renameSession(id: string, title: string) {
+  try {
+    await sessions.rename(id, title)
+  } catch (e) {
+    sessions.sessionsError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function removeSession(id: string) {
+  const wasCurrent = sessions.currentId.value === id
+  if (wasCurrent) {
+    stream.stop()
+    resetPanel()
+  }
+  try {
+    await sessions.remove(id)
+    // 删除当前会话后 useSessions 已自动新建空会话，同步流状态
+    if (wasCurrent) stream.sessionId = sessions.currentId.value
+  } catch (e) {
+    sessions.sessionsError.value = e instanceof Error ? e.message : String(e)
+  }
 }
 </script>
 
@@ -187,6 +265,19 @@ function send() {
       </svg>
       运行记录
     </button>
+
+    <SessionSidebar
+      :sessions="sessions.sessions.value"
+      :current-id="sessions.currentId.value"
+      :loading="sessions.sessionsLoading.value"
+      :error="sessions.sessionsError.value"
+      :open="sessionsRailOpen"
+      @create="newSession"
+      @select="selectSession"
+      @rename="renameSession"
+      @remove="removeSession"
+      @close="sessionsRailOpen = false"
+    />
 
     <CapabilitySidebar
       :caps="builtinCaps"
@@ -226,6 +317,16 @@ function send() {
         <button
           type="button"
           class="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+          title="会话列表"
+          @click="sessionsRailOpen = true"
+        >
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h8m-8 4h5M9 4h6a2 2 0 012 2v1m-9 0V6a2 2 0 012-2m0 0a2 2 0 012 2m-2 2a2 2 0 100 4m3-2a2 2 0 110 4m0 0a2 2 0 00-1.76 1.05M5 20a5 5 0 0110 0" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
           @click="sidebarOpen = true"
         >
           <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
@@ -249,12 +350,18 @@ function send() {
         @toggle-files="filesOpen = $event"
       />
 
-      <div class="pointer-events-none absolute left-4 top-14 z-10 md:left-96 md:top-4">
+      <div class="pointer-events-none absolute left-4 top-14 z-10 md:left-[40rem] md:top-4">
         <div class="pointer-events-auto inline-block">
           <ExampleFillHint :cap="exampleHint?.cap ?? null" @close="clearHint" />
         </div>
       </div>
     </div>
+
+    <div
+      v-if="sessionsRailOpen"
+      class="fixed inset-0 z-30 bg-black/50 md:hidden"
+      @click="sessionsRailOpen = false"
+    ></div>
 
     <div
       v-if="sidebarOpen"

@@ -71,6 +71,10 @@ def get_sessions() -> SessionStore:
     if _RUNTIME["sessions"] is None:
         _RUNTIME["sessions"] = SessionStore(
             memory_dir=settings.memory_dir,
+            checkpoint_dir=settings.checkpoint_dir or None,
+            sessions_meta_path=settings.sessions_meta_path or None,
+            checkpoint_ttl_days=settings.checkpoint_ttl_days,
+            events_dir=settings.session_events_dir or None,
             top_k=settings.memory_top_k,
             threshold=settings.memory_threshold,
             dedup_threshold=settings.memory_dedup_threshold,
@@ -186,7 +190,12 @@ async def chat_stream(req: StreamRequest, request: Request):
                 detail=f"今日对话次数已达上限（{quota.limit} 次），请明天再试",
             )
     runner = get_runner()
-    session_id = req.session_id or get_sessions().create()
+    sessions = get_sessions()
+    client_key = _client_key(request)
+    session_id = req.session_id or sessions.create(client_key=client_key)
+    # 多会话治理：每轮更新最后活跃/消息数；首条消息（会话无标题）自动生成标题
+    sessions.title_if_empty(session_id, client_key, req.message)
+    sessions.touch(session_id, client_key)
     events = runner.stream(
         session_id,
         req.message,
@@ -199,9 +208,10 @@ async def chat_stream(req: StreamRequest, request: Request):
         memory_enabled=req.memory_enabled,
         context_keep_rounds=req.context_keep_rounds,
         # 常驻记忆按客户端隔离：设备指纹优先、IP 兜底（同一台电脑/同一 IP 各一份记忆）
-        client_key=_client_key(request),
+        client_key=client_key,
     )
-    return _sse(events)
+    # 历史回放：把本轮事件流 tee 落盘，切换会话时按事件流重放
+    return _sse(sessions.record_events(session_id, events))
 
 
 @router.get("/rag/schemes")
@@ -233,8 +243,14 @@ async def approve(req: ApproveRequest, request: Request):
         req.approval_id,
         req.decision,
         req.modified_args,
+        reply=req.reply,
+        answers=req.answers,
         client_key=_client_key(request),
     )
+    # 审批续写的增量事件也落盘到同一会话，保证重放历史连续
+    session_id = runner.harness.resolve_approval(req.approval_id)
+    if session_id:
+        events = get_sessions().record_events(session_id, events)
     return _sse(events)
 
 

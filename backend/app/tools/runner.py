@@ -9,6 +9,7 @@ from app.agents.harness import should_approve
 from app.core.errors import RetryableToolError
 from app.core.events import event
 from app.security import is_untrusted_tool, wrap_untrusted
+from app.tools.ask_user import format_ask_reply, normalize_questions
 from app.tools.retry import format_tool_error, invoke_with_retry
 
 
@@ -40,6 +41,35 @@ def make_tools_node(tools, emit, harness=None):
 
         # 存在故障注入的工具：短路审批（与 events_mw 一致），由 per-call 循环按注入类型处理
         has_fault = harness is not None and any(harness.fault_spec(c["name"]) for c in calls)
+        # 提问分支：ask_user 触发 HITL 澄清（不审批、不常规执行），优先于审批处理。
+        # 模型一次发起一轮提问（questions 列表一次列全）；同批多余 ask_user 忽略，避免多个 interrupt 恢复歧义。
+        ask_calls = [c for c in calls if c.get("name") == "ask_user"]
+        if ask_calls:
+            c = ask_calls[0]
+            args = c.get("args", {})
+            questions = normalize_questions(args)
+            emit(event("tool_start", tool="ask_user", args=args))
+            if not questions:
+                # 参数无效：不中断、不弹卡片，返回结构化错误让模型重新组织参数，
+                # 避免「用户未填写回复」→ 反复追问的无意义链路
+                reply = (
+                    "ask_user 参数无效：questions 列表为空或无法解析。"
+                    "请通过一次调用一次性列出所有缺失的关键信息，"
+                    "每项为 {\"question\": \"问题文本\", \"options\": [\"候选答案\", ...]}。"
+                )
+                emit(event("tool_end", tool="ask_user", args=args, result=reply, success=False))
+                return {"messages": [ToolMessage(content=reply, tool_call_id=c["id"])], "step_failed": True}
+            decision = interrupt({"type": "ask_user", "questions": questions})
+            action = decision.get("action") if isinstance(decision, dict) else "reply"
+            if action == "reply":
+                reply = format_ask_reply(questions, decision.get("answers"))
+            else:  # skip：用户跳过/无法回答 → 逐题标记「用户跳过未回答」
+                reply = format_ask_reply(questions, None)
+            emit(event("tool_end", tool="ask_user", args=args, result=reply, success=True))
+            # ask_reply 标记：模式节点据此豁免澄清轮次，不计入轮数上限
+            msg = ToolMessage(content=reply, tool_call_id=c["id"])
+            msg.additional_kwargs["ask_reply"] = True
+            return {"messages": [msg]}
         # 任一本步工具需要审批（approval_policy=always 或强制 HITL 工具）即整批审批
         
         if any(should_approve(policy, c["name"]) for c in calls):

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
-import type { ChatStream } from '../composables/useChatStream'
+import type { ChatStream, ToolCallEntry } from '../composables/useChatStream'
 import StepTimeline from './StepTimeline.vue'
 import ToolCallBadge from './ToolCallBadge.vue'
 import StreamingText from './StreamingText.vue'
 import ApprovalDialog from './ApprovalDialog.vue'
+import AskUserDialog from './AskUserDialog.vue'
 import ErrorBanner from './ErrorBanner.vue'
 import GuardBanner from './GuardBanner.vue'
 import FeedbackBar from './FeedbackBar.vue'
@@ -21,6 +22,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   idle: { label: '待命', cls: 'bg-slate-800 text-slate-400' },
   streaming: { label: '执行中', cls: 'bg-indigo-500/20 text-indigo-300' },
   waiting_approval: { label: '等待审批', cls: 'bg-amber-500/20 text-amber-300' },
+  waiting_user: { label: '等待回复', cls: 'bg-fuchsia-500/20 text-fuchsia-300' },
   done: { label: '已完成', cls: 'bg-emerald-500/20 text-emerald-300' },
   error: { label: '出错', cls: 'bg-rose-500/20 text-rose-300' },
 }
@@ -176,7 +178,7 @@ const ROLE_LABEL: Record<string, string> = {
         </section>
 
         <!-- 工具调用（运行中带加载动画） -->
-        <ToolCallBadge v-else-if="s.kind === 'tool'" :entry="s" />
+        <ToolCallBadge v-else-if="s.kind === 'tool'" :entry="s as ToolCallEntry" />
 
         <!-- 执行计划 -->
         <section v-else-if="s.kind === 'plan'" class="rounded-xl border border-slate-800 p-3">
@@ -948,6 +950,12 @@ const ROLE_LABEL: Record<string, string> = {
       :key="stream.approval.approval_id"
       :approval="stream.approval"
       @decision="stream.decide($event.decision, $event.modifiedArgs)"
+    />
+    <AskUserDialog
+      v-if="stream.askUser"
+      :key="stream.askUser.approval_id"
+      :ask-user="stream.askUser"
+      @reply="stream.reply($event.answers)"
     />
   </div>
 </template>

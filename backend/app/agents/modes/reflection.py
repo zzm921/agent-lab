@@ -22,6 +22,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.agents.middleware.events_mw import resolve_guards, stream_model_call
+from app.tools.ask_user import is_ask_reply_msg
 from app.tools.runner import make_tools_node
 
 _GENERATOR_SYSTEM = "你是专业的 AI 助手，请直接、准确地回答用户的问题。"
@@ -94,12 +95,14 @@ def build_reflection_agent(generator_llm, critic_llm, tools, emit, settings, che
         # 已有评审反馈且已完成过草稿 → 修订阶段；否则为草稿阶段
         revising = iteration > 0 and bool(critique)
 
-        # 轮数上限：累计模型调用/工具回合数，超过即不再调用模型、标记结束（防反复请求工具死循环）
-        steps = (0 if fresh else (state.get("steps") or 0)) + 1
+        # 轮数上限：累计模型调用/工具回合数，超过即不再调用模型、标记结束（防反复请求工具死循环）。
+        # 澄清回复后的接续调用（最近一条是 ask_user 回复）不计入轮数：提问/回答不消耗执行预算。
+        msgs = list(state.get("messages") or [])
+        ask_round = (not fresh) and bool(msgs) and is_ask_reply_msg(msgs[-1])
+        steps = (0 if fresh else (state.get("steps") or 0)) + (0 if ask_round else 1)
         if steps > max_steps:
             return {"steps": steps, "stopped": "max_steps"}
 
-        msgs = list(state.get("messages") or [])
         base = ""
         if msgs and getattr(msgs[0], "type", None) == "system":
             base = str(msgs[0].content)

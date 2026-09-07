@@ -6,9 +6,36 @@ from datetime import datetime
 import pytest
 
 from app.memory.vector_store import VectorStore
+from app.tools.ask_user import normalize_options
 from app.tools.calculator import calculator
 from app.tools.run_command import _sandbox_volumes, make_run_command_tool
 from app.tools.time_now import time_now
+
+
+def test_normalize_options_list():
+    assert normalize_options(["500元以内", "500-1000元"]) == ["500元以内", "500-1000元"]
+
+
+def test_normalize_options_none_and_empty():
+    assert normalize_options(None) == []
+    assert normalize_options("") == []
+    assert normalize_options([]) == []
+
+
+def test_normalize_options_json_double_encoded():
+    # 模型双重编码：'["500元以内", "500-1000元"]' 字符串
+    assert normalize_options('["500元以内", "500-1000元"]') == ["500元以内", "500-1000元"]
+
+
+def test_normalize_options_plain_string_split():
+    # 模型返回自然语言字符串：按换行/逗号切分成独立选项
+    assert normalize_options("500元以内\n500-1000元") == ["500元以内", "500-1000元"]
+    assert normalize_options("500元以内，500-1000元") == ["500元以内", "500-1000元"]
+
+
+def test_normalize_options_plain_string_no_separator():
+    # 无分隔符字符串：整体作为一个选项，避免前端按字符拆按钮
+    assert normalize_options("500元以内") == ["500元以内"]
 
 
 def test_calculator_basic():

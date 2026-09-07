@@ -68,7 +68,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 > 技术说明：把 Agent 从「能跑」做到「可靠」：审批（人机协作）、容错（重试/熔断）、隔离（沙箱），保证真实生产环境的可控与鲁棒。
 
-- **审批门（HITL）** — 相关技术：LangGraph `interrupt` 暂停 + `Command(resume=...)` 恢复；同 superstep 多 interrupt 合并批量审批
+- **审批门（HITL）** — 相关技术：LangGraph `interrupt` 暂停 + `Command(resume=...)` 恢复；同 superstep 多 interrupt 合并批量审批；**澄清提问（ask_user）**：Agent 缺用户私有信息（出发地 / 预算 / 偏好 / 时间 / 同行人员等）时，经一次 `ask_user` 调用把所有缺失项（`questions` 列表）问全 → 中断 → 前端回复卡片（逐题点选 / 输入 / 跳过）→ 回复格式化为问答文本注入模型继续执行；`ask_user` 无论审批策略如何都强制中断；澄清交互（提问 + 回答）**不计入 Agent 轮数上限**；模型偶发把 `questions` / `options` 以字符串或双重编码 JSON 返回，后端统一归一化为结构化列表
   - 未完成：策略仅 always / never 两档，无「仅危险操作」条件策略与 per-tool 独立策略；无审批超时自动拒绝（可无限期悬挂）；批量审批只能对所有工具统一决策，无法逐工具分别批/拒/改；无审批审计日志
 - **容错·重试·熔断** — 相关技术：工具层透明重试（瞬时错误指数退避 + 抖动）+ Agent 层思考后重试；按「工具+参数签名」键的三态熔断（closed/open/half-open）+ 13 种故障注入
   - 未完成：熔断键含完整参数，换参即视为新键，本质「同参短路」而非工具整体熔断；无 QPS / 并发维度熔断；重试 / 退避参数仅全局、无 per-tool 覆盖；工具层重试会重复执行有副作用工具（无幂等）；熔断 / 重试状态仅内存、重启即失
@@ -104,7 +104,6 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 - **MCP 工具热插拔** — 相关技术：stdio / Streamable HTTP 双传输，启动自动连接 + `load_mcp_tools` 工具发现注册，连接失败标记「不适配」不注入，自带 mcp-info 只读 server（now / system_info / env_get）
   - 未完成：无断线重连 / 健康探测（连接仅在启动 / 首开建立一次，失败后不重试）；无 OAuth / token 刷新（仅 headers / env 直传）；工具 schema 无项目层校验；自带 info server 仅只读信息、无鉴权
 - **A2A 智能体通信**（发现 / 委托 / 协作开放协议）→ **待实现**
-- **计算机操作代理**（computer-use，看截图 / 移鼠标 / 点按钮）→ **待实现**
 
 ### 贯穿能力
 
@@ -121,7 +120,7 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 **待实现**：
 - 未正式启动（有雏形）：multi_agent
-- 实现待落地：知识图谱 RAG、RAG 专项增强其余插件（RAPTOR 等）、上下文缓存与渐进式披露、计算机操作代理、A2A、结构化输出独立模块
+- 实现待落地：知识图谱 RAG、RAG 专项增强其余插件（RAPTOR 等）、上下文缓存与渐进式披露、A2A、结构化输出独立模块
 - 可观测性余量：跨进程 Trace（OpenTelemetry）、指标看板（Prometheus/Grafana）、SLO 告警、Prompt 版本化
 - 安全余量：服务端工具白名单、RBAC 权限管控、敏感操作审计日志
 - 增强项：离线建库完整解析（OCR / PDF / 表格 / 公式）、在线混合检索参数化实验、模块级消融评估、LLM-judge 人工校准（Cohen's Kappa）
@@ -210,7 +209,7 @@ python scripts/ingest_modular.py   # modular / agentic 方案（语义分块，�
 | GET | `/api/mcp` | MCP 服务状态（enabled / servers / capabilities） |
 | POST | `/api/mcp` | 页面点选开启/关闭 MCP 服务（连接并发现/移除 MCP 工具） |
 | POST | `/api/stream` | SSE 流式对话（模式/能力/策略/审批策略/RAG 方案） |
-| POST | `/api/approve` | HITL 审批（批准/拒绝/修改） |
+| POST | `/api/approve` | HITL 审批（批准/拒绝/修改参数）与澄清回复（`decision=reply` + `answers`，逐题回答 `ask_user` 问题或跳过） |
 | POST | `/api/stop` | 停止当前流式任务 |
 | POST | `/api/feedback` | 用户反馈回填（点赞/点踩 + 可选原因，匹配当日在线样本，在线评测闭环） |
 | GET | `/api/rag/schemes` | RAG 方案目录（naive / advanced / modular / agentic） |

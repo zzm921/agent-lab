@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     quota_daily_limit: int = 100  # 每客户端每天最多发起的对话次数
     quota_store_path: str = "./data/quota.json"  # 计数持久化文件（空字符串表示仅内存）
 
+    # 会话（多会话）持久化：checkpointer 落盘 + 会话元数据 + TTL 治理。
+    # checkpoint_dir 为空时回退进程内存（测试/离线，重启即失）。
+    checkpoint_dir: str = "./data/checkpoints"  # 会话历史（LangGraph checkpointer）落盘目录
+    checkpoint_ttl_days: int = 7  # 会话保留天数：超过 N 天未活跃的会话自动清理（0=不清理）
+    sessions_meta_path: str = "./data/sessions.jsonl"  # 会话元数据（标题/活跃时间/归属客户端）落盘文件
+    session_events_dir: str = "./data/events"  # 会话 SSE 事件流落盘目录（切换会话时按事件流重放历史）
+
     # 运行参数
     # 日志级别：应用统一日志输出的最低级别（默认 INFO，可设 DEBUG/WARNING/ERROR 降噪）
     log_level: str = "INFO"

@@ -44,6 +44,25 @@ export interface ApprovalRequest {
   tool_calls: ToolCallInfo[]
 }
 
+/** HITL 澄清问题：模型一次可提出多个问题，每项含候选选项（用户可点选） */
+export interface AskQuestion {
+  question: string
+  options?: string[]
+}
+
+/** HITL 澄清回答：与 questions 按下标对齐；skip=true 表示用户跳过/无法回答该题 */
+export interface AskAnswer {
+  answer: string
+  skip: boolean
+}
+
+/** HITL 用户提问澄清请求（ask_user 工具触发）：Agent 需要用户提供信息时弹回复卡片 */
+export interface AskUserRequest {
+  approval_id: string
+  /** 一次性列出的全部澄清问题（多问题表单） */
+  questions: AskQuestion[]
+}
+
 /** SSE 事件联合类型（data 行 JSON 的结构化描述） */
 export type AgentEvent =
   | { type: 'meta'; session_id: string; mode: string; capabilities: string[]; rag_scheme?: string; rag_enabled?: boolean }
@@ -206,6 +225,7 @@ export type AgentEvent =
     }
   | { type: 'memory_constant'; count: number }
   | { type: 'approval_request'; approval_id: string; tool_calls: ToolCallInfo[] }
+  | { type: 'ask_user_request'; approval_id: string; questions: AskQuestion[] }
   | { type: 'reflect'; stage?: string; critique?: string }
   | { type: 'revise'; delta: string }
   | { type: 'critique'; delta: string }

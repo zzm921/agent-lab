@@ -20,10 +20,26 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.agents.middleware.events_mw import resolve_guards, stream_model_call
+from app.tools.ask_user import is_ask_reply_msg
 from app.tools.runner import make_tools_node
 
-_PLAN_PROMPT = "你是任务规划器。把下面的用户任务拆解为 2-5 个有序子步骤，每行一个步骤，不要编号，不要解释。"
+_PLAN_PROMPT = (
+    "你是任务规划器。把下面的用户任务拆解为 2-5 个有序子步骤，每行一个步骤，不要编号，不要解释。"
+    "若任务缺少执行必需的关键信息（如出发地、预算、偏好、时间、同行人员等），"
+    "应把「向用户确认这些关键信息」列为第一步，后续步骤再基于已确认的信息继续拆解；"
+    "不要拆解依赖缺失信息的步骤，不要假设或编造用户未提供的信息。"
+)
 _REPLAN_PROMPT = "你是任务规划器。请根据已完成步骤与遇到的失败，重新制定剩余子步骤，每行一个步骤，不要编号，不要解释。"
+# executor 每步执行引导：不确定事实优先工具核实；仅用户私有信息缺失时追问澄清；严禁编造。
+_EXECUTE_PROMPT = (
+    "执行本步骤前先判断所需信息是否已具备。若存在可通过工具核实的事实性信息"
+    "（如目的地景点、花期、天气、交通票价、开放时间等），应主动调用 web_search 等工具核实后再给出建议；"
+    "若缺少的是只有用户能提供的信息（如出发地、预算、偏好、同行人员等），"
+    "应通过一次 ask_user 调用（questions 列表一次性列出所有缺失项，不要逐个提问多次往返）"
+    "礼貌地向用户澄清、引导其补充，不要编造或臆测未确认的事实。"
+    "若澄清回复为「跳过未回答」或信息仍不完整，直接基于已有信息给出建议"
+    "并如实标注假设与所缺信息，不要重复追问同一问题。"
+)
 
 
 class PlanState(TypedDict, total=False):
@@ -94,14 +110,16 @@ def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, c
         msgs = list(state.get("messages") or [])
         # 新回合（最近一条为 user）重置轮数计数，避免多轮会话累计导致过早停止
         fresh = bool(msgs) and getattr(msgs[-1], "type", None) == "human"
-        steps = (0 if fresh else (state.get("steps") or 0)) + 1
+        # 澄清回复后的接续调用（最近一条是 ask_user 回复）不计入轮数：提问/回答不消耗执行预算
+        ask_round = (not fresh) and bool(msgs) and is_ask_reply_msg(msgs[-1])
+        steps = (0 if fresh else (state.get("steps") or 0)) + (0 if ask_round else 1)
         if steps > max_steps:
             return {"steps": steps, "stopped": "max_steps"}
         base = ""
         if msgs and getattr(msgs[0], "type", None) == "system":
             base = str(msgs[0].content)
             msgs = msgs[1:]
-        system_prompt = (base + "\n" + _step_hint(state)).strip()
+        system_prompt = (base + "\n" + _step_hint(state) + "\n" + _EXECUTE_PROMPT).strip()
         msg = await stream_model_call(executor_llm, msgs, emit, tools=tool_list, system_prompt=system_prompt, guards=resolve_guards(settings))
         failed = _step_failure(state)
         if getattr(msg, "tool_calls", None):

@@ -4,7 +4,8 @@ import LiveStage from './LiveStage.vue'
 import TaskInput from './TaskInput.vue'
 import PromptPresets from './PromptPresets.vue'
 import { fetchQuota } from '../services/sse'
-import type { ApprovalPolicy, Capability, ChatStream, ModeId, PromptStrategy } from '../types/agent'
+import type { ApprovalPolicy, Capability, ModeId, PromptStrategy } from '../types/agent'
+import type { ChatStream } from '../composables/useChatStream'
 
 const props = defineProps<{
   stream: ChatStream

@@ -108,6 +108,9 @@ async def collect_stream(runner, **kwargs):
         "enabled": ["calculator"],
         "prompt_strategy": "standard",
         "approval_policy": "never",
+        # 默认关闭主动记忆：其 selector 会消费 FakeChatModel 脚本的首条响应，
+        # 导致脚本对齐被打破（首个工具调用被吞）；主动记忆专项测试显式 memory_enabled=True。
+        "memory_enabled": False,
     }
     defaults.update(kwargs)
     events = []

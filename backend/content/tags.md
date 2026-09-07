@@ -14,8 +14,8 @@ tags:
         cards: [cost-governance, llm-gateway, sandbox, fault-injection, hitl, security]
   - id: agent
     title: Agent 范式
-    description: ReAct / 计划执行 / 反思修订 / 多智能体 / 计算机操作——四种范式 + 环境操作，回答"怎么跑"；与"Agent 工程演进"（定义轴）标签互补。
-    cards: [react, plan-execute, reflection, rewoo, llm-compiler, multi-agent, task-driven-agent, computer-use, multimodal-agent, memgpt]
+    description: ReAct / 计划执行 / 反思修订 / 多智能体——四种范式，回答"怎么跑"；与"Agent 工程演进"（定义轴）标签互补。
+    cards: [react, plan-execute, reflection, rewoo, llm-compiler, multi-agent, task-driven-agent, multimodal-agent]
   - id: rag
     title: RAG 范式与工程
     description: 五代 RAG 范式演进（naive → advanced → modular → 图谱 → 智能体，总表导航打头），叠加离线处理 / 在线混合检索 / 专项增强（Self-RAG / CRAG / HyDE / RAPTOR）等工程策略与插件。
