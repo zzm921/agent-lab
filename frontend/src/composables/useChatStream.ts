@@ -209,6 +209,8 @@ export interface ChatStream {
   askUser: AskUserRequest | null
   /** 最新执行计划快照（plan 事件实时更新，顶部固定渲染；尚未产出计划时为 null） */
   plan: { items: TodoItem[]; currentStep: number; status: string } | null
+  /** 执行计划状态：planning=规划器生成中（顶部显示「规划中」占位）；created=已有计划；null=无计划 */
+  planStatus: 'planning' | 'created' | null
   elapsed: number
   enabled: string[]
   strategy: PromptStrategy
@@ -341,6 +343,17 @@ export function useChatStream(): ChatStream {
   }
 
   function handleEvent(ev: AgentEvent) {
+    // DIRECT（无需计划）场景：规划器判定后直接回复，全程无 plan 事件；
+    // 收到执行类事件时若仍处「规划中」占位且尚无计划 → 说明无需计划，清除占位。
+    // 注意：retrieve / memory_read / classify 等前置能力事件（RAG 检索/记忆召回）
+    // 先于 plan created 到达，不代表 DIRECT，不能误清占位。
+    if (
+      stream.planStatus === 'planning' &&
+      !stream.plan &&
+      (ev.type === 'thinking' || ev.type === 'message' || ev.type === 'revise' || ev.type === 'tool_start' || ev.type === 'tool_end')
+    ) {
+      stream.planStatus = null
+    }
     switch (ev.type) {
       case 'meta':
         stream.sessionId = ev.session_id
@@ -364,6 +377,7 @@ export function useChatStream(): ChatStream {
       case 'plan':
         // 顶部固定区数据源：plan 事件实时刷新（created→running→done 就地更新，重规划 created 整体替换）
         stream.plan = { items: ev.items, currentStep: ev.current_step, status: ev.status }
+        stream.planStatus = 'created'
         break
       case 'tool_start':
         pushStep({ kind: 'tool', tool: ev.tool, args: ev.args, status: 'running' })
@@ -627,6 +641,8 @@ export function useChatStream(): ChatStream {
       }
       finishStreaming()
       stopTimer()
+      // 会话结束：若规划占位仍在（规划未产出且未被打断成 DIRECT），一并清除
+      if (stream.planStatus === 'planning') stream.planStatus = null
       if (signal.aborted) return
       if (stream.error) stream.status = 'error'
       else if (stream.done) stream.status = 'done'
@@ -653,6 +669,9 @@ export function useChatStream(): ChatStream {
     stream.approval = null
     stream.askUser = null
     stream.plan = null
+    // plan_execute：规划器非流式一次产出，规划期间顶部显示「规划中」占位；
+    // 收到 plan created 后置 created；若收到执行类事件仍无计划（DIRECT）则清除
+    stream.planStatus = params.mode === 'plan_execute' ? 'planning' : null
     stream.elapsed = 0
     if (withUserStep) pushStep({ kind: 'user', text: params.message })
     if (params.sessionId) stream.sessionId = params.sessionId
@@ -751,6 +770,7 @@ export function useChatStream(): ChatStream {
     stream.approval = null
     stream.askUser = null
     stream.plan = null
+    stream.planStatus = null
     stream.elapsed = 0
     stream.status = 'idle'
     stream.steps.splice(0, stream.steps.length)
@@ -791,6 +811,7 @@ export function useChatStream(): ChatStream {
     approval: null,
     askUser: null,
     plan: null,
+    planStatus: null,
     elapsed: 0,
     enabled: [],
     strategy: 'standard',

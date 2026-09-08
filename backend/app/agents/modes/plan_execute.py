@@ -20,7 +20,6 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.agents.middleware.events_mw import resolve_guards, stream_model_call
-from app.core.events import emit_text
 from app.tools.ask_user import is_ask_reply_msg
 from app.tools.runner import make_tools_node
 
@@ -99,31 +98,15 @@ def _is_direct(text: str) -> bool:
     return t.upper().startswith("DIRECT") or t.startswith("无需计划") or t.startswith("不需要计划")
 
 
-def _reason_text(chunk) -> str:
-    """提取模型思考内容（DashScope reasoning_content），取数路径与 events_mw 保持一致。"""
-    extra = getattr(chunk, "additional_kwargs", None) or {}
-    reasoning = extra.get("reasoning_content")
-    if reasoning:
-        return reasoning if isinstance(reasoning, str) else str(reasoning)
-    reasoning = getattr(chunk, "reasoning_content", None)
-    return reasoning if reasoning else ""
+async def _plan_once(llm, system_text: str, user_text: str) -> str:
+    """规划器一次性调用：非流式返回完整规划文本。
 
-
-async def _plan_stream(llm, system_text: str, user_text: str, emit) -> str:
-    """规划器流式调用：逐 token 生成并实时下发 thinking 事件（思考过程），
-    规划文本合并返回（不注入 message 事件，避免与顶部 todo 固定区重复展示）。"""
-    chunks = []
-    async for chunk in llm.bind().astream([SystemMessage(system_text), HumanMessage(user_text)]):
-        chunks.append(chunk)
-        reason = _reason_text(chunk)
-        if reason:
-            emit_text(emit, "thinking", reason)
-    if not chunks:
-        raise RuntimeError("模型流式调用未返回任何内容")
-    merged = chunks[0]
-    for chunk in chunks[1:]:
-        merged = merged + chunk
-    return str(getattr(merged, "content", "") or "")
+    企业级实践：规划是短小的结构化决策产物（2-5 项 todo），一次 ainvoke 返回
+    比逐 token 流式更确定、更省成本；前端在规划期间显示「规划中」占位卡片，
+    规划完成后由调用方一次性 emit plan created（携带完整 todo 清单）。
+    """
+    resp = await llm.ainvoke([SystemMessage(system_text), HumanMessage(user_text)])
+    return str(getattr(resp, "content", "") or "")
 
 
 def _next_task(state) -> dict | None:
@@ -191,7 +174,7 @@ def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, c
 
     async def planner(state):
         task = _latest_task(state)
-        text = await _plan_stream(planner_llm, _PLAN_PROMPT, task, emit)
+        text = await _plan_once(planner_llm, _PLAN_PROMPT, task)
         if _is_direct(text):
             # 无需计划：不生成 todo、不发 plan 事件，由 executor 直接流式回复
             return {"todo": [], "past_steps": [], "replans": 0, "step_failed": False}
@@ -241,7 +224,7 @@ def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, c
         parts = [f"原任务：{task}", f"已完成步骤：\n{progress or '（无）'}"]
         if remain:
             parts.append("剩余待办（可重写/合并/拆分）：\n" + "\n".join(remain))
-        text = await _plan_stream(planner_llm, _REPLAN_PROMPT, "\n".join(parts), emit)
+        text = await _plan_once(planner_llm, _REPLAN_PROMPT, "\n".join(parts))
         new_items = _parse_todo(text, start=len(done_items))
         new_todo = done_items + new_items
         _emit_todo(emit, new_todo, "created")

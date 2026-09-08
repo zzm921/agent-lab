@@ -59,8 +59,10 @@ planner → executor ⇄ tools →（失败且未超重规划上限）→ replan
 ```python
 async def planner(state):
     task = 最近一条用户消息
-    text = llm(PLAN_PROMPT + task)
-    todo = parse_todo(text)               # 每行一个子任务，行首 [行号] 标注依赖 → todo:[{id, desc, deps, status}]
+    text = llm(PLAN_PROMPT + task)            # 一次 ainvoke 返回完整规划文本（非流式）
+    if 正文第一行 == "DIRECT":                  # 无需计划（简单问候 / 一句话问答）：直接回复
+        return { todo: [], past_steps: [], replans: 0, step_failed: False }   # 不发 plan 事件
+    todo = parse_todo(正文)                    # 每行一个子任务，行首 [行号] 标注依赖 → [{id, desc, deps, status}]
     emit({ type: "plan", items: todo, current_step: 0, status: "created" })
     return { todo, past_steps: [], replans: 0, step_failed: False }
 
@@ -68,7 +70,10 @@ async def executor(state):
     steps += 1                            # 累计模型调用/工具回合数
     if steps > max_steps:                 # 轮数上限：防单步内反复请求工具死循环
         return { steps, stopped: "max_steps" }
-    # 把「当前子任务 tN/M」拼入 system prompt，让模型聚焦本项
+    if not todo:                          # DIRECT：无子任务，直接流式回复后结束
+        msg = stream_model_call(llm, messages, emit, tools, system_prompt=base)
+        return { messages: [msg], steps }
+    # step_hint 标注「当前子任务 tN/M」+ 是否最终步骤：非最终步骤只输出简短结论，最终步骤输出完整方案
     msg = stream_model_call(llm, messages, emit, tools,
                             system_prompt=base + step_hint(state))
     if msg 含工具调用:
@@ -97,9 +102,18 @@ def should_replan(state):
 ### 事件流
 
 ```
-plan(created, items 全 pending) → [tool_start/tool_end（工具回合）] → plan(running，逐项 done)
+（规划中）前端「正在拆解任务，生成执行计划…」占位卡片
+（无需计划）→ 无 plan 事件，executor 直接流式回复
+（需要计划）plan(created, items 全 pending) → [tool_start/tool_end（工具回合）] → plan(running，逐项 done)
   →（某项 failed）plan(created，重规划：保留已完成项) → … → plan(done，全 done)
 ```
+
+### 输出约束（防重复输出）
+
+executor 每步都会流式输出结果，模型若不约束会在中间步骤就输出完整最终方案，导致同一轮内重复。因此 `step_hint` 明确标注当前步是否为最终步骤：
+
+- **非最终步骤**：只输出本步简短结论（关键数据/决定，2-4 行），不输出完整最终方案、不重复已输出内容；
+- **最终步骤**：整合此前所有步骤结论，输出完整的最终方案。
 
 ### 防死循环
 
@@ -112,18 +126,19 @@ plan(created, items 全 pending) → [tool_start/tool_end（工具回合）] →
 
 ### 缺信息时的澄清引导
 
-executor 执行前先判断所需信息是否已具备：
+executor 执行前先判断所需信息是否已具备，按以下框架处理：
 
-- **可用工具核实的事实**（目的地景点、花期、天气、交通票价、开放时间等）→ 主动调 `web_search` 等工具核实后再给建议，不靠模型记忆编造；
-- **只有用户能提供的私有信息**（出发地、预算、偏好、同行人员等）→ 通过一次 `ask_user` 调用（`questions` 列表一次列全所有缺失项，不要逐个提问多次往返）礼貌澄清；
-- **澄清回复为「跳过未回答」或信息仍不完整** → 直接基于已有信息给出建议并如实标注假设与所缺信息，不要重复追问同一问题。
+- **事实类信息**（可通过外部工具核实的内容）→ 主动调用相应工具核实后再输出结论，不依赖模型记忆臆测；
+- **私有信息**（仅用户掌握、工具无法获取的内容）→ 通过一次 `ask_user` 调用（`questions` 一次性列出全部缺失项，不要逐项往返提问）礼貌澄清；
+- **澄清回复为「跳过未回答」或信息仍不完整** → 直接基于已有信息给出建议并如实标注假设与所缺信息，不要重复追问同一问题；
+- **全程不得编造或臆测未核实的事实**。
 
 ### 与通用设计的对应关系
 
 | 通用设计 | 本项目做法 |
 |---------|-----------|
-| 计划器 | planner 节点，`_PLAN_PROMPT` 拆解 + `_parse_steps` 解析 |
-| 执行器 | executor 节点，单步流式模型调用 + 工具循环 |
+| 计划器 | planner 节点，`_PLAN_PROMPT` 先判 DIRECT 再拆解（2-5 项、适度粒度）+ `_parse_todo` 解析 |
+| 执行器 | executor 节点，单步流式模型调用 + 工具循环，按最终/非最终步骤约束输出 |
 | 重规划器 | replanner 节点，`_REPLAN_PROMPT` 基于已完成步骤重生成 |
 | 终止条件 | `should_replan`：完成 / max_steps / max_replans 三路 |
 | 结果传递 | `past_steps` 记录已完成步骤带入上下文 |
@@ -131,13 +146,15 @@ executor 执行前先判断所需信息是否已具备：
 
 ## 收益与边界
 
-- 计划可审查、可干预：`plan` 事件下发完整步骤与当前进度，用户能看到任务拆解过程
+- 计划可审查、可干预：`plan` 事件下发完整子任务与当前进度，用户能看到任务拆解过程
 - 动态重规划：步骤失败时基于已完成进度与失败原因重建剩余计划，而非从头再来
+- 无需计划直接回答：简单问候/一句话问答走 DIRECT，不产生计划开销
+- 规划中占位：规划期间前端显示「正在拆解任务…」占位，规划器一次返回后整体下发完整 todo 清单（协议确定、可回放、可评测）
 - 结果传递：`past_steps` 记录已完成步骤，避免重复计算
 - 复用共享 `make_tools_node`：工具事件 + HITL 审批 + 异常兜底，失败写 `step_failed`
-- 边界：计划质量依赖规划器 prompt；拆解过细会增加模型调用成本，过粗则失去计划意义
+- 边界：计划质量依赖规划器 prompt；拆解过细会增加模型调用成本，过粗则失去计划意义（prompt 已约束适度粒度）
 
 ## 测试覆盖
 
-`backend/tests/test_modes.py` 覆盖：正常计划执行、步骤失败触发重规划、max_steps 轮数上限（单步内反复请求工具被拦截）。
+`backend/tests/test_modes.py` 覆盖：正常计划执行、DIRECT 无需计划直接回复、步骤失败触发重规划、max_steps 轮数上限（单步内反复请求工具被拦截）、todo 状态流转与依赖解析。
 

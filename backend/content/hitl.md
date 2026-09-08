@@ -93,13 +93,13 @@ if decision.action == "modify":
 
 ### 澄清提问（ask_user）：HITL 的第二类中断
 
-除了「审批工具调用」，HITL 还有一种常见场景：Agent 缺少**只有用户能提供的信息**（出发地、预算、偏好、时间、同行人员等）。此时不应凭空编造，而应暂停向用户澄清。本项目用 `ask_user` 工具触发第二类中断：
+除了「审批工具调用」，HITL 还有一种常见场景：Agent 缺少**只有用户能提供的信息**（工具无法获取、模型不应臆测的私有信息）。此时不应凭空编造，而应暂停向用户澄清。本项目用 `ask_user` 工具触发第二类中断：
 
 ```
 模型调 ask_user(questions=[{question, options}, ...]) → interrupt 暂停
   → 后端发 ask_user_request 事件（一次携带全部 questions）
   → 前端回复卡片（逐题点选 / 输入 / 跳过）→ POST /api/approve（decision=reply + answers）
-  → 恢复后把「Q1 出发地是哪里？：深圳 / Q2 预算？：用户跳过未回答」
+  → 恢复后把「Q1 <问题文本>：<回答> / Q2 <问题文本>：用户跳过未回答」
     格式化为 ToolMessage 返回给模型继续执行
 ```
 
@@ -109,7 +109,7 @@ if decision.action == "modify":
 - **强制中断**：`ask_user` 无论审批策略（always / never）如何都强制中断——澄清不是审批，但同样需要等待用户输入（`do_approval = name == "ask_user" or should_approve(...)`）；
 - **跳过处理**：用户可逐题跳过 / 无法回答，恢复后逐题标记「用户跳过未回答」；模型收到后应基于其余已确认信息继续推进，不重复追问同一问题；
 - **轮次豁免**：澄清交互（提问 + 回答）不计入 Agent 轮数上限，避免因提问消耗执行预算导致任务提前终止（react 用 `AskFreeCallLimitMiddleware` 判断「模型输出仅含 ask_user 调用则不计轮」；plan_execute / reflection 用 `is_ask_reply_msg` 识别澄清回复 ToolMessage 后跳过计数）；
-- **参数归一化**：模型经常把 `questions` / `options` 以字符串或双重编码 JSON 返回（如 `"[{...}]"` 甚至尾部带杂质），后端统一解析为结构化列表后再进中断，保证卡片渲染与回答格式化对齐；若解析后为空则不中断、返回结构化错误让模型重新组织参数；
+- **参数归一化**：模型经常把 `questions` / `options` 以多种形态返回——JSON 字符串、真实换行包裹的数组文本、双重转义（内容含字面 `\"`/`\n`）、整体被序列化成字符串的 arguments、尾部带杂质等；后端统一归一化为结构化列表后再进中断（先解析外层、再剥离一层转义、strip 杂质后 `json.loads`），保证卡片渲染与回答格式化对齐。若解析后为空则不中断、返回结构化错误让模型重新组织参数，并打印 `[ask_user] 参数无效` 诊断日志（含实际 args）供排查；
 - **子代理不提问**：multi-agent worker 无 checkpointer、不触发澄清中断，提问收敛到主代理。
 
 与「工具审批」的对比：
