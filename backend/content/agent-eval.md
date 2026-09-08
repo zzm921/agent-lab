@@ -156,15 +156,6 @@ prompts:
 - **在线回流金标补全依赖人工**：回归池用例的 `answer_keywords / reference` 需人工复核，点踩样本的金标修正尚未自动化；
 - **影子评分未落地**：无人工反馈时用 LLM 自动打标的在线补标签机制（NVIDIA / LangSmith 均列为生产标配）。
 
-## 参考来源
-
-- [AWS 企业智能体之旅：为什么评估（Evaluation）是一切的起点](https://aws.amazon.com/cn/blogs/china/part-1-enterprise-intelligent-why-evaluation/) 与 [评估企业级智能体：从原型验证到生产就绪](https://aws.amazon.com/cn/blogs/china/part-2-enterprise-intelligent-validation/)（ADLC、能力 vs 一致性、两支柱框架）
-- [LangChain · How to Evaluate LLMs and Agents](https://www.langchain.com/resources/how-to-evaluate-llms)（两层评测、五种评估方法）
-- [LangChain · LLM Evals: Production Monitoring](https://www.langchain.com/articles/llm-evals)（离线 vs 在线、失败样本回流成回归测试）
-- [NVIDIA · Mastering Agentic Techniques: AI Agent Evaluation](https://developer.nvidia.com/blog/mastering-agentic-techniques-ai-agent-evaluation)（轨迹一阶信号、TSR、工具调用准确率）
-- [SWE-bench vs τ-bench vs GAIA: Which Agent Benchmark Actually Predicts Production](https://dreaming.press/posts/swe-bench-vs-tau-bench-vs-gaia.html)（pass^k 一致性、三基准正交性）
-- [AI Agent Benchmarks 2026](https://rapidclaw.dev/blog/ai-agent-benchmarks-2026)（五类核心指标、reward-hacking 可信度危机）
-
 ## 关联卡片
 
 observability-eval（可观测性与评估）、rag-eval（RAG 评测体系，共享评分引擎）、rag-online-eval（线上闭环与失败回流）、cost-governance（成本治理）、hitl（人在回路审批）。

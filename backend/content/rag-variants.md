@@ -155,11 +155,3 @@ prompts:
 | 多轮对话场景 | Conversational RAG |
 | 文档含图表 | Multimodal RAG |
 | 结构化数据库 | Text-to-SQL RAG |
-
-## 参考链接
-
-- **Self-RAG**：Asai et al., 2023,《Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection》(arXiv:2310.11511)
-- **CRAG**：Yan et al., 2024,《Corrective Retrieval Augmented Generation》(arXiv:2401.15884)
-- **HyDE**：Gao et al., 2022,《Precise Zero-Shot Dense Retrieval without Relevance Labels》(arXiv:2212.10496)
-- **RAPTOR**：Sarthi et al., 2024,《Recursive Abstractive Processing for Tree-Organized Retrieval》(arXiv:2401.18059)
-- **RRF 融合**：Cormack et al., 2009,《Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods》

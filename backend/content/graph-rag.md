@@ -108,9 +108,3 @@ Graph RAG 有两处需要 LLM 参与：**离线建图**（文档 → 实体/关�
 ## 本项目的做法
 
 本项目以《红楼梦》前二十回为语料，走完 **切块 → 实体抽取 → 建图 + 向量化 → 检索 → 可溯源问答** 的完整 Graph RAG 链路：Neo4j 存「关系」、Qdrant 存「语义」；实体抽取用规则兜底 + LLM + 别名归一 + 端点剪枝四步组合；问答走图 / 向量 / 关键词三路召回 + RRF 融合 + 可选 LLM 重排，回答逐条带《回目》出处。项目地址：[doc-graph-rag（红楼梦文档知识图谱 RAG）](https://github.com/zzm921/doc-graph-rag)。
-
-## 参考链接
-
-- **实践项目**：[doc-graph-rag — 红楼梦文档知识图谱 RAG](https://github.com/zzm921/doc-graph-rag)
-- **奠基论文**：Microsoft, 2024, *From Local to Global: A Graph RAG Approach to Query-Focused Summarization* (arXiv:2404.16130)
-- **轻量图方案**：LightRAG (arXiv:2410.05779) / KAG (arXiv:2409.13731)

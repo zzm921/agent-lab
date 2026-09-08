@@ -100,9 +100,9 @@ function normalizeCard(card: CardPayload): LandingCapability | null {
   }
 }
 
-/** 排序：重点（featured）优先 → 新技术（new）次之 → 保持原顺序（稳定排序） */
+/** 排序：新技术（new）次之 → 保持原顺序（稳定排序，按 tags.md 声明顺序） */
 function sortByPriority(cards: LandingCapability[]): LandingCapability[] {
-  const score = (c: LandingCapability) => (c.featured ? 2 : 0) + (c.isNew ? 1 : 0)
+  const score = (c: LandingCapability) => (c.isNew ? 1 : 0)
   return [...cards].sort((a, b) => score(b) - score(a))
 }
 

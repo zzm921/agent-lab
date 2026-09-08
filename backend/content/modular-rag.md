@@ -40,7 +40,7 @@ Modular RAG 的价值：**组件可插拔、流程可路由、能力可组合**�
 
 ## 概念来源（LEGO-like 可重构框架）
 
-「Modular RAG」的正式定义来自高云帆等人的同名论文（arXiv:2407.21059）——把复杂的 RAG 系统**分解为独立模块（module）+ 专用算子（operator）**，得到「类乐高」的可重构框架：
+「Modular RAG」的正式定义来自高云帆等人的同名论文——把复杂的 RAG 系统**分解为独立模块（module）+ 专用算子（operator）**，得到「类乐高」的可重构框架：
 
 - **模块**：承担一类职责的可插拔单元（索引 / 预检索 / 检索 / 后检索 / 生成 / 路由调度），彼此有 schema 化的输入输出；
 - **算子**：模块内可替换的具体实现（如「检索模块」下的向量检索 / BM25 / 图检索多个算子）；
@@ -369,9 +369,3 @@ RAG 的最终回答**不额外调用「RAG 生成模型」**，而是把检索�
 
 - **需要结构化关系** → 把「图」作为一类索引模块接入（[graph-rag.md](graph-rag.md)）；
 - **需要自主决策、迭代收敛** → 让 Agent 接管路由与流程编排（[agentic-rag.md](agentic-rag.md)）。
-
-## 参考链接
-
-- **Modular RAG 论文**：Gao, Xiong, Wang & Wang, 2024,《Modular RAG: Transforming RAG Systems into LEGO-like Reconfigurable Frameworks》(arXiv:2407.21059)
-- **RAG 综述（Modular 范式）**：Gao et al., 2024,《Retrieval-Augmented Generation for Large Language Models: A Survey》(arXiv:2312.10997)
-- **Adaptive RAG**：Jeong et al., 2024,《Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity》(arXiv:2403.14403)

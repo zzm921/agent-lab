@@ -167,9 +167,3 @@ RAG 的最终回答**不额外调用「RAG 生成模型」**，而是把检索�
 - **需要组件可复用、按需组合** → [modular-rag.md](modular-rag.md)（模块化）；
 - **需要跨实体理解、多跳推理** → [graph-rag.md](graph-rag.md)（图谱）；
 - **需要自主决策、多轮迭代检索** → [agentic-rag.md](agentic-rag.md)（智能体）。
-
-## 参考链接
-
-- **RAG 综述（三代范式划分）**：Gao et al., 2024,《Retrieval-Augmented Generation for Large Language Models: A Survey》(arXiv:2312.10997)
-- **RAG 最佳实践**：Wang et al., 2024,《Demystifying RAG: A Comprehensive Guide to Retrieval-Augmented Generation》
-- **RRF 融合（Reciprocal Rank Fusion）**：Cormack et al., 2009,《Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods》

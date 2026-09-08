@@ -36,7 +36,7 @@ RAG 的本质优势：**知识可更新、答案可溯源、无需重训模型�
 
 ## 技术演进路线（五代范式）
 
-RAG 自 2020 年 Lewis 奠基（arXiv:2005.11401）起，演进本质是：**把「外部知识 → 检索 → 生成」这条链条不断解耦、模块化、结构化、自主化**。
+RAG 自 2020 年 Lewis 奠基起，演进本质是：**把「外部知识 → 检索 → 生成」这条链条不断解耦、模块化、结构化、自主化**。
 
 ```
 Naive RAG ──→ Advanced RAG ──→ Modular RAG ──→ Graph RAG ──→ Agentic RAG
@@ -118,15 +118,3 @@ RAG 是「上下文工程」的核心手段之一，与 Agent 演进线深度交
 - **向 Agent 延伸**：Agentic RAG 把检索封装成工具，融入 ReAct 循环（见 [agentic-rag.md](agentic-rag.md)）；
 - **向图谱延伸**：Graph RAG 用实体关系补足向量检索的「关系盲区」（见 [graph-rag.md](graph-rag.md)）；
 - **向 Harness 延伸**：RAG 的检索质量评估、权限过滤、数据治理依赖观测与安全组件支撑。
-
-## 参考链接
-
-- **RAG 奠基论文**：Lewis et al., 2020,《Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks》(arXiv:2005.11401)
-- **RAG 综述（三代范式划分）**：Gao et al., 2024,《Retrieval-Augmented Generation for Large Language Models: A Survey》(arXiv:2312.10997)
-- **RAG 最佳实践**：Wang et al., 2024,《Demystifying RAG: A Comprehensive Guide to Retrieval-Augmented Generation》
-- **GraphRAG**：Microsoft Edge et al., 2024,《From Local to Global: A Graph RAG Approach to Query-Focused Summarization》(arXiv:2404.16130)
-- **Self-RAG**：Asai et al., 2023,《Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection》(arXiv:2310.11511)
-- **CRAG**：Yan et al., 2024,《Corrective Retrieval Augmented Generation》(arXiv:2401.15884)
-- **HyDE**：Gao et al., 2022,《Precise Zero-Shot Dense Retrieval without Relevance Labels》(arXiv:2212.10496)
-- **RAPTOR**：Sarthi et al., 2024,《Recursive Abstractive Processing for Tree-Organized Retrieval》(arXiv:2401.18059)
-- **RAG 技术演进综述文章**：[从 NaiveRAG 到 AgenticRAG 的范式演进](https://cloud.tencent.cn/developer/article/2714559) / [RAG 全体系技术分类](https://blog.csdn.net/qq_37325859/article/details/163163446)

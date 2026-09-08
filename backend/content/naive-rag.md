@@ -113,8 +113,3 @@ Naive 的每一个痛点，几乎都对应 Advanced RAG 的一个优化手段：
 | 所有问题一刀切 | 意图分类 / 路由，按查询复杂度分流 |
 
 升级路径详见 [advanced-rag.md](advanced-rag.md)。
-
-## 参考链接
-
-- **奠基论文**：Lewis et al., 2020,《Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks》(arXiv:2005.11401)
-- **RAG 综述（Naive/Advanced/Modular 三代划分）**：Gao et al., 2024,《Retrieval-Augmented Generation for Large Language Models: A Survey》(arXiv:2312.10997)
