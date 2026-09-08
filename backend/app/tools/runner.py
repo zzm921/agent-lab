@@ -1,6 +1,8 @@
 """共享工具执行节点：统一执行工具、推送事件，并按审批策略触发 HITL 中断。"""
 from __future__ import annotations
 
+import logging
+
 from langchain_core.messages import ToolMessage
 from langgraph.types import interrupt
 
@@ -11,6 +13,8 @@ from app.core.events import event
 from app.security import is_untrusted_tool, wrap_untrusted
 from app.tools.ask_user import format_ask_reply, normalize_questions
 from app.tools.retry import format_tool_error, invoke_with_retry
+
+logger = logging.getLogger(__name__)
 
 
 def _wrap_untrusted_tool_output(name: str, output: str, settings) -> str:
@@ -52,6 +56,7 @@ def make_tools_node(tools, emit, harness=None):
             if not questions:
                 # 参数无效：不中断、不弹卡片，返回结构化错误让模型重新组织参数，
                 # 避免「用户未填写回复」→ 反复追问的无意义链路
+                logger.warning("[ask_user] 参数无效：args=%r", args)
                 reply = (
                     "ask_user 参数无效：questions 列表为空或无法解析。"
                     "请通过一次调用一次性列出所有缺失的关键信息，"

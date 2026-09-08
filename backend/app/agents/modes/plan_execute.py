@@ -20,32 +20,45 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.agents.middleware.events_mw import resolve_guards, stream_model_call
+from app.core.events import emit_text
 from app.tools.ask_user import is_ask_reply_msg
 from app.tools.runner import make_tools_node
 
 _PLAN_PROMPT = (
-    "你是任务规划器。把下面的用户任务拆解为 2-5 个有序子步骤，每行一个步骤，不要编号，不要解释。"
-    "若任务缺少执行必需的关键信息（如出发地、预算、偏好、时间、同行人员等），"
+    "你是任务规划器。先判断用户任务是否需要拆解为多个子任务逐步执行。\n"
+    "需要计划的场景：多步骤任务、需要逐步调研/计算的任务、包含多个子问题的复杂任务。\n"
+    "无需计划的场景：简单问候、一句话即可回答的简单问答。\n"
+    "如果无需计划，第一行只输出 DIRECT，不要输出任何计划内容。\n"
+    "如果需要计划，把用户任务拆解为 2-5 个有序子任务，每行一个子任务，不要编号，不要解释。\n"
+    "拆解粒度要适度：优先合并同类工作，避免拆得过细；每个子任务应独立可执行、可验证，"
+    "宁可少而整，不要多而碎。\n"
+    "每行格式：子任务描述；若该子任务依赖前面的子任务，在行首写 [行号]（多个依赖用逗号分隔）。\n"
+    "若任务缺少执行必需的关键信息（仅用户能提供的私有信息），"
     "应把「向用户确认这些关键信息」列为第一步，后续步骤再基于已确认的信息继续拆解；"
     "不要拆解依赖缺失信息的步骤，不要假设或编造用户未提供的信息。"
 )
-_REPLAN_PROMPT = "你是任务规划器。请根据已完成步骤与遇到的失败，重新制定剩余子步骤，每行一个步骤，不要编号，不要解释。"
-# executor 每步执行引导：不确定事实优先工具核实；仅用户私有信息缺失时追问澄清；严禁编造。
+_REPLAN_PROMPT = (
+    "你是任务规划器。请根据已完成步骤与遇到的失败，重新制定剩余子任务，每行一个子任务，"
+    "格式同前（行首 [行号] 标注对剩余列表内前置行的依赖）。只列出尚未完成的子任务，不要重复已完成的工作。"
+)
+# executor 每步执行引导（框架化，不绑定具体任务形态）：
+# 事实类信息→工具核实；私有信息→一次性澄清；按是否最终步骤约束输出；严禁编造。
 _EXECUTE_PROMPT = (
-    "执行本步骤前先判断所需信息是否已具备。若存在可通过工具核实的事实性信息"
-    "（如目的地景点、花期、天气、交通票价、开放时间等），应主动调用 web_search 等工具核实后再给出建议；"
-    "若缺少的是只有用户能提供的信息（如出发地、预算、偏好、同行人员等），"
-    "应通过一次 ask_user 调用（questions 列表一次性列出所有缺失项，不要逐个提问多次往返）"
-    "礼貌地向用户澄清、引导其补充，不要编造或臆测未确认的事实。"
-    "若澄清回复为「跳过未回答」或信息仍不完整，直接基于已有信息给出建议"
-    "并如实标注假设与所缺信息，不要重复追问同一问题。"
+    "执行本步骤前，先判断完成本步骤所需的信息是否已具备，按以下框架处理："
+    "1. 事实类信息（可通过外部工具核实的内容）：主动调用相应工具核实后再输出结论，不得依赖模型记忆臆测；"
+    "2. 私有信息（仅用户掌握、工具无法获取的内容）：通过一次 ask_user 调用（questions 一次性列出全部缺失项，"
+    "不要逐项往返提问）礼貌澄清；若用户跳过或信息仍不完整，则基于已有信息输出结论，"
+    "并如实标注假设与缺口，不要重复追问同一问题；"
+    "3. 输出约束：严格按系统提示标明的是否为最终步骤控制输出——非最终步骤只输出本步简短结论"
+    "（关键数据/决定，2-4 行），不得输出完整最终答案，不得重复此前已输出的内容；"
+    "最终步骤才输出完整的最终答案。"
+    "全程不得编造或臆测未核实的事实。"
 )
 
 
 class PlanState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
-    plan: list[str]
-    current_step: int
+    todo: list[dict]   # 带状态机的子任务清单：[{id, desc, deps, status}]，status ∈ pending/dispatched/running/done/failed
     past_steps: list[str]
     replans: int
     step_failed: bool
@@ -53,15 +66,83 @@ class PlanState(TypedDict, total=False):
     stopped: str     # 结束原因："max_steps" 表示达到轮数上限
 
 
-def _parse_steps(text: str) -> list[str]:
-    """把规划器输出解析为步骤列表：去掉行首符号/编号与空白。"""
-    lines = []
+def _parse_todo(text: str, start: int = 0) -> list[dict]:
+    """把规划器输出解析为 todo 列表：每行一个子任务，行首可选 [行号]（或 [tN]）标注依赖。
+
+    id 自动分配为 t1/t2/…；start 为重规划时保留已完成项后的编号偏移。
+    """
+    items = []
     for ln in (text or "").splitlines():
         ln = ln.strip().lstrip("-•*·")
+        if not ln:
+            continue
+        deps = []
+        m = re.match(r"^\[([0-9tT][0-9,，tT]*)\]\s*(.*)$", ln)
+        if m:
+            refs = [x.strip() for x in re.split(r"[,，]", m.group(1)) if x.strip()]
+            for r in refs:
+                if re.match(r"^t\d+$", r, re.IGNORECASE):
+                    deps.append(r.lower())
+                else:
+                    deps.append(f"t{start + int(r)}")
+            ln = m.group(2).strip()
         ln = re.sub(r"^\d+[.、)]?\s*", "", ln)
-        if ln:
-            lines.append(ln)
-    return lines
+        if not ln:
+            continue
+        items.append({"id": f"t{start + len(items) + 1}", "desc": ln, "deps": deps, "status": "pending"})
+    return items
+
+
+def _is_direct(text: str) -> bool:
+    """判断规划器是否判定「无需计划」（输出 DIRECT 标记）：此时不生成 todo、不发 plan 事件，直接回复。"""
+    t = (text or "").strip()
+    return t.upper().startswith("DIRECT") or t.startswith("无需计划") or t.startswith("不需要计划")
+
+
+def _reason_text(chunk) -> str:
+    """提取模型思考内容（DashScope reasoning_content），取数路径与 events_mw 保持一致。"""
+    extra = getattr(chunk, "additional_kwargs", None) or {}
+    reasoning = extra.get("reasoning_content")
+    if reasoning:
+        return reasoning if isinstance(reasoning, str) else str(reasoning)
+    reasoning = getattr(chunk, "reasoning_content", None)
+    return reasoning if reasoning else ""
+
+
+async def _plan_stream(llm, system_text: str, user_text: str, emit) -> str:
+    """规划器流式调用：逐 token 生成并实时下发 thinking 事件（思考过程），
+    规划文本合并返回（不注入 message 事件，避免与顶部 todo 固定区重复展示）。"""
+    chunks = []
+    async for chunk in llm.bind().astream([SystemMessage(system_text), HumanMessage(user_text)]):
+        chunks.append(chunk)
+        reason = _reason_text(chunk)
+        if reason:
+            emit_text(emit, "thinking", reason)
+    if not chunks:
+        raise RuntimeError("模型流式调用未返回任何内容")
+    merged = chunks[0]
+    for chunk in chunks[1:]:
+        merged = merged + chunk
+    return str(getattr(merged, "content", "") or "")
+
+
+def _next_task(state) -> dict | None:
+    """取下一个可执行子任务：优先「依赖均已 done 的 pending 项」，否则回退第一个 pending（防死锁）。"""
+    todo = state.get("todo") or []
+    done_ids = {t["id"] for t in todo if t["status"] == "done"}
+    for t in todo:
+        if t["status"] == "pending" and all(d in done_ids for d in (t.get("deps") or [])):
+            return t
+    for t in todo:
+        if t["status"] == "pending":
+            return t
+    return None
+
+
+def _emit_todo(emit, todo: list[dict], status: str) -> None:
+    """发射 plan 事件：携带逐项状态，current_step 指向下一个未完成项位置。"""
+    idx = next((i for i, t in enumerate(todo) if t["status"] != "done"), len(todo))
+    emit({"type": "plan", "items": todo, "current_step": idx, "status": status})
 
 
 def _latest_task(state) -> str:
@@ -73,12 +154,21 @@ def _latest_task(state) -> str:
 
 
 def _step_hint(state) -> str:
-    """构造当前步骤的执行提示，拼入本次模型调用的 system prompt。"""
-    plan = state.get("plan") or []
-    if not plan:
+    """构造当前子任务的执行提示，拼入本次模型调用的 system prompt。
+
+    区分最终步骤与非最终步骤：中间步骤只输出简短结论，完整方案留到最后一步整合，
+    避免模型每步都重复输出完整方案（多次循环计算）。
+    """
+    todo = state.get("todo") or []
+    cur = _next_task(state)
+    if not cur:
         return ""
-    idx = min(state.get("current_step") or 0, max(len(plan) - 1, 0))
-    return f"当前执行计划第 {idx + 1}/{len(plan)} 步：{plan[idx]}"
+    idx = next((i for i, t in enumerate(todo) if t["id"] == cur["id"]), 0)
+    is_final = idx + 1 >= len(todo)
+    hint = f"当前执行任务 t{idx + 1}（{idx + 1}/{len(todo)}）：{cur['desc']}"
+    if is_final:
+        return hint + "\n这是最后一步：请整合此前所有步骤的结论，输出完整、最终的方案。"
+    return hint + "\n注意：这不是最终步骤，请只输出本步骤的简短结论（关键数据/决定，2-4 行），完整方案留待最后一步整合，不要重复此前已输出的内容。"
 
 
 def _step_failure(state) -> bool:
@@ -101,10 +191,13 @@ def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, c
 
     async def planner(state):
         task = _latest_task(state)
-        text = (await planner_llm.ainvoke([SystemMessage(_PLAN_PROMPT), HumanMessage(task)])).content
-        steps = _parse_steps(text)
-        emit({"type": "plan", "steps": steps, "current_step": 0, "status": "created"})
-        return {"plan": steps, "current_step": 0, "past_steps": [], "replans": 0, "step_failed": False}
+        text = await _plan_stream(planner_llm, _PLAN_PROMPT, task, emit)
+        if _is_direct(text):
+            # 无需计划：不生成 todo、不发 plan 事件，由 executor 直接流式回复
+            return {"todo": [], "past_steps": [], "replans": 0, "step_failed": False}
+        todo = _parse_todo(text)
+        _emit_todo(emit, todo, "created")
+        return {"todo": todo, "past_steps": [], "replans": 0, "step_failed": False}
 
     async def executor(state):
         msgs = list(state.get("messages") or [])
@@ -124,24 +217,35 @@ def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, c
         failed = _step_failure(state)
         if getattr(msg, "tool_calls", None):
             return {"messages": [msg], "step_failed": failed, "steps": steps}
-        plan = state.get("plan") or []
-        old_idx = state.get("current_step") or 0
-        idx = old_idx + 1
-        done = idx >= len(plan)
+        # 本子任务完成：推进 todo 状态（成功置 done，失败置 failed），再发射更新事件
+        todo = [dict(t) for t in (state.get("todo") or [])]
+        cur = _next_task(state)
         past = list(state.get("past_steps") or [])
-        if old_idx < len(plan):
-            past.append(f"已完成第 {old_idx + 1} 步：{plan[old_idx]}")
-        emit({"type": "plan", "steps": plan, "current_step": idx, "status": "done" if done else "running"})
-        return {"messages": [msg], "current_step": idx, "past_steps": past, "step_failed": failed, "steps": steps}
+        if cur is not None:
+            for t in todo:
+                if t["id"] == cur["id"]:
+                    t["status"] = "failed" if failed else "done"
+                    break
+            past.append(f"第 {cur['id']} 步{'失败' if failed else '完成'}：{cur['desc']}")
+        all_done = bool(todo) and all(t["status"] == "done" for t in todo)
+        if todo:  # 无需计划（todo 为空）时不发射 plan 事件，直接回复收尾
+            _emit_todo(emit, todo, "done" if all_done else "running")
+        return {"messages": [msg], "todo": todo, "past_steps": past, "step_failed": failed, "steps": steps}
 
     async def replanner(state):
         task = _latest_task(state)
+        todo = list(state.get("todo") or [])
+        done_items = [dict(t) for t in todo if t["status"] == "done"]
+        remain = [t["desc"] for t in todo if t["status"] != "done"]
         progress = "\n".join(state.get("past_steps") or [])
-        context = f"原任务：{task}\n已完成步骤：\n{progress or '（无）'}"
-        text = (await planner_llm.ainvoke([SystemMessage(_REPLAN_PROMPT), HumanMessage(context)])).content
-        steps = _parse_steps(text)
-        emit({"type": "plan", "steps": steps, "current_step": 0, "status": "created"})
-        return {"plan": steps, "current_step": 0, "replans": (state.get("replans") or 0) + 1}
+        parts = [f"原任务：{task}", f"已完成步骤：\n{progress or '（无）'}"]
+        if remain:
+            parts.append("剩余待办（可重写/合并/拆分）：\n" + "\n".join(remain))
+        text = await _plan_stream(planner_llm, _REPLAN_PROMPT, "\n".join(parts), emit)
+        new_items = _parse_todo(text, start=len(done_items))
+        new_todo = done_items + new_items
+        _emit_todo(emit, new_todo, "created")
+        return {"todo": new_todo, "replans": (state.get("replans") or 0) + 1}
 
     def should_replan(state) -> str:
         # 达到轮数上限 → 直接结束（不再执行工具/继续规划）
@@ -150,12 +254,14 @@ def build_plan_execute_agent(planner_llm, executor_llm, tools, emit, settings, c
         msgs = state.get("messages") or []
         if msgs and getattr(msgs[-1], "tool_calls", None):
             return "tools"
-        plan = state.get("plan") or []
-        idx = state.get("current_step") or 0
-        if not plan or idx >= len(plan):
-            return "end"
-        if state.get("step_failed") and (state.get("replans") or 0) < max_replans:
+        todo = state.get("todo") or []
+        has_pending = any(t["status"] in ("pending", "dispatched", "running") for t in todo)
+        has_failed = any(t["status"] == "failed" for t in todo)
+        # 失败项存在且允许重规划 → 进 replanner 重写剩余待办（保留已完成项）
+        if has_failed and (state.get("replans") or 0) < max_replans:
             return "replan"
+        if not has_pending:
+            return "end"
         return "continue"
 
     builder = StateGraph(PlanState)

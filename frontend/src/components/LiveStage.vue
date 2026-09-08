@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
 import type { ChatStream, ToolCallEntry } from '../composables/useChatStream'
-import StepTimeline from './StepTimeline.vue'
 import ToolCallBadge from './ToolCallBadge.vue'
 import StreamingText from './StreamingText.vue'
 import ApprovalDialog from './ApprovalDialog.vue'
@@ -121,7 +120,6 @@ const ROLE_LABEL: Record<string, string> = {
       </div>
       <div class="flex gap-3 text-[11px] text-slate-500">
         <span>工具调用 {{ stream.steps.filter((s) => s.kind === 'tool').length }}</span>
-        <span>计划 {{ stream.steps.filter((s) => s.kind === 'plan').length }} 步</span>
         <span>检索 {{ stream.steps.filter((s) => s.kind === 'retrieve' || s.kind === 'memory_read' || s.kind === 'memory_write').length }}</span>
         <span>Worker {{ stream.steps.filter((s) => s.kind === 'agent_event').length }}</span>
       </div>
@@ -179,16 +177,6 @@ const ROLE_LABEL: Record<string, string> = {
 
         <!-- 工具调用（运行中带加载动画） -->
         <ToolCallBadge v-else-if="s.kind === 'tool'" :entry="s as ToolCallEntry" />
-
-        <!-- 执行计划 -->
-        <section v-else-if="s.kind === 'plan'" class="rounded-xl border border-slate-800 p-3">
-          <h4 class="mb-2 text-xs font-semibold text-slate-300">执行计划</h4>
-          <StepTimeline
-            :steps="s.steps ?? []"
-            :current-step="s.currentStep ?? 0"
-            :status="s.planStatus ?? 'pending'"
-          />
-        </section>
 
         <!-- 语义路由（modular：五维路由决策 → 执行计划编排） -->
         <section v-else-if="s.kind === 'classify'" class="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-xs">
@@ -952,7 +940,7 @@ const ROLE_LABEL: Record<string, string> = {
       @decision="stream.decide($event.decision, $event.modifiedArgs)"
     />
     <AskUserDialog
-      v-if="stream.askUser"
+      v-if="stream.askUser && stream.status === 'waiting_user'"
       :key="stream.askUser.approval_id"
       :ask-user="stream.askUser"
       @reply="stream.reply($event.answers)"

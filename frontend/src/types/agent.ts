@@ -24,6 +24,14 @@ export interface HitItem {
   metadata?: Record<string, unknown>
 }
 
+/** 执行计划子任务（plan_execute 的 todo 状态机项） */
+export interface TodoItem {
+  id: string
+  desc: string
+  deps: string[]
+  status: 'pending' | 'dispatched' | 'running' | 'done' | 'failed'
+}
+
 /** RAG 方案目录项（GET /api/rag/schemes） */
 export interface RagScheme {
   id: string
@@ -71,7 +79,7 @@ export type AgentEvent =
   | { type: 'tool_start'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_end'; tool: string; args?: Record<string, unknown>; result: string; success: boolean }
   | { type: 'tool_retry'; tool: string; attempt: number; max: number; delay: number; base_delay?: number; reason: string }
-  | { type: 'plan'; steps: string[]; current_step: number; status: string }
+  | { type: 'plan'; items: TodoItem[]; current_step: number; status: string }
   | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean }
   | { type: 'rewrite'; query: string; scheme?: string; rewrites: string[]; reason?: string }
   | {

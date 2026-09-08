@@ -11,6 +11,7 @@ import type {
   ModeId,
   PromptStrategy,
   RagSchemeId,
+  TodoItem,
 } from '../types/agent'
 
 export type StreamStatus = 'idle' | 'streaming' | 'waiting_approval' | 'waiting_user' | 'done' | 'error'
@@ -80,10 +81,6 @@ export interface StepEntry {
   /** 本次重试纯指数退避秒数（不含抖动，用于展示退避曲线） */
   retryBaseDelay?: number
   retryReason?: string
-  /** plan */
-  steps?: string[]
-  currentStep?: number
-  planStatus?: string
   /** classify / multi_hop_plan：running 占位（阶段进行中，内容未出，卡片显示转圈） */
   running?: boolean
   /** retrieve / memory_read */
@@ -210,6 +207,8 @@ export interface ChatStream {
   approval: ApprovalRequest | null
   /** HITL 用户提问澄清（ask_user 工具触发）：非空时等待用户回复，渲染回复卡片 */
   askUser: AskUserRequest | null
+  /** 最新执行计划快照（plan 事件实时更新，顶部固定渲染；尚未产出计划时为 null） */
+  plan: { items: TodoItem[]; currentStep: number; status: string } | null
   elapsed: number
   enabled: string[]
   strategy: PromptStrategy
@@ -362,23 +361,10 @@ export function useChatStream(): ChatStream {
       case 'critique':
         accCritique.add(ev.delta)
         break
-      case 'plan': {
-        const last = stream.steps[stream.steps.length - 1]
-        if (last && last.kind === 'plan') {
-          // 同一计划就地更新进度，保持在流水线中的原始位置
-          last.steps = ev.steps
-          last.currentStep = ev.current_step
-          last.planStatus = ev.status
-        } else {
-          pushStep({
-            kind: 'plan',
-            steps: ev.steps,
-            currentStep: ev.current_step,
-            planStatus: ev.status,
-          })
-        }
+      case 'plan':
+        // 顶部固定区数据源：plan 事件实时刷新（created→running→done 就地更新，重规划 created 整体替换）
+        stream.plan = { items: ev.items, currentStep: ev.current_step, status: ev.status }
         break
-      }
       case 'tool_start':
         pushStep({ kind: 'tool', tool: ev.tool, args: ev.args, status: 'running' })
         break
@@ -666,6 +652,7 @@ export function useChatStream(): ChatStream {
     stream.guard = null
     stream.approval = null
     stream.askUser = null
+    stream.plan = null
     stream.elapsed = 0
     if (withUserStep) pushStep({ kind: 'user', text: params.message })
     if (params.sessionId) stream.sessionId = params.sessionId
@@ -763,11 +750,30 @@ export function useChatStream(): ChatStream {
     stream.guard = null
     stream.approval = null
     stream.askUser = null
+    stream.plan = null
     stream.elapsed = 0
     stream.status = 'idle'
     stream.steps.splice(0, stream.steps.length)
     for (const ev of events) handleEvent(ev)
     finishStreaming()
+    // 历史已正常结束（done/error）→ 不再弹出审批/澄清弹窗：这些中断在直播时已被处理过，
+    // 刷新重放不应让已回复过的 ask_user 重新出现
+    if (stream.done || stream.error) {
+      stream.status = stream.error ? 'error' : 'done'
+      stream.approval = null
+      stream.askUser = null
+      return
+    }
+    // 无 done/error（被停止/中断的会话）：仅当事件流「末尾」就是未响应的中断事件时
+    // 才保留卡片供续批；若中断之后仍有事件（已回复/已审批并继续执行过），则不再弹窗
+    const last = events[events.length - 1]
+    const pendingWait = !!last && (last.type === 'ask_user_request' || last.type === 'approval_request')
+    if (!pendingWait) {
+      stream.approval = null
+      stream.askUser = null
+      stream.status = 'idle'
+      return
+    }
     if (stream.approval) stream.status = 'waiting_approval'
     if (stream.askUser) stream.status = 'waiting_user'
   }
@@ -784,6 +790,7 @@ export function useChatStream(): ChatStream {
     guard: null,
     approval: null,
     askUser: null,
+    plan: null,
     elapsed: 0,
     enabled: [],
     strategy: 'standard',

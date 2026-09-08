@@ -11,7 +11,7 @@ tags:
       - title: Context 层（喂什么）
         cards: [context-mgmt, context-caching, memory]
       - title: Harness 层（环境）
-        cards: [cost-governance, llm-gateway, sandbox, fault-injection, hitl, security]
+        cards: [cost-governance, llm-gateway, sandbox, fault-injection, hitl, security, task-system]
   - id: agent
     title: Agent 范式
     description: ReAct / 计划执行 / 反思修订 / 多智能体——四种范式，回答"怎么跑"；与"Agent 工程演进"（定义轴）标签互补。

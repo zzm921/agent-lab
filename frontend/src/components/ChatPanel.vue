@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import LiveStage from './LiveStage.vue'
+import StepTimeline from './StepTimeline.vue'
 import TaskInput from './TaskInput.vue'
 import PromptPresets from './PromptPresets.vue'
 import { fetchQuota } from '../services/sse'
@@ -57,6 +58,16 @@ const strategyName = computed(() => {
   }
   return map[props.strategy]
 })
+
+// 执行计划固定区状态徽章（created=已规划 / running=执行中 / done=已完成）
+const planBadge = computed(() => {
+  const s = props.stream.plan?.status
+  if (s === 'done') return { label: '已完成', cls: 'bg-emerald-500/20 text-emerald-300' }
+  if (s === 'running') return { label: '执行中', cls: 'bg-indigo-500/20 text-indigo-300' }
+  return { label: '已规划', cls: 'bg-slate-800 text-slate-400' }
+})
+// 执行计划固定区默认展开，可折叠收起（仅保留标题行）
+const planCollapsed = ref(false)
 
 // 快捷 Prompt：优先展示跳转卡片配置的 prompts（content 驱动）；直接进入实验室（未配置）时回退到已启用能力的示例
 const presetPrompts = computed(() =>
@@ -140,6 +151,45 @@ watch(
           </svg>
           沙箱文件
         </button>
+      </div>
+    </div>
+
+    <!-- 执行计划固定区：最新 plan 快照实时刷新，不随流水线滚动（本轮结束后保持最新，下一轮 created 整体替换） -->
+    <div v-if="stream.plan" class="border-b border-slate-800">
+      <div class="flex items-center justify-between px-4 py-2">
+        <button
+          type="button"
+          class="flex items-center gap-1.5 text-xs font-semibold text-slate-300 transition hover:text-white"
+          title="展开/收起执行计划"
+          @click="planCollapsed = !planCollapsed"
+        >
+          <svg
+            class="h-3 w-3 shrink-0 transition-transform"
+            :class="planCollapsed ? '' : 'rotate-90'"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+          执行计划
+          <span class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-normal text-slate-400">
+            {{ stream.plan.items.length }} 项
+          </span>
+        </button>
+        <span class="rounded px-2 py-0.5 text-[11px]" :class="planBadge.cls">
+          {{ planBadge.label }}
+        </span>
+      </div>
+      <div v-if="!planCollapsed" class="px-4 pb-3">
+        <StepTimeline
+          :items="stream.plan.items"
+          :current-step="stream.plan.currentStep"
+          :status="stream.plan.status"
+        />
       </div>
     </div>
 

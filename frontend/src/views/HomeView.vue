@@ -202,6 +202,7 @@ function resetPanel() {
   stream.guard = null
   stream.approval = null
   stream.askUser = null
+  stream.plan = null
   stream.elapsed = 0
   stream.steps.splice(0, stream.steps.length)
 }

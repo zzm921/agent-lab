@@ -60,41 +60,45 @@ planner → executor ⇄ tools →（失败且未超重规划上限）→ replan
 async def planner(state):
     task = 最近一条用户消息
     text = llm(PLAN_PROMPT + task)
-    steps = parse_steps(text)             # 去编号/行首符号，得到步骤列表
-    emit({ type: "plan", steps, current_step: 0, status: "created" })
-    return { plan: steps, current_step: 0, past_steps: [], replans: 0 }
+    todo = parse_todo(text)               # 每行一个子任务，行首 [行号] 标注依赖 → todo:[{id, desc, deps, status}]
+    emit({ type: "plan", items: todo, current_step: 0, status: "created" })
+    return { todo, past_steps: [], replans: 0, step_failed: False }
 
 async def executor(state):
     steps += 1                            # 累计模型调用/工具回合数
     if steps > max_steps:                 # 轮数上限：防单步内反复请求工具死循环
         return { steps, stopped: "max_steps" }
-    # 把「当前计划第 k/N 步」拼入 system prompt，让模型聚焦本步
+    # 把「当前子任务 tN/M」拼入 system prompt，让模型聚焦本项
     msg = stream_model_call(llm, messages, emit, tools,
                             system_prompt=base + step_hint(state))
     if msg 含工具调用:
         return { messages: [msg], steps } # 路由到 tools，执行后回到本节点
-    # 本步完成：推进 current_step，记录已完成步骤，发射 plan running/done
-    return { messages: [msg], current_step: idx+1, past_steps += 已完成第 k 步, steps }
+    # 本项完成：置 done（失败则置 failed），记录进度，发射 plan running/done
+    todo[当前项].status = "failed" if failed else "done"
+    emit({ type: "plan", items: todo, current_step: 下一个未完成项, status: "done" if 全部完成 else "running" })
+    return { messages: [msg], todo, past_steps += 第 k 项完成/失败, steps }
 
 async def replanner(state):
-    context = f"原任务：{task}\n已完成：{progress or '（无）'}"
-    steps = parse_steps(llm(REPLAN_PROMPT + context))
-    emit({ type: "plan", steps, current_step: 0, status: "created" })
-    return { plan: steps, current_step: 0, replans+1 }
+    # 只重写「未完成 / 失败」的剩余项，保留已完成项（不整盘推翻）
+    context = f"原任务：{task}\n已完成：{progress or '（无）'}\n剩余待办：{剩余项描述}"
+    new_items = parse_todo(llm(REPLAN_PROMPT + context), start=len(已完成项))
+    new_todo = 已完成项 + new_items       # 已完成项 id 保持不变，新项从 t{N+1} 续编
+    emit({ type: "plan", items: new_todo, current_step: 0, status: "created" })
+    return { todo: new_todo, replans+1 }
 
 def should_replan(state):
     if stopped == "max_steps": return END     # 达轮数上限直接结束
     if 末条消息含工具调用: return "tools"
-    if current_step >= len(plan): return END  # 全部步骤完成
-    if step_failed 且 replans < max_replans: return "replan"   # 失败 → 重规划
-    return "continue"                          # 否则继续下一步
+    if 存在 failed 项 且 replans < max_replans: return "replan"   # 失败 → 重规划
+    if 无 pending 项: return END              # 全部完成（或全部失败且不再重规划）
+    return "continue"                          # 否则继续下一个子任务
 ```
 
 ### 事件流
 
 ```
-plan(created) → [tool_start/tool_end（工具回合）] → plan(running → done)
-  →（步骤失败）plan(created，重规划) → … → done
+plan(created, items 全 pending) → [tool_start/tool_end（工具回合）] → plan(running，逐项 done)
+  →（某项 failed）plan(created，重规划：保留已完成项) → … → plan(done，全 done)
 ```
 
 ### 防死循环

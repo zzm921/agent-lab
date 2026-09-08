@@ -3,7 +3,7 @@
 任务层（task_set.jsonl）对所有 agent 一致；本模块是「架构特定」的不变量——
 不管用例怎么变，对应架构必须满足的协议特征：
 
-- plan_execute：必须产出 plan created（步骤数 ∈ [2,5]，与 _PLAN_PROMPT 对齐）且以 plan done 收尾；
+- plan_execute：必须产出 plan created（子任务数 ∈ [2,5]，与 _PLAN_PROMPT 对齐）且以 plan done 收尾；
 - reflection：  必须产出 reflect(draft) 与 critique 事件，评审结论必须以 PASS 通过；
 - multi_agent： 必须委派 compute / analyze 两个 worker（agent_event dispatch）；
 - react：       线性思考-行动循环，无常设不变量（轨迹约束下沉到用例级 sequence / must_call）。
@@ -42,9 +42,9 @@ def check_arch_spec(mode: str, events: list[dict[str, Any]]) -> list[str]:
         created = [ev for ev in events if ev.get("type") == "plan" and ev.get("status") == "created"]
         if not created:
             return ["缺少 plan created 事件（计划层未产出）"]
-        steps = created[0].get("steps") or []
-        if not (PLAN_STEP_RANGE[0] <= len(steps) <= PLAN_STEP_RANGE[1]):
-            return [f"计划步骤数 {len(steps)} 超出 [{PLAN_STEP_RANGE[0]}, {PLAN_STEP_RANGE[1]}]"]
+        items = created[0].get("items") or []
+        if not (PLAN_STEP_RANGE[0] <= len(items) <= PLAN_STEP_RANGE[1]):
+            return [f"计划子任务数 {len(items)} 超出 [{PLAN_STEP_RANGE[0]}, {PLAN_STEP_RANGE[1]}]"]
         if not any(ev.get("type") == "plan" and ev.get("status") == "done" for ev in events):
             return ["缺少 plan done 事件（计划未正常走完）"]
         return []

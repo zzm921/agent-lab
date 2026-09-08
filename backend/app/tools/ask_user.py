@@ -54,23 +54,42 @@ def normalize_options(options) -> list[str]:
     return [str(options)]
 
 
+def _unescape_json_text(s: str) -> str:
+    """剥离一层 JSON 字符串转义，还原为真实字符。
+
+    模型偶发把参数值整体转义一层（内容含字面 \\" 与 \\n），导致 json.loads 失败；
+    先还原再解析，兜底双重编码场景。
+    """
+    return (
+        s.replace("\\\\", "\\")
+        .replace('\\"', '"')
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\r", "\r")
+        .replace("\\/", "/")
+    )
+
+
 def _coerce_questions_list(raw):
     """把可能是 JSON 字符串形态的 questions 参数解析为列表；无法解析返回 None。
 
     模型经常把数组参数以字符串返回，甚至双重编码 JSON 数组、末尾带杂质
-    （如 ")\n"）。先剥离尾部多余字符再尝试 json.loads。
+    （如 ")\n"）。先尝试原字符串，再剥离一层转义（字面 \\" / \\n）后重试；
+    各自 strip 首尾杂质再 json.loads。
     """
     if isinstance(raw, (list, tuple)):
         return list(raw)
     if isinstance(raw, str):
-        s = raw.strip()
-        if s.startswith("["):
-            candidates = [s]
+        for cand in (raw, _unescape_json_text(raw)):
+            s = cand.strip()
+            if not s.startswith("["):
+                continue
+            forms = [s]
             if s.endswith(")"):
-                candidates.append(s[:-1].rstrip())
-            for cand in candidates:
+                forms.append(s[:-1].rstrip())
+            for f in forms:
                 try:
-                    parsed = json.loads(cand)
+                    parsed = json.loads(f)
                     if isinstance(parsed, list):
                         return parsed
                 except ValueError:
@@ -92,7 +111,12 @@ def normalize_questions(args) -> list[dict]:
             parsed = json.loads(args)
             args = parsed if isinstance(parsed, dict) else {}
         except ValueError:
-            args = {}
+            # 双重编码：内容被转义一层后再试
+            try:
+                parsed = json.loads(_unescape_json_text(args))
+                args = parsed if isinstance(parsed, dict) else {}
+            except ValueError:
+                args = {}
     raw = args.get("questions")
     if raw is None and args.get("question"):
         raw = [{"question": args.get("question"), "options": args.get("options")}]

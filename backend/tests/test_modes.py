@@ -49,18 +49,25 @@ async def test_plan_execute(settings, registry, sessions):
     plan_events = [e for e in events if e["type"] == "plan"]
     assert plan_events and plan_events[0]["status"] == "created"
     assert plan_events[-1]["status"] == "done"
-    assert plan_events[0]["steps"] == ["步骤一", "步骤二"]
+    first = plan_events[0]["items"]
+    assert [t["desc"] for t in first] == ["步骤一", "步骤二"]
+    assert all(t["status"] == "pending" for t in first)
+    # 逐项推进：running 事件中已完成项置 done
+    running = [e for e in plan_events if e["status"] == "running"]
+    assert running and running[0]["items"][0]["status"] == "done"
+    assert all(t["status"] == "done" for t in plan_events[-1]["items"])
     assert any(e["type"] == "message" for e in events)
 
 
 async def test_plan_execute_replan(settings, registry, sessions):
-    # 第 1 步调用计算器触发除零失败 → 模型放弃该步 → should_replan 进入 replanner 生成新计划 → 继续执行
+    # 第 1 步成功、第 2 步调用计算器触发除零失败 → 该步标 failed → replanner 重写剩余待办
+    # （保留已完成的 t1）→ 继续执行直到全部 done
     script = [
         AIMessage(content="步骤一\n步骤二"),
+        AIMessage(content="完成步骤一"),
         ai_with_tool("尝试计算", args={"expression": "1/0"}),
         AIMessage(content="该步失败，无法继续"),
-        AIMessage(content="新步骤一\n新步骤二"),
-        AIMessage(content="执行新步骤一"),
+        AIMessage(content="新步骤二"),
         AIMessage(content="执行新步骤二"),
     ]
     runner = await _runner_with(registry, sessions, settings, script)
@@ -69,6 +76,12 @@ async def test_plan_execute_replan(settings, registry, sessions):
     assert len([e for e in plan_events if e["status"] == "created"]) >= 2  # 初次计划 + 重规划
     assert plan_events[-1]["status"] == "done"
     assert any(e["type"] == "tool_end" and not e["success"] for e in events)
+    # 失败发生后：该失败事件里 t1 保持 done（已完成项不被推翻）
+    failed_ev = next(e for e in plan_events if any(t["status"] == "failed" for t in e["items"]))
+    assert any(t["id"] == "t1" and t["status"] == "done" for t in failed_ev["items"])
+    # 重规划后保留已完成项，最终全部 done
+    assert any(t["id"] == "t1" and t["status"] == "done" for t in plan_events[-1]["items"])
+    assert all(t["status"] == "done" for t in plan_events[-1]["items"])
 
 
 async def test_stop_cancels_running_execution(settings, registry, sessions):
@@ -220,6 +233,20 @@ async def test_plan_execute_step_limit(settings, registry, sessions):
     done = next(e for e in events if e["type"] == "done")
     assert "轮数上限" in done["summary"]
     assert len([e for e in events if e["type"] == "tool_end" and e["success"]]) == 3
+
+
+async def test_plan_execute_no_plan(settings, registry, sessions):
+    # 简单问候无需计划：规划器输出 DIRECT 标记 → 不生成 todo、不发 plan 事件，直接流式回复
+    script = [
+        AIMessage(content="DIRECT"),
+        AIMessage(content="你好，有什么可以帮您？"),
+    ]
+    runner = await _runner_with(registry, sessions, settings, script)
+    events = await collect_stream(runner, mode="plan_execute")
+    assert not any(e["type"] == "plan" for e in events), "简单问候不应生成执行计划"
+    full = "".join(e.get("delta", "") for e in events if e["type"] == "message")
+    assert "你好" in full
+    assert any(e["type"] == "done" for e in events)
 
 
 async def test_react_step_limit(settings, registry, sessions):

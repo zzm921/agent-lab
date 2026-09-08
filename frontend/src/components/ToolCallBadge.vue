@@ -4,6 +4,12 @@ import type { ToolCallEntry } from '../composables/useChatStream'
 
 const props = defineProps<{ entry: ToolCallEntry }>()
 
+/** 工具卡片默认折叠，点击头部行展开/收起 */
+const expanded = ref(false)
+function toggle() {
+  expanded.value = !expanded.value
+}
+
 const STATUS: Record<ToolCallEntry['status'], { label: string; cls: string }> = {
   running: { label: '执行中', cls: 'border-amber-500/40 bg-amber-500/10 text-amber-300' },
   success: { label: '成功', cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' },
@@ -55,7 +61,8 @@ const currentAttempt = computed(() => props.entry.retryCount ?? 0)
 
 <template>
   <div class="rounded-xl border px-3 py-2 text-xs" :class="STATUS[entry.status].cls">
-    <div class="flex items-center justify-between gap-2">
+    <!-- 头部行：点击展开/收起 -->
+    <button type="button" class="flex w-full cursor-pointer items-center justify-between gap-2 text-left" @click="toggle">
       <span class="flex min-w-0 items-center gap-1.5">
         <!-- 执行中加载动画 -->
         <svg
@@ -69,57 +76,62 @@ const currentAttempt = computed(() => props.entry.retryCount ?? 0)
         </svg>
         <span class="truncate font-mono font-semibold">{{ entry.tool }}</span>
       </span>
-      <span class="shrink-0">{{ STATUS[entry.status].label }}</span>
-      <!-- 重试徽标：n/m + 指数退避秒数 -->
-      <span
-        v-if="entry.retryCount"
-        class="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-amber-300"
-        :title="entry.retryReason"
-      >
-        重试 {{ entry.retryCount }}/{{ entry.retryMax }}
-        <template v-if="entry.status === 'running'">· 退避 {{ entry.retryBaseDelay?.toFixed(1) }}s</template>
-      </span>
-    </div>
-
-    <!-- 重试进行中：下一次重试的实时倒计时 -->
-    <div v-if="entry.retryCount && entry.status === 'running' && remaining > 0" class="mt-2">
-      <div class="flex items-center justify-between font-mono text-[11px] text-amber-300/90">
-        <span>{{ remaining.toFixed(1) }}s 后第 {{ currentAttempt }}/{{ entry.retryMax }} 次重试</span>
-        <span title="实际等待 = 指数退避值 × (±50% 抖动)">抖动后 {{ entry.retryDelay?.toFixed(2) }}s</span>
-      </div>
-      <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-black/40">
-        <div
-          class="h-full rounded-full bg-amber-400/80 transition-[width] duration-100 ease-linear"
-          :style="{ width: `${(remaining / (entry.retryDelay ?? 1)) * 100}%` }"
-        ></div>
-      </div>
-    </div>
-
-    <!-- 指数退避序列阶梯条：间隔逐次翻倍，当前尝试高亮 -->
-    <div v-if="backoffSeq.length && entry.status === 'running'" class="mt-2 flex items-end gap-1.5">
-      <div v-for="(v, i) in backoffSeq" :key="i" class="flex flex-1 flex-col items-center gap-0.5">
-        <span class="font-mono text-[10px]" :class="i + 1 === currentAttempt ? 'text-amber-300' : 'text-slate-500'">
-          {{ v.toFixed(1) }}s
+      <span class="flex shrink-0 items-center gap-2">
+        <span>{{ STATUS[entry.status].label }}</span>
+        <!-- 重试徽标：n/m + 指数退避秒数 -->
+        <span
+          v-if="entry.retryCount"
+          class="rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-amber-300"
+          :title="entry.retryReason"
+        >
+          重试 {{ entry.retryCount }}/{{ entry.retryMax }}
+          <template v-if="entry.status === 'running'">· 退避 {{ entry.retryBaseDelay?.toFixed(1) }}s</template>
         </span>
-        <div
-          class="w-full rounded-t"
-          :class="
-            i + 1 === currentAttempt
-              ? 'bg-amber-400/90'
-              : i + 1 < currentAttempt
-                ? 'bg-amber-500/40'
-                : 'bg-slate-700'
-          "
-          :style="{ height: `${8 + (i + 1) * 6}px` }"
-        ></div>
-        <span class="font-mono text-[9px] text-slate-500">#{{ i + 1 }}</span>
-      </div>
-    </div>
+        <span class="font-mono text-slate-400 transition-transform" :class="{ 'rotate-90': expanded }">▶</span>
+      </span>
+    </button>
 
-    <pre class="mt-1.5 max-h-40 overflow-auto rounded-lg bg-black/30 p-2 text-[11px] text-slate-300">{{ JSON.stringify(entry.args, null, 2) }}</pre>
-    <div v-if="entry.result" class="mt-1.5 break-words text-slate-300">{{ entry.result }}</div>
-    <div v-if="entry.retryCount && entry.status === 'failed'" class="mt-1 text-[11px] text-amber-300/80">
-      自动重试已耗尽，已把结构化错误返回给模型重新思考
+    <div v-show="expanded">
+      <!-- 重试进行中：下一次重试的实时倒计时 -->
+      <div v-if="entry.retryCount && entry.status === 'running' && remaining > 0" class="mt-2">
+        <div class="flex items-center justify-between font-mono text-[11px] text-amber-300/90">
+          <span>{{ remaining.toFixed(1) }}s 后第 {{ currentAttempt }}/{{ entry.retryMax }} 次重试</span>
+          <span title="实际等待 = 指数退避值 × (±50% 抖动)">抖动后 {{ entry.retryDelay?.toFixed(2) }}s</span>
+        </div>
+        <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-black/40">
+          <div
+            class="h-full rounded-full bg-amber-400/80 transition-[width] duration-100 ease-linear"
+            :style="{ width: `${(remaining / (entry.retryDelay ?? 1)) * 100}%` }"
+          ></div>
+        </div>
+      </div>
+
+      <!-- 指数退避序列阶梯条：间隔逐次翻倍，当前尝试高亮 -->
+      <div v-if="backoffSeq.length && entry.status === 'running'" class="mt-2 flex items-end gap-1.5">
+        <div v-for="(v, i) in backoffSeq" :key="i" class="flex flex-1 flex-col items-center gap-0.5">
+          <span class="font-mono text-[10px]" :class="i + 1 === currentAttempt ? 'text-amber-300' : 'text-slate-500'">
+            {{ v.toFixed(1) }}s
+          </span>
+          <div
+            class="w-full rounded-t"
+            :class="
+              i + 1 === currentAttempt
+                ? 'bg-amber-400/90'
+                : i + 1 < currentAttempt
+                  ? 'bg-amber-500/40'
+                  : 'bg-slate-700'
+            "
+            :style="{ height: `${8 + (i + 1) * 6}px` }"
+          ></div>
+          <span class="font-mono text-[9px] text-slate-500">#{{ i + 1 }}</span>
+        </div>
+      </div>
+
+      <pre class="mt-1.5 max-h-40 overflow-auto rounded-lg bg-black/30 p-2 text-[11px] text-slate-300">{{ JSON.stringify(entry.args, null, 2) }}</pre>
+      <div v-if="entry.result" class="mt-1.5 break-words text-slate-300">{{ entry.result }}</div>
+      <div v-if="entry.retryCount && entry.status === 'failed'" class="mt-1 text-[11px] text-amber-300/80">
+        自动重试已耗尽，已把结构化错误返回给模型重新思考
+      </div>
     </div>
   </div>
 </template>

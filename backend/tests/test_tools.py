@@ -6,7 +6,7 @@ from datetime import datetime
 import pytest
 
 from app.memory.vector_store import VectorStore
-from app.tools.ask_user import normalize_options
+from app.tools.ask_user import normalize_options, normalize_questions
 from app.tools.calculator import calculator
 from app.tools.run_command import _sandbox_volumes, make_run_command_tool
 from app.tools.time_now import time_now
@@ -36,6 +36,34 @@ def test_normalize_options_plain_string_split():
 def test_normalize_options_plain_string_no_separator():
     # 无分隔符字符串：整体作为一个选项，避免前端按字符拆按钮
     assert normalize_options("500元以内") == ["500元以内"]
+
+
+def test_normalize_questions_double_encoded_string():
+    # 模型把 questions 以双重转义 JSON 字符串返回（内容含字面 \" 与 \n，尾带换行杂质）→ 解析成功
+    args = {
+        "questions": '\\n[{\\"question\\": \\"确认出行日期？\\", \\"options\\": [\\"10月25-26日\\"]}]\\n'
+    }
+    qs = normalize_questions(args)
+    assert len(qs) == 1
+    assert qs[0]["question"] == "确认出行日期？"
+    assert qs[0]["options"] == ["10月25-26日"]
+
+
+def test_normalize_questions_args_double_encoded_string():
+    # args 整体是双重转义 JSON 字符串（再嵌套一层）→ 解析成功
+    args = '{\\"questions\\": [{\\"question\\": \\"出发地？\\"}]}'
+    qs = normalize_questions(args)
+    assert len(qs) == 1
+    assert qs[0]["question"] == "出发地？"
+
+
+def test_normalize_questions_real_newline_json_string():
+    # 真实换行包裹的合法 JSON 数组文本（工具绑定未严格校验类型的常见形态）→ 解析成功
+    args = {"questions": '\n[{"question": "您从哪个城市出发？", "options": ["北京", "上海"]}]\n'}
+    qs = normalize_questions(args)
+    assert len(qs) == 1
+    assert qs[0]["question"] == "您从哪个城市出发？"
+    assert qs[0]["options"] == ["北京", "上海"]
 
 
 def test_calculator_basic():
