@@ -79,7 +79,7 @@ prompts:
 |---|---|
 | plan_execute | 产出计划（步骤数 2~5）且以计划完成收尾 |
 | reflection | 产出草稿 + 评审，且评审以 PASS 通过 |
-| multi_agent | 委派 compute / analyze 两个 worker |
+| multi_agent | 委派 worker subagent |
 | react | 无固定不变量，轨迹约束下沉到用例级 |
 
 > 架构不变量是"防协议退化"的护栏：计划事件丢失、评审永远不通过、编排者不再委派 worker，任何该架构用例都会暴露。

@@ -333,7 +333,7 @@ def run(top_k: int = 3, real_router: bool = False) -> tuple[list[dict[str, Any]]
     # 真实路由模式：评测期决策温度归零（指标可复现）；线上默认 0.2 不受影响
     if real_router:
         llm_service.update_profile(
-            "rag_classify", params={"temperature": 0, "max_tokens": 500, "enable_thinking": False}
+            "rag_classify", params={"temperature": 0, "enable_thinking": False}
         )
 
     # 真实路由模式下共用同一个（带记录）路由实例；注入模式按用例期望分别构造

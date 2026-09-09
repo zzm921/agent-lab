@@ -5,7 +5,7 @@
 
 - plan_execute：必须产出 plan created（子任务数 ∈ [2,5]，与 _PLAN_PROMPT 对齐）且以 plan done 收尾；
 - reflection：  必须产出 reflect(draft) 与 critique 事件，评审结论必须以 PASS 通过；
-- multi_agent： 必须委派 compute / analyze 两个 worker（agent_event dispatch）；
+- multi_agent： 必须委派 worker subagent（agent_event dispatch）；
 - react：       线性思考-行动循环，无常设不变量（轨迹约束下沉到用例级 sequence / must_call）。
 
 这些不变量与具体任务无关，任何该模式用例都须满足——防止架构协议悄悄退化
@@ -17,8 +17,8 @@ from typing import Any
 
 # 与 app/agents/modes/plan_execute.py 的 _PLAN_PROMPT「2-5 个有序子步骤」保持一致
 PLAN_STEP_RANGE = (2, 5)
-# 与 reflection 的 max_iter 语义一致的评审通过判定（PASS 开头）
-MULTI_AGENT_WORKERS = ("compute", "analyze")
+# 与 multi_agent 的编排者协议一致：必须委派 worker subagent（任务单分派）
+MULTI_AGENT_WORKERS = ("worker",)
 
 
 def _critique_texts(events: list[dict[str, Any]]) -> list[str]:

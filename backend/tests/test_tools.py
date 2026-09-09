@@ -66,6 +66,17 @@ def test_normalize_questions_real_newline_json_string():
     assert qs[0]["options"] == ["北京", "上海"]
 
 
+def test_normalize_questions_truncated_missing_bracket():
+    # 模型输出被截断缺失数组闭合括号（结尾为 "]}"）→ 补 "]" 后解析成功
+    args = {
+        "questions": '\n[{"question": "明天需要完成哪些具体工作任务？请列出所有待办事项", "options": ["会议、报告撰写、项目跟进"]}, {"question": "每项任务的截止时间是什么时候？", "options": ["上午10点前、中午12点前"]}, {"question": "您个人有什么时间偏好或约束？", "options": ["上午效率最高、灵活安排"]}\n'
+    }
+    qs = normalize_questions(args)
+    assert len(qs) == 3
+    assert qs[0]["question"].startswith("明天需要完成")
+    assert qs[2]["question"].startswith("您个人")
+
+
 def test_calculator_basic():
     assert calculator.invoke({"expression": "1+1"}) == "2"
 

@@ -13,7 +13,10 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 from langchain.agents.middleware import AgentMiddleware, ModelResponse
+from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import Command, interrupt
 
@@ -24,6 +27,55 @@ from app.core.events import emit_text, event
 from app.security import StreamMasker, is_untrusted_tool, mask_sensitive, scan_output, wrap_untrusted
 from app.tools.ask_user import format_ask_reply, normalize_questions
 from app.tools.retry import format_tool_error, invoke_with_retry
+
+
+# worker 执行上下文：multi_agent 的 _worker_tool 在 ainvoke 前设置「正在执行哪个任务/哪个 worker」，
+# WorkerEventsMiddleware.awrap_model_call 读取后把思考/输出流式转发为带 task_id 的 agent_event，
+# 前端据此按任务逐步展示子代理执行过程（无任务归属时保持默认非流式执行）。
+_current_task_id: ContextVar[str | None] = ContextVar("worker_task_id", default=None)
+_current_worker: ContextVar[str | None] = ContextVar("worker_name", default=None)
+# worker 轮数计数：ModelCallLimitMiddleware 的 UntrackedValue 计数在嵌套 graph run
+# （worker 作为工具被 ainvoke）中不累积，这里在 WorkerEventsMiddleware 手动计数，
+# 达到 run_limit 抛 ModelCallLimitExceededError（与主编排者行为一致，防 worker 死循环）。
+_worker_run_count: ContextVar[int] = ContextVar("worker_run_count", default=0)
+
+
+def _worker_emit_wrapper(emit, worker, task_id):
+    """把 worker 模型流（thinking/message）翻译为带 task_id 的 agent_event，其余事件原样转发。"""
+
+    def wrap(ev: dict) -> None:
+        etype = ev.get("type")
+        if etype in ("thinking", "message"):
+            emit(
+                {
+                    "type": "agent_event",
+                    "worker": worker,
+                    "task_id": task_id,
+                    "status": "running",
+                    "stage": etype,
+                    "delta": ev.get("delta", ""),
+                }
+            )
+        else:
+            emit(ev)
+
+    return wrap
+
+
+def _worker_tool_emit(emit, task_id):
+    """给 worker 内部工具事件（tool_start/tool_end/tool_retry）打上 scope=worker 标记。
+
+    事件仍保留在流中（telemetry/评测 must_call 统计不受影响），前端据此不展示
+    subagent 内部工具调用（仅显示子代理思考/输出卡片）。
+    """
+
+    def wrap(ev: dict) -> None:
+        if ev.get("type") in ("tool_start", "tool_end", "tool_retry"):
+            emit({**ev, "scope": "worker", "task_id": task_id})
+        else:
+            emit(ev)
+
+    return wrap
 
 
 def _content_text(chunk) -> str:
@@ -163,10 +215,11 @@ async def _handle_ask_user(request, emit, do_approval: bool):
 
     仅主代理（do_approval=True，持 checkpointer）可中断；worker 无 checkpointer，
     直接执行工具桩返回占位（子代理不应直接向用户提问，由编排者收敛）。
+    tool_start 在 interrupt 之后 emit：LangGraph interrupt 恢复时会重跑被中断的
+    middleware 链，若在中断前 emit，恢复后会重复发射（前端重复显示工具卡片）。
     """
     args = request.tool_call.get("args", {})
     questions = normalize_questions(args)
-    emit(event("tool_start", tool="ask_user", args=args))
     if do_approval:
         if not questions:
             # 参数无效：模型未提供有效 questions（空/无法解析）。不中断、不弹卡片，
@@ -177,13 +230,16 @@ async def _handle_ask_user(request, emit, do_approval: bool):
                 "请通过一次调用一次性列出所有缺失的关键信息，"
                 "每项为 {\"question\": \"问题文本\", \"options\": [\"候选答案\", ...]}。"
             )
+            emit(event("tool_start", tool="ask_user", args=args))
             emit(event("tool_end", tool="ask_user", args=args, result=reply, success=False))
             return ToolMessage(content=reply, tool_call_id=request.tool_call["id"])
         decision = interrupt({"type": "ask_user", "questions": questions})
         action = decision.get("action") if isinstance(decision, dict) else "reply"
         # 回复按 answers 对齐格式化；跳过/无法回答时逐题标记「用户跳过未回答」
         reply = format_ask_reply(questions, decision.get("answers") if action == "reply" else None)
+        emit(event("tool_start", tool="ask_user", args=args))
     else:
+        emit(event("tool_start", tool="ask_user", args=args))
         reply = "（等待用户回复）"
     emit(event("tool_end", tool="ask_user", args=args, result=reply, success=True))
     msg = ToolMessage(content=reply, tool_call_id=request.tool_call["id"])
@@ -342,11 +398,54 @@ class WorkerEventsMiddleware(AgentMiddleware):
 
     子代理作为工具被编排者调用，本身不持有 checkpointer，无法持久化 interrupt，
     因此工具审批统一收敛到编排者层（StreamEventsMiddleware.awrap_tool_call）。
+    awrap_model_call 把 worker 的思考/输出流式转发为带 task_id 的 agent_event，
+    前端按任务逐步展示子代理执行过程（无任务归属时保持默认非流式执行）。
+    run_limit 为 worker 轮数上限：ModelCallLimitMiddleware 的计数在嵌套 graph run
+    中不累积，这里手动计数，达到上限抛 ModelCallLimitExceededError（防死循环）。
     """
 
-    def __init__(self, emit, harness=None):
+    def __init__(self, emit, harness=None, run_limit: int | None = None):
         self._emit = emit
         self._harness = harness
+        self._run_limit = run_limit
+
+    async def awrap_model_call(self, request, handler):
+        """流式生成 worker 输出并转发为 agent_event（stage=thinking/message，带 task_id）。"""
+        task_id = _current_task_id.get()
+        worker = _current_worker.get()
+        if not task_id:
+            # 非任务单执行（无 task 归属）：保持默认非流式，避免无归属的 thinking/message 污染主时间线
+            return await handler(request)
+        # worker 轮数上限：第 run_limit 次调用前计数达到上限即抛错（允许前 run_limit-1 次）
+        if self._run_limit is not None:
+            count = _worker_run_count.get()
+            if count >= self._run_limit:
+                raise ModelCallLimitExceededError(
+                    thread_count=0,
+                    run_count=count,
+                    thread_limit=None,
+                    run_limit=self._run_limit,
+                )
+            _worker_run_count.set(count + 1)
+        wrapped = _worker_emit_wrapper(self._emit, worker or "worker", task_id)
+        msg = await stream_model_call(
+            request.model,
+            request.messages,
+            wrapped,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
+            model_settings=request.model_settings,
+            system_prompt=request.system_prompt,
+            output_event="message",
+            guards={},  # worker 中间过程不做输出 Guardrail（最终答案由编排者层把关）
+        )
+        return ModelResponse(result=[msg], structured_response=None)
 
     async def awrap_tool_call(self, request, handler):
-        return await _execute_tool_call(request, handler, self._emit, do_approval=False, harness=self._harness)
+        task_id = _current_task_id.get()
+        emit = self._emit
+        if task_id:
+            # worker 内部工具调用：打上 scope=worker 标记，前端不展示（仅显示子代理思考/输出），
+            # 事件仍入流供 telemetry/评测统计
+            emit = _worker_tool_emit(self._emit, task_id)
+        return await _execute_tool_call(request, handler, emit, do_approval=False, harness=self._harness)

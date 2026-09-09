@@ -41,6 +41,7 @@ function badgeClass(t: TodoItem, i: number) {
           {{ t.desc }}
         </p>
         <span v-if="t.deps?.length" class="text-[11px] text-slate-500">依赖 {{ t.deps.join('、') }}</span>
+        <span v-if="t.assignee" class="ml-1 text-[11px] text-sky-400">→ {{ t.assignee }}</span>
         <span v-if="t.status === 'done'" class="ml-2 text-[11px] text-emerald-400">已完成</span>
         <span v-else-if="t.status === 'failed'" class="ml-2 text-[11px] text-rose-400">失败</span>
         <span v-else-if="i === (currentStep ?? 0) && status === 'running'" class="ml-2 text-[11px] text-indigo-300">执行中</span>

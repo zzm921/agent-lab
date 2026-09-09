@@ -901,12 +901,24 @@ const ROLE_LABEL: Record<string, string> = {
 
         <!-- 多智能体 -->
         <section v-else-if="s.kind === 'agent_event'" class="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-xs">
-          <div class="flex items-center gap-2">
+          <!-- 头部：点击折叠/展开正文 -->
+          <button
+            class="flex w-full cursor-pointer items-center gap-2 text-left select-none"
+            @click="s.collapsed = !s.collapsed"
+          >
             <span class="font-mono font-semibold text-sky-300">{{ s.worker }}</span>
+            <span v-if="s.taskId" class="font-mono text-sky-500">#{{ s.taskId }}</span>
             <span class="rounded bg-slate-800 px-1.5 text-slate-400">{{ s.agentStatus }}</span>
-            <span v-if="s.task" class="text-slate-400">{{ s.task }}</span>
-          </div>
-          <p v-if="s.agentResult" class="mt-1 whitespace-pre-wrap text-slate-300">{{ s.agentResult }}</p>
+            <span class="ml-auto text-slate-500 transition-transform" :class="s.collapsed ? '' : 'rotate-90'">▸</span>
+          </button>
+          <!-- 正文：折叠时隐藏（任务描述 + 思考 + 输出） -->
+          <template v-if="!s.collapsed">
+            <p v-if="s.task" class="mt-1 text-slate-400">{{ s.task }}</p>
+            <!-- worker 思考过程（流式累积，灰色斜体） -->
+            <p v-if="s.agentThinking" class="mt-1 whitespace-pre-wrap italic text-slate-500">{{ s.agentThinking }}</p>
+            <!-- worker 输出（流式累积；done 后为最终结果） -->
+            <p v-if="s.agentResult" class="mt-1 whitespace-pre-wrap text-slate-300">{{ s.agentResult }}</p>
+          </template>
         </section>
 
         <!-- 最终输出（左侧气泡） -->

@@ -51,19 +51,19 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "scenario": "memory_consolidate",  # 轮末记忆提取：结构化小 JSON，关闭思考以加速（实测 thinking 40s+ / 关闭 2s）
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": False},
+        "params": {"temperature": 0.2, "enable_thinking": False},
     },
     {
         "scenario": "memory_selector",  # 主动语义召回触发判断：输出极小 JSON（need），关闭思考加速
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.0, "max_tokens": 80, "enable_thinking": False},
+        "params": {"temperature": 0.0, "enable_thinking": False},
     },
     {
         "scenario": "planner",  # plan_execute 的任务规划/重规划：低随机性，输出精炼
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 300, "enable_thinking": True},
+        "params": {"temperature": 0.2, "enable_thinking": True},
     },
     {
         "scenario": "critic",  # reflection 评审：严格、确定性
@@ -75,91 +75,91 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
         "scenario": "rag_rewrite",  # advanced RAG Query 重写：低随机 + 输出长度受限
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.3, "max_tokens": 200, "enable_thinking": False},
+        "params": {"temperature": 0.3, "enable_thinking": False},
     },
     {
         "scenario": "rag_classify",  # 语义路由：输出结构化 JSON 决策（五维度），低随机 + 输出受限
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": False},
+        "params": {"temperature": 0.2, "enable_thinking": False},
     },
     {
         "scenario": "rag_decompose",  # 查询分解：输出多行子问题，低随机
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
+        "params": {"temperature": 0.3, "enable_thinking": False},
     },
     {
         "scenario": "rag_plan",  # 多跳子查询规划：输出结构化计划 JSON（轻量决策，关闭思考以加速）
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 300, "enable_thinking": False},
+        "params": {"temperature": 0.2, "enable_thinking": False},
     },
     {
         "scenario": "rag_verify",  # 多跳验证对表：输出结构化 JSON（轻量决策，关闭思考）
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 400, "enable_thinking": False},
+        "params": {"temperature": 0.2, "enable_thinking": False},
     },
     {
         "scenario": "rag_next_step",  # 多跳下一跳决策：输出结构化 JSON（轻量决策，关闭思考）
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
+        "params": {"temperature": 0.3, "enable_thinking": False},
     },
     {
         "scenario": "rag_hyde",  # HyDE 假想答案文档生成：输出一段连贯说明文字
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.3, "max_tokens": 300, "enable_thinking": False},
+        "params": {"temperature": 0.3, "enable_thinking": False},
     },
     {
         "scenario": "rag_agent_route",  # Agentic RAG 路由角色：检索必要性/生成策略 JSON（轻量决策）
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.1, "max_tokens": 250, "enable_thinking": False},
+        "params": {"temperature": 0.1, "enable_thinking": False},
     },
     {
         "scenario": "rag_agent_plan",  # Agentic RAG 规划角色：事实清单 + 首发检索计划 JSON
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 500, "enable_thinking": False},
+        "params": {"temperature": 0.2, "enable_thinking": False},
     },
     {
         "scenario": "rag_agent_grade",  # Agentic RAG 评审角色（CRAG）：逐条证据相关性 + 缺失事实 JSON
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.1, "max_tokens": 500, "enable_thinking": False},
+        "params": {"temperature": 0.1, "enable_thinking": False},
     },
     {
         "scenario": "rag_agent_correct",  # Agentic RAG 纠错角色（CRAG）：纠错波工具调用 JSON
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.2, "max_tokens": 400, "enable_thinking": False},
+        "params": {"temperature": 0.2, "enable_thinking": False},
     },
     {
         "scenario": "rag_agent_verify",  # Agentic RAG 校验角色（Self-RAG）：事实-证据支持度 JSON
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.1, "max_tokens": 400, "enable_thinking": False},
+        "params": {"temperature": 0.1, "enable_thinking": False},
     },
     {
         "scenario": "rag_judge",  # RAG 语义评测 judge（LLM-as-a-Judge）：输出结构化评分，低随机 + 关闭思考
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.1, "max_tokens": 300, "enable_thinking": False},
+        "params": {"temperature": 0.1, "enable_thinking": False},
     },
     {
         "scenario": "agent_judge",  # Agent 答案质量评测 judge（LLM-as-a-Judge）：逐指标判卷（正确性/相关性/忠实度），低随机 + 关闭思考
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.1, "max_tokens": 800, "enable_thinking": False},
+        "params": {"temperature": 0.1, "enable_thinking": False},
     },
     {
         "scenario": "rag_ragas",  # RAGAS 内部 LLM（全面评测语义评分）：高频小 JSON 提取，关闭思考加速
         "provider": "dashscope",
         "model": "qwen3.5-flash",
-        "params": {"temperature": 0.1, "max_tokens": 1500, "enable_thinking": False},
+        "params": {"temperature": 0.1, "enable_thinking": False},
     },
     {
         "scenario": "fake",  # 测试 / 无 Key 回退

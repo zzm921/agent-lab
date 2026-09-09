@@ -24,12 +24,14 @@ export interface HitItem {
   metadata?: Record<string, unknown>
 }
 
-/** 执行计划子任务（plan_execute 的 todo 状态机项） */
+/** 执行计划子任务（plan_execute 的 todo 状态机项；multi_agent 的任务单视图） */
 export interface TodoItem {
   id: string
   desc: string
   deps: string[]
   status: 'pending' | 'dispatched' | 'running' | 'done' | 'failed'
+  /** 执行者：multi_agent 为任务单 role 标注（compute/analyze/自定义角色）；plan_execute 恒为「自己」，缺省 */
+  assignee?: string
 }
 
 /** RAG 方案目录项（GET /api/rag/schemes） */
@@ -76,9 +78,18 @@ export type AgentEvent =
   | { type: 'meta'; session_id: string; mode: string; capabilities: string[]; rag_scheme?: string; rag_enabled?: boolean }
   | { type: 'thinking'; delta: string }
   | { type: 'message'; delta: string }
-  | { type: 'tool_start'; tool: string; args: Record<string, unknown> }
-  | { type: 'tool_end'; tool: string; args?: Record<string, unknown>; result: string; success: boolean }
-  | { type: 'tool_retry'; tool: string; attempt: number; max: number; delay: number; base_delay?: number; reason: string }
+  | { type: 'tool_start'; tool: string; args: Record<string, unknown>; scope?: 'worker' }
+  | { type: 'tool_end'; tool: string; args?: Record<string, unknown>; result: string; success: boolean; scope?: 'worker' }
+  | {
+      type: 'tool_retry'
+      tool: string
+      attempt: number
+      max: number
+      delay: number
+      base_delay?: number
+      reason: string
+      scope?: 'worker'
+    }
   | { type: 'plan'; items: TodoItem[]; current_step: number; status: string }
   | { type: 'retrieve'; query: string; scheme?: string; hits: HitItem[]; reranked?: boolean }
   | { type: 'rewrite'; query: string; scheme?: string; rewrites: string[]; reason?: string }
@@ -237,7 +248,17 @@ export type AgentEvent =
   | { type: 'reflect'; stage?: string; critique?: string }
   | { type: 'revise'; delta: string }
   | { type: 'critique'; delta: string }
-  | { type: 'agent_event'; worker: string; status: string; task?: string; result?: string }
+  | {
+      type: 'agent_event'
+      worker: string
+      status: string
+      task_id?: string
+      task?: string
+      result?: string
+      /** status=running：worker 执行过程流式增量（thinking=思考 / message=输出），前端按任务就地累积 */
+      stage?: 'thinking' | 'message'
+      delta?: string
+    }
   | { type: 'done'; summary: string; stats: Record<string, unknown> }
   | { type: 'error'; message: string; detail?: string }
   | { type: 'guard_refused'; reason: string; matched?: string }

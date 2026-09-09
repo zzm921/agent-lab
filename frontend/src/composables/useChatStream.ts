@@ -167,7 +167,13 @@ export interface StepEntry {
   worker?: string
   agentStatus?: string
   task?: string
+  /** agent_event：任务单归属（multi_agent 分派的 task id，如 t1） */
+  taskId?: string
   agentResult?: string
+  /** agent_event：worker 执行过程流式思考（status=running + stage=thinking 增量累积，灰色斜体） */
+  agentThinking?: string
+  /** agent_event：卡片折叠状态（点击头部折叠/展开正文） */
+  collapsed?: boolean
 }
 
 export interface ErrorInfo {
@@ -380,9 +386,13 @@ export function useChatStream(): ChatStream {
         stream.planStatus = 'created'
         break
       case 'tool_start':
+        // subagent 相关工具不展示：multi_agent 视图只保留子代理执行卡片（含思考/输出/失败状态）。
+        // 隐藏范围：worker 内部工具（scope=worker）+ worker 派发工具（与子代理卡片冗余）
+        if (ev.scope === 'worker' || ev.tool === 'worker') break
         pushStep({ kind: 'tool', tool: ev.tool, args: ev.args, status: 'running' })
         break
       case 'tool_end': {
+        if (ev.scope === 'worker' || ev.tool === 'worker') break
         for (let i = stream.steps.length - 1; i >= 0; i--) {
           const s = stream.steps[i]
           if (s.kind === 'tool' && s.tool === ev.tool && s.status === 'running') {
@@ -394,6 +404,7 @@ export function useChatStream(): ChatStream {
         break
       }
       case 'tool_retry': {
+        if (ev.scope === 'worker' || ev.tool === 'worker') break
         // 工具层透明重试进度：更新正在执行中的工具卡片（同一步骤就地更新）
         for (let i = stream.steps.length - 1; i >= 0; i--) {
           const s = stream.steps[i]
@@ -596,15 +607,39 @@ export function useChatStream(): ChatStream {
       case 'reflect':
         pushStep({ kind: 'reflect', stage: ev.stage, critique: ev.critique })
         break
-      case 'agent_event':
-        pushStep({
-          kind: 'agent_event',
-          worker: ev.worker,
-          agentStatus: ev.status,
-          task: ev.task,
-          agentResult: ev.result,
-        })
+      case 'agent_event': {
+        // 同一 worker+task_id 的卡片就地更新（dispatch 建卡 → running 累积流式增量 → done 填充结果），
+        // 避免每个事件都新增卡片导致同任务重复展示
+        let idx = -1
+        for (let i = stream.steps.length - 1; i >= 0; i--) {
+          const s = stream.steps[i]
+          if (s.kind === 'agent_event' && s.worker === ev.worker && s.taskId === ev.task_id) {
+            idx = i
+            break
+          }
+        }
+        if (idx < 0) {
+          pushStep({
+            kind: 'agent_event',
+            worker: ev.worker,
+            agentStatus: ev.status,
+            task: ev.task,
+            taskId: ev.task_id,
+            agentResult: ev.result,
+          })
+          break
+        }
+        const card = stream.steps[idx]
+        if (ev.status === 'running' && ev.delta) {
+          if (ev.stage === 'thinking') card.agentThinking = (card.agentThinking ?? '') + ev.delta
+          else card.agentResult = (card.agentResult ?? '') + ev.delta
+          card.agentStatus = 'running'
+        } else {
+          card.agentStatus = ev.status
+          if (ev.result !== undefined) card.agentResult = ev.result
+        }
         break
+      }
       case 'approval_request':
         stream.approval = { approval_id: ev.approval_id, tool_calls: ev.tool_calls }
         break

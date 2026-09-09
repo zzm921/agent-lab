@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_iterations: int = 8
     max_steps: int = 5  # 各 Agent 循环的轮数上限（模型思考/工具回合数），超限强制结束防死循环
+    # multi-agent 子代理并发上限：同一时刻最多 N 个子代理（任务）并行执行，
+    # 超出的任务排队等待（防编排者一次发起大量并行工具调用导致资源爆炸）
+    multi_agent_max_concurrent: int = 2
     rag_top_k: int = 3
     context_threshold: int = 12
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]

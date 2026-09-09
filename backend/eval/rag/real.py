@@ -124,7 +124,7 @@ def run(top_k: int = 3, fake: bool = False, scheme_id: str = "modular") -> tuple
     """跑真实指定方案（modular/agentic）全面评测，返回 (逐用例记录, 汇总报告)。"""
     # 评测期决策温度归零（指标可复现）：语义路由确定性输出；线上默认 0.2 不受影响
     llm_service.update_profile(
-        "rag_classify", params={"temperature": 0, "max_tokens": 500, "enable_thinking": False}
+        "rag_classify", params={"temperature": 0, "enable_thinking": False}
     )
     if scheme_id == "agentic":
         # agentic：五角色决策同样归零（角色调用/token/纠错轨迹可复现；max_tokens 沿用各场景配置）

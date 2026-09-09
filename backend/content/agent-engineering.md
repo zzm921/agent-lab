@@ -92,7 +92,7 @@ Agent 工程有一组高频词：**Prompt 工程、Context 工程、Harness 工�
 | react | `create_agent` 内建「模型 ⇄ 工具」循环 | Loop 层的小循环 + Harness 层中间件护栏 |
 | plan_execute | StateGraph：planner → executor ⇄ tools → replanner | Graph 层（显式计划流）+ Loop 层（步骤验证 / 重规划） |
 | reflection | StateGraph：generator ⇄ tools → critic → 条件循环 | Graph 层（显式评审流）+ Loop 层（评审证据 + 终止） |
-| multi_agent | `create_agent` 编排者 + compute/analyze 子代理 | Graph 层（编排拓扑） |
+| multi_agent | `create_agent` 编排者 + 通用 worker subagent | Graph 层（编排拓扑） |
 
 嵌套关系在本项目中清晰可见：`AgentRunner` 用 Graph（StateGraph + checkpointer）承载**四种 Agent 范式**；其中 react 是模型 ⇄ 工具的小循环，plan_execute / reflection 是带条件边的显式流；AgentHarness 与 middleware 包在最外层提供护栏与可观测性。
 

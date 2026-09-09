@@ -96,7 +96,7 @@ def test_reflection_arch_spec() -> None:
 
 
 def test_multi_agent_arch_spec() -> None:
-    """架构不变量：multi_agent 必须委派 compute / analyze 两个 worker。"""
+    """架构不变量：multi_agent 必须委派通用 worker subagent。"""
     records, _ = _run()
     cases = [r for r in records if r["mode"] == "multi_agent"]
     assert cases, "评测集缺少 multi_agent 模式用例"

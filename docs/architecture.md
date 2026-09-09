@@ -72,9 +72,9 @@ RAG（`rag`）与长期记忆（`memory`）**已移出内置能力目录**：RAG
 | `react` | `StreamEventsMiddleware` | 模型 ⇄ 工具循环由 create_agent 内建；中间件发射 thinking/message 事件并处理工具 HITL |
 | `plan_execute` | `StateGraph`（planner/executor/tools/replanner） | planner 拆解任务；executor 对当前步骤流式模型调用，产出 tool_calls 路由 tools，否则推进 `current_step`；`should_replan` 条件边：步骤工具失败触发 replanner 重规划（受 `max_replans` 限制），全部完成则 end。`tools` 节点复用 `make_tools_node`，`executor` 复用 `stream_model_call` |
 | `reflection` | `ReflectionMiddleware` | 单次模型调用内（`awrap_model_call`）完成 草稿 → 批评 → 修订 → 再批评，批评为「无」或达 `max_iterations` 终止；不参与工具循环 |
-| `multi_agent` | `MultiAgentMiddleware` + `StreamEventsMiddleware` | 编排者 create_agent 把 compute/analyze 两个子代理经 `convert_runnable_to_tool` 包装为工具；`MultiAgentMiddleware` 发射分派/完成事件 |
+| `multi_agent` | `MultiAgentMiddleware` + `StreamEventsMiddleware` | 编排者 create_agent 把单一通用 subagent 经 `convert_runnable_to_tool` 包装为 worker 工具（任务单分派 + 依赖分层并行）；`MultiAgentMiddleware` 发射分派/完成事件 |
 
-- 子代理（compute/analyze）使用 `WorkerEventsMiddleware`，不持有 checkpointer，因此不触发 HITL 中断；审批统一收敛到编排者层。
+- 子代理（worker）使用 `WorkerEventsMiddleware`，不持有 checkpointer，因此不触发 HITL 中断；审批统一收敛到编排者层。
 - 所有顶层图 `compile(checkpointer=MemorySaver)`，支持多轮会话与中断恢复。
 
 ### 2.4 Human-in-the-loop（HITL）

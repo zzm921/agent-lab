@@ -29,8 +29,8 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
   - 未完成：步骤严格串行、无并行执行；计划只存内存检查点、重启即失（不落盘）；replan 次数硬编码推导、不上报、不可独立调优；计划解析仅按行去符号，无结构化 schema
 - **reflection** — 相关技术：`ReflectionMiddleware`（generator ⇄ tools → critic 条件循环，PASS / FAIL 判定）
   - 未完成：评审是「流式文本 + 字符串匹配判定」，无结构化 LLM-as-a-Judge 评分器；修订是否真正改进无量化验证，可能空转到 max_iter；反思轮数与 max_iterations 耦合、无独立配置；不保留多稿对比
-- **multi_agent**（雏形，未正式完成）— 相关技术：Orchestrator（create_agent）+ compute/analyze Worker（`convert_runnable_to_tool` 包装）
-  - 未完成：worker 名单硬编码（compute / analyze）、无动态注册；编排者顺序调用 worker、无并行调度；结果仅靠 LLM 文本整合、无结构化聚合与冲突解决；worker 无独立状态（无 checkpointer）
+- **multi_agent** — 相关技术：Orchestrator（create_agent）+ 单一通用 subagent（`convert_runnable_to_tool` 包装为 worker 工具；任务单 `{id, role, task, context, deps}` 分派 + 依赖分层并行 + 并发护栏）
+  - 未完成：worker 角色不实例化（role 仅标注，无法为不同角色配置不同 prompt/工具）、无动态角色创建/注册；最终汇总仍由编排者 LLM 文本整合（无结构化冲突解决）；worker 无独立状态（无 checkpointer，设计如此：HITL 收敛到编排者）
 
 ### 函数调用 / 工具
 
@@ -116,10 +116,9 @@ Agent Lab 是一个**「可讲解、可演示、可对比、可实验」**的 AI
 
 ## 总结
 
-**已实现**：react、plan_execute、reflection、函数调用（calculator / time_now / web_search / run_command）、提示词策略、RAG（naive / advanced / modular / agentic + HyDE）、HITL 审批门、MCP 工具热插拔、容错·重试·熔断、沙箱、跨轮长期记忆、上下文管理与压缩、安全防护、SSE 流式输出、技术路径点选、源码展示、可观测性与评估（运行记录 + RAG/Agent 三层离线评测 + 在线闭环）。
+**已实现**：react、plan_execute、reflection、multi_agent、函数调用（calculator / time_now / web_search / run_command）、提示词策略、RAG（naive / advanced / modular / agentic + HyDE）、HITL 审批门、MCP 工具热插拔、容错·重试·熔断、沙箱、跨轮长期记忆、上下文管理与压缩、安全防护、SSE 流式输出、技术路径点选、源码展示、可观测性与评估（运行记录 + RAG/Agent 三层离线评测 + 在线闭环）。
 
 **待实现**：
-- 未正式启动（有雏形）：multi_agent
 - 实现待落地：知识图谱 RAG、RAG 专项增强其余插件（RAPTOR 等）、上下文缓存与渐进式披露、A2A、结构化输出独立模块
 - 可观测性余量：跨进程 Trace（OpenTelemetry）、指标看板（Prometheus/Grafana）、SLO 告警、Prompt 版本化
 - 安全余量：服务端工具白名单、RBAC 权限管控、敏感操作审计日志

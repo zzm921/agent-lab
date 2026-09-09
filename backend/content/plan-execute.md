@@ -105,8 +105,31 @@ def should_replan(state):
 （规划中）前端「正在拆解任务，生成执行计划…」占位卡片
 （无需计划）→ 无 plan 事件，executor 直接流式回复
 （需要计划）plan(created, items 全 pending) → [tool_start/tool_end（工具回合）] → plan(running，逐项 done)
-  →（某项 failed）plan(created，重规划：保留已完成项) → … → plan(done，全 done)
+  →（某项 failed）plan(created，重规划：保留已完成项) → … → plan(done，全 done）
 ```
+
+### 规划输出解析（防截断）
+
+计划器 / 重规划器的输出是 JSON（`{direct, tasks: [...]}`），模型偶发因截断缺失闭合括号导致解析失败。`_parse_todo` / `_extract_json` 做容错解析，解析流程（伪代码）：
+
+```python
+def extract_json(text):
+    t = text.strip()                      # 剥 ```json 代码块包裹与前后杂质
+    t = t[首行非 ``` 之后 … 去掉尾部 ```] if 被包裹
+    主体 = t[首个 "{" : 最后一个 "}" + 1]
+    for suffix in ["", "]", "}]"]:        # 依次尝试：原样 → 补 tasks 数组缺的 "]" → 补整体缺的 "}]"
+        if json.loads(主体 + suffix) 是 dict: return 成功
+
+def parse_todo(text):
+    payload = extract_json(text)
+    if payload 为 None: 返回 []（进入重规划/终止路径，不抛异常）
+    return [{id, desc, deps, status} for item in payload["tasks"]]
+```
+
+截断成因与保障（双保险）：
+
+- **源头防截断**：各 LLM 场景已移除 `max_tokens` 限制，计划输出不再因长度上限被强行截断；
+- **兜底补全**：即使偶发截断（`tasks` 数组缺 `]` 或整体缺 `}]`），也按后缀补全恢复解析，保证 replan 与首次规划同样可靠。
 
 ### 输出约束（防重复输出）
 

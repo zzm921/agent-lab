@@ -186,7 +186,7 @@ results = { t1: "…", t3: "…", t4: "…" }
 
 **后续阶段**（任务单 / 调度 / 追踪 / 汇总，见上文各节）
 
-- **任务单**：multi_agent 的 worker 派发入参从裸字符串升级为任务单 `{id, task, context}`，事件按 task id 归位；
+- **任务单**：multi_agent 的 worker 派发入参从裸字符串升级为任务单 `{id, role, task, context?, deps?}`（role 为角色标注，deps 声明依赖），事件按 task id 归位；
 - **调度**：无依赖子任务同轮并行执行，依赖跨波次串行；
 - **追踪与汇总**：共享状态机 + 按 id 归位 + synthesize/decide 闭环，事件流 `todo_created → task_dispatch → task_done → todo_updated → synthesize`；
 - **护栏**：任务数上限、单任务超时/轮数上限，防止拆解爆炸与单任务死循环。

@@ -74,8 +74,9 @@ def _coerce_questions_list(raw):
     """把可能是 JSON 字符串形态的 questions 参数解析为列表；无法解析返回 None。
 
     模型经常把数组参数以字符串返回，甚至双重编码 JSON 数组、末尾带杂质
-    （如 ")\n"）。先尝试原字符串，再剥离一层转义（字面 \\" / \\n）后重试；
-    各自 strip 首尾杂质再 json.loads。
+    （如 ")\n"）或截断缺失数组闭合括号（以 "}" 结尾缺 "]"）。先尝试原字符串，
+    再剥离一层转义（字面 \\" / \\n）后重试；各自 strip 首尾杂质再 json.loads，
+    仍失败时补缺失的 "]" 再试一次。
     """
     if isinstance(raw, (list, tuple)):
         return list(raw)
@@ -90,6 +91,14 @@ def _coerce_questions_list(raw):
             for f in forms:
                 try:
                     parsed = json.loads(f)
+                    if isinstance(parsed, list):
+                        return parsed
+                except ValueError:
+                    continue
+            # 模型偶发截断数组闭合括号（以 "}" 结尾缺 "]"）：补上再试
+            if s.endswith("}") and not s.endswith("]"):
+                try:
+                    parsed = json.loads(s + "]")
                     if isinstance(parsed, list):
                         return parsed
                 except ValueError:

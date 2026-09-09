@@ -32,6 +32,20 @@ class FakeChatModel(BaseChatModel):
         # 模拟模型支持工具绑定；实际行为由 script 控制
         return self
 
+    def with_structured_output(self, schema, *, include_raw=False, **kwargs):
+        """模拟 json_mode 结构化输出：解析 script 消息的 JSON 内容为 dict。
+
+        langchain 默认的 json_mode 实现（prompt 注入 + 解析）与 script 机制不兼容，
+        Fake 下会返回 None 而非解析结果；这里直接以 JsonOutputParser 解析 script 内容，
+        使结构化输出主路径在测试/评测中可被覆盖。
+        """
+        method = kwargs.get("method") or "json_mode"
+        if method != "json_mode":
+            return super().with_structured_output(schema, include_raw=include_raw, **kwargs)
+        from langchain_core.output_parsers import JsonOutputParser
+
+        return self | JsonOutputParser()
+
 
 class FakeEmbeddings(Embeddings):
     """基于字符序号的确定性向量（固定长度 32），供检索逻辑测试。"""
