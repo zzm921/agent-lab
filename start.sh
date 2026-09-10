@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eu
 cd "$(dirname "$0")"
 
 echo "[1/2] 打包前端..."
