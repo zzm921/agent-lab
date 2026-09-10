@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.chat import get_registry, get_sessions, router as chat_router
@@ -95,7 +95,22 @@ def create_app() -> FastAPI:
 
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend_dist.exists():
-        app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+        # 静态资源（Vite 构建产物带 hash，按文件路径直接提供）
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(frontend_dist / "assets")),
+            name="assets",
+        )
+
+        # SPA 兜底：非 /api 路径直接刷新（如 /lab）时返回 index.html，
+        # 由前端路由接管；dist 下真实存在的文件（如 favicon）仍按原文件返回。
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def spa_fallback(full_path: str):
+            candidate = frontend_dist / full_path
+            if full_path and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(frontend_dist / "index.html")
+
     return app
 
 
