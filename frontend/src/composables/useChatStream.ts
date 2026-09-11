@@ -381,7 +381,9 @@ export function useChatStream(): ChatStream {
         accCritique.add(ev.delta)
         break
       case 'plan':
-        // 顶部固定区数据源：plan 事件实时刷新（created→running→done 就地更新，重规划 created 整体替换）
+        // 执行计划区数据源：只有携带 items（TodoItem[]）的 plan 事件才刷新顶部固定区；
+        // 其它 plan 类事件（如 agentic 规划的 agent_plan，不含 items）不驱动执行计划，直接忽略
+        if (!Array.isArray(ev.items)) break
         stream.plan = { items: ev.items, currentStep: ev.current_step, status: ev.status }
         stream.planStatus = 'created'
         break

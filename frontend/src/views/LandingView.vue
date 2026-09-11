@@ -7,7 +7,6 @@ import CapabilityHeroVisual from '../components/CapabilityHeroVisual.vue'
 import ArchitectureOverview from '../components/ArchitectureOverview.vue'
 import { useContentData } from '../composables/useContentData'
 import {
-  ARCH_LAYERS,
   CATEGORY_COLORS,
   LAB_PRESET_STORAGE_KEY,
   MODE_AGENT_LABELS,
@@ -218,8 +217,8 @@ function iconPath(name: string) {
               <span class="text-slate-400">技术能力点</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="text-xl font-bold text-white">{{ ARCH_LAYERS.length }}</span>
-              <span class="text-slate-400">架构分层</span>
+              <span class="text-xl font-bold text-white">7</span>
+              <span class="text-slate-400">段运行链路</span>
             </div>
             <div class="flex items-center gap-2">
               <span class="text-xl font-bold text-white">100%</span>
@@ -412,8 +411,8 @@ function iconPath(name: string) {
         </template>
       </section>
 
-      <!-- 架构总览 -->
-      <!-- <ArchitectureOverview @experience="(id) => experience(caps.find((c) => c.id === id) ?? caps[0])" /> -->
+      <!-- 架构总览：一次对话的完整旅程 -->
+      <ArchitectureOverview />
     </div>
 
     <!-- 详情抽屉 -->

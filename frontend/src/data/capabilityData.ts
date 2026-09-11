@@ -74,12 +74,26 @@ export interface TechStackItem {
   color: string
 }
 
-export interface ArchLayer {
+/** 运行时旅程：一次对话从提问到观测的完整链路（替代原 ARCH_LAYERS 分层展示） */
+export interface JourneyChannel {
+  id: string
   name: string
-  sub: string
+  desc: string
   techs: string[]
   color: string
-  capability: string
+  icon: string
+}
+
+export interface JourneyStop {
+  id: string
+  name: string
+  icon: string
+  color: string
+  /** 单通道阶段说明 */
+  desc?: string
+  techs?: string[]
+  /** 双通道阶段：并行执行的两个通道（如 工具执行 / 检索增强） */
+  channels?: JourneyChannel[]
 }
 
 /** 落地页 → 实验室传递 prompt 列表的 sessionStorage 键（避免长文本进 URL） */
@@ -102,33 +116,78 @@ export const TECH_STACK: TechStackItem[] = [
   { id: 'Vue3', label: 'Vue 3', color: '#22d3a8' },
 ]
 
-export const ARCH_LAYERS: ArchLayer[] = [
+/** 一次对话的完整旅程（7 站）：每条消息背后平台按序做了什么 */
+export const JOURNEY_STAGES: JourneyStop[] = [
   {
-    name: '前端层',
-    sub: '交互与可视化',
-    techs: ['Vue 3', 'TypeScript', 'Pinia', 'Monaco Editor'],
+    id: 'guard-in',
+    name: '安全闸门',
+    icon: 'shield',
+    color: '#10b981',
+    desc: '输入 Guardrail 过滤越狱与提示注入，敏感信息先行脱敏',
+    techs: ['Input Guardrail', '注入防护', '脱敏'],
+  },
+  {
+    id: 'assembly',
+    name: '装配与路由',
+    icon: 'compass',
     color: '#38bdf8',
-    capability: 'react',
+    desc: '按前端开关装配：推理模式 · RAG 方案 · 能力池热插拔 · 记忆注入',
+    techs: ['能力注册表', 'tools_builder', '记忆注入'],
   },
   {
-    name: '编排层',
-    sub: 'Agent 状态机与调度',
-    techs: ['LangGraph', 'FastAPI', 'Pydantic'],
+    id: 'orchestrate',
+    name: '编排引擎',
+    icon: 'cpu',
     color: '#7c5cff',
-    capability: 'multi-agent',
+    desc: 'LangGraph 状态机驱动四种模式：react / plan_execute / reflection / multi_agent',
+    techs: ['LangGraph', 'LangChain', '中间件', 'Harness 护栏'],
   },
   {
-    name: '工具层',
-    sub: '能力扩展与协议',
-    techs: ['MCP', 'Tool Registry', 'Fault Injector'],
+    id: 'execute',
+    name: '并行执行',
+    icon: 'zap',
     color: '#22d3a8',
-    capability: 'mcp',
+    channels: [
+      {
+        id: 'tools',
+        name: '工具执行',
+        desc: '内置 + MCP 工具统一执行，两层重试（透明退避 / 思考后重试），HITL 审批',
+        techs: ['MCP', '内置工具', '两层重试', 'HITL'],
+        color: '#22d3a8',
+        icon: 'terminal',
+      },
+      {
+        id: 'rag',
+        name: '检索增强',
+        desc: 'Agentic RAG 五角色循环：路由 → 规划 → 评审 → 纠错 → 校验（CRAG + Self-RAG）',
+        techs: ['五角色', 'CRAG', 'Self-RAG', '规则回退'],
+        color: '#f59e0b',
+        icon: 'database',
+      },
+    ],
   },
   {
-    name: '存储层',
-    sub: '持久化与检索',
-    techs: ['Qdrant', 'PostgreSQL', 'Redis'],
-    color: '#f59e0b',
-    capability: 'rag',
+    id: 'generate',
+    name: '模型生成',
+    icon: 'brain',
+    color: '#d946ef',
+    desc: 'Qwen 流式输出：思考过程与回答分离，token 记账与成本估算',
+    techs: ['DashScope Qwen', '流式 SSE', 'token 记账'],
+  },
+  {
+    id: 'guard-out',
+    name: '输出治理',
+    icon: 'check',
+    color: '#f43f5e',
+    desc: '输出 Guardrail、敏感数据脱敏、超大输出落盘、引用核验',
+    techs: ['Output Guardrail', '脱敏', '大输出落盘'],
+  },
+  {
+    id: 'observe',
+    name: '全程观测',
+    icon: 'chart-bar',
+    color: '#818cf8',
+    desc: '运行记录回放（SSE 事件流 + LLM 明细 + 成本），在线评测采样与反馈回流',
+    techs: ['Telemetry', '运行记录', '在线评测'],
   },
 ]
