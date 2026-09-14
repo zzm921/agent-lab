@@ -292,7 +292,7 @@ class AgenticOrchestrator:
     async def _plan_node(self, state: _GraphState) -> dict:
         agent = state["agent"]
         outbox: list[dict] = [
-            {"type": "plan", "query": agent.query, "scheme": "agentic", "status": "running"},
+            {"type": "agent_plan", "query": agent.query, "scheme": "agentic", "status": "running"},
         ]
         plan = await asyncio.to_thread(
             self._stage, agent, ROLE_PLAN, "plan",
@@ -300,7 +300,7 @@ class AgenticOrchestrator:
         )
         agent.facts = plan.facts
         outbox.append({
-            "type": "plan", "query": agent.query, "scheme": "agentic", "status": "done",
+            "type": "agent_plan", "query": agent.query, "scheme": "agentic", "status": "done",
             "facts": plan.facts,
             "calls": [
                 {"action": c.action, "query": c.query, "volume": c.volume, "reason": c.reason}
