@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import hljs from 'highlight.js'
 import { marked } from 'marked'
 import CapabilityHeroVisual from '../components/CapabilityHeroVisual.vue'
-import ArchitectureOverview from '../components/ArchitectureOverview.vue'
 import { useContentData } from '../composables/useContentData'
 import {
   CATEGORY_COLORS,
@@ -410,9 +409,6 @@ function iconPath(name: string) {
           </template>
         </template>
       </section>
-
-      <!-- 架构总览：一次对话的完整旅程 -->
-      <ArchitectureOverview />
     </div>
 
     <!-- 详情抽屉 -->
