@@ -66,6 +66,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   protocol: '#22d3a8',
   eval: '#f43f5e',
   ops: '#10b981',
+  ml: '#f97316',
 }
 
 export interface TechStackItem {
