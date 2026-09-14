@@ -6,10 +6,7 @@ icon: route
 difficulty: beg
 tags: [机器学习, 线性回归, 代价函数, 特征工程]
 accent: '#f97316'
-prompts:
-  - 线性回归的代价函数为什么要「平方」还要「除以 2m」？
-  - 多元线性回归里每个权重 wⱼ 的含义是什么？
-  - 为什么多项式回归的本质是「特征工程 + 线性回归」？
+experience: false
 ---
 ## 概述
 

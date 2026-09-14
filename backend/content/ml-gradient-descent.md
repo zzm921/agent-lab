@@ -6,10 +6,7 @@ icon: refresh
 difficulty: beg
 tags: [机器学习, 梯度下降, 优化, 学习率]
 accent: '#f97316'
-prompts:
-  - 梯度下降为什么必须「同时更新」w 和 b，不能逐个更新？
-  - 学习率太大或太小时，代价函数 J 的曲线分别长什么样？
-  - 为什么特征缩放能让梯度下降收敛更快？
+experience: false
 ---
 ## 概述
 
