@@ -32,4 +32,8 @@ tags:
     title: 生产与治理
     description: 让 Agent 在真实环境跑得住——成本与延迟治理、模型网关、沙箱、故障容错、审批门与安全防护（与工程演进 Harness 层互为交叉视图）。
     cards: [cost-governance, llm-gateway, sandbox, fault-injection, hitl, security]
+  - id: ml
+    title: 机器学习
+    description: 吴恩达《机器学习》课程学习笔记——从导论到监督学习三件套（线性回归 → 代价函数 → 梯度下降），按课程进度持续更新。
+    cards: [ml-intro, ml-linear-regression, ml-gradient-descent]
 ---
