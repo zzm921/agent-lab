@@ -12,11 +12,20 @@ from app.main import app
 
 
 @pytest.fixture(autouse=True)
-def _isolate_quota():
-    """每个 API 测试使用独立的内存配额，避免测试间相互影响与落盘。"""
+def _isolate_quota(monkeypatch):
+    """每个 API 测试使用独立的内存配额（设备 + IP + 全局三维度），避免测试间相互影响与落盘。
+    强制开启配额开关：.env 默认 QUOTA_ENABLED=false，配额测试需显式打开才有意义。
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "quota_enabled", True)
     chat.set_quota(DailyQuota(limit=20, path=None))
+    chat.set_ip_quota(DailyQuota(limit=300, path=None))
+    chat.set_global_quota(DailyQuota(limit=2000, path=None))
     yield
     chat.set_quota(None)
+    chat.set_ip_quota(None)
+    chat.set_global_quota(None)
 
 
 class FakeRegistry:
@@ -89,6 +98,7 @@ def test_stream_sse_with_fake_runner():
 def test_quota_exceeded_returns_429():
     chat.set_runtime(runner=FakeRunner([]))
     chat.set_quota(DailyQuota(limit=2, path=None))
+    chat.set_ip_quota(DailyQuota(limit=2, path=None))
     client = TestClient(app)
     body = {"session_id": "q1", "message": "hi", "mode": "react"}
     assert client.post("/api/stream", json=body).status_code == 200
@@ -107,6 +117,38 @@ def test_quota_counted_by_client_id_not_shared():
     assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-a"}).status_code == 200
     assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-a"}).status_code == 429
     assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-b"}).status_code == 200
+
+
+def test_quota_ip_total_bounds_across_client_ids():
+    """同一 IP 下更换设备指纹（模拟无痕/清数据）无法绕过 IP 维度总量上限。"""
+    chat.set_runtime(runner=FakeRunner([]))
+    chat.set_quota(DailyQuota(limit=100, path=None))
+    chat.set_ip_quota(DailyQuota(limit=2, path=None))
+    client = TestClient(app)
+    body = {"session_id": "q3", "message": "hi", "mode": "react"}
+    assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-a"}).status_code == 200
+    assert client.post("/api/stream", json=body, headers={"X-Client-Id": "device-b"}).status_code == 200
+    resp = client.post("/api/stream", json=body, headers={"X-Client-Id": "device-c"})
+    assert resp.status_code == 429
+    assert "网络地址" in resp.json()["detail"]
+
+
+def test_quota_global_total_bounds_all_clients():
+    """整个后台每天对话总数超限后，不同设备 + 不同 IP 也无法继续对话。"""
+    chat.set_runtime(runner=FakeRunner([]))
+    chat.set_quota(DailyQuota(limit=100, path=None))
+    chat.set_ip_quota(DailyQuota(limit=100, path=None))
+    chat.set_global_quota(DailyQuota(limit=2, path=None))
+    client = TestClient(app)
+    body = {"session_id": "q4", "message": "hi", "mode": "react"}
+    h1 = {"X-Client-Id": "device-a", "X-Forwarded-For": "1.1.1.1"}
+    h2 = {"X-Client-Id": "device-b", "X-Forwarded-For": "2.2.2.2"}
+    h3 = {"X-Client-Id": "device-c", "X-Forwarded-For": "3.3.3.3"}
+    assert client.post("/api/stream", json=body, headers=h1).status_code == 200
+    assert client.post("/api/stream", json=body, headers=h2).status_code == 200
+    resp = client.post("/api/stream", json=body, headers=h3)
+    assert resp.status_code == 429
+    assert "后台服务" in resp.json()["detail"]
 
 
 def test_quota_info_endpoint():

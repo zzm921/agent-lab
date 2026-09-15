@@ -56,10 +56,17 @@ class Settings(BaseSettings):
     # 但能力不进目录，需在页面开启后才进入能力选配
     mcp_enabled: bool = False
 
-    # 每日对话配额：限制「一台电脑 / 一个 IP」每天的对话次数（部署防滥用）
+    # 每日对话配额：限制「一台电脑 / 一个 IP / 整个后台」每天的对话次数（部署防滥用）。
+    # 三维度计数：设备维度（每客户端 quota_daily_limit 次）+ IP 维度（每 IP quota_daily_ip_limit 次总量兜底，
+    # 防止无痕/清浏览器数据更换设备指纹绕行）+ 全局维度（整个后台每天对话总数 quota_daily_global_limit 次，
+    # 最后一道总闸）；带设备指纹时设备与 IP 两维度同时消耗，未带时仅消耗 IP 维度，全局维度始终消耗。
     quota_enabled: bool = True
-    quota_daily_limit: int = 100  # 每客户端每天最多发起的对话次数
-    quota_store_path: str = "./data/quota.json"  # 计数持久化文件（空字符串表示仅内存）
+    quota_daily_limit: int = 50  # 每客户端每天最多发起的对话次数
+    quota_daily_ip_limit: int = 100  # 每 IP 每天总量上限（兜底换设备指纹绕行）
+    quota_daily_global_limit: int = 2000  # 整个后台每天对话总数上限（全局总闸）
+    quota_store_path: str = "./data/quota.json"  # 设备维度计数持久化文件（空字符串表示仅内存）
+    quota_ip_store_path: str = "./data/quota_ip.json"  # IP 维度计数持久化文件（空字符串表示仅内存）
+    quota_global_store_path: str = "./data/quota_global.json"  # 全局维度计数持久化文件（空字符串表示仅内存）
 
     # 会话（多会话）持久化：checkpointer 落盘 + 会话元数据 + TTL 治理。
     # checkpoint_dir 为空时回退进程内存（测试/离线，重启即失）。

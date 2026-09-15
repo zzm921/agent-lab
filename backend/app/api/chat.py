@@ -39,6 +39,8 @@ def _sse(events):
 # 运行时单例：registry/runner 分开构建，能力目录不依赖大模型 Key
 _RUNTIME: dict = {"sessions": None, "registry": None, "runner": None}
 _QUOTA: DailyQuota | None = None
+_IP_QUOTA: DailyQuota | None = None
+_GLOBAL_QUOTA: DailyQuota | None = None
 
 
 def _build_embeddings_and_rag():
@@ -108,13 +110,13 @@ def set_runtime(sessions=None, registry=None, runner=None) -> None:
 
 
 def set_quota(quota: DailyQuota | None) -> None:
-    """测试注入/重置每日配额实例（None 表示按配置懒加载）。"""
+    """测试注入/重置设备维度每日配额实例（None 表示按配置懒加载）。"""
     global _QUOTA
     _QUOTA = quota
 
 
 def get_quota() -> DailyQuota:
-    """获取（必要时按配置懒创建）每日配额实例。"""
+    """获取（必要时按配置懒创建）设备维度每日配额实例。"""
     global _QUOTA
     if _QUOTA is None:
         _QUOTA = DailyQuota(
@@ -122,6 +124,40 @@ def get_quota() -> DailyQuota:
             path=settings.quota_store_path or None,
         )
     return _QUOTA
+
+
+def set_ip_quota(quota: DailyQuota | None) -> None:
+    """测试注入/重置 IP 维度每日配额实例（None 表示按配置懒加载）。"""
+    global _IP_QUOTA
+    _IP_QUOTA = quota
+
+
+def get_ip_quota() -> DailyQuota:
+    """获取（必要时按配置懒创建）IP 维度每日配额实例。"""
+    global _IP_QUOTA
+    if _IP_QUOTA is None:
+        _IP_QUOTA = DailyQuota(
+            limit=settings.quota_daily_ip_limit,
+            path=settings.quota_ip_store_path or None,
+        )
+    return _IP_QUOTA
+
+
+def set_global_quota(quota: DailyQuota | None) -> None:
+    """测试注入/重置全局维度每日配额实例（None 表示按配置懒加载）。"""
+    global _GLOBAL_QUOTA
+    _GLOBAL_QUOTA = quota
+
+
+def get_global_quota() -> DailyQuota:
+    """获取（必要时按配置懒创建）全局维度每日配额实例。"""
+    global _GLOBAL_QUOTA
+    if _GLOBAL_QUOTA is None:
+        _GLOBAL_QUOTA = DailyQuota(
+            limit=settings.quota_daily_global_limit,
+            path=settings.quota_global_store_path or None,
+        )
+    return _GLOBAL_QUOTA
 
 
 def _client_ip(request: Request) -> str:
@@ -177,17 +213,44 @@ async def mcp_toggle(req: McpToggleRequest):
 async def chat_stream(req: StreamRequest, request: Request):
     """SSE 流式对话：思考/行动/观察/计划/反思/工具/审批/完成事件。
 
-    每次调用消耗一次「每日对话配额」（按设备指纹或 IP 计数），
-    超过每日上限（默认 20 次）返回 429，防止单台设备/IP 滥用。
+    每次调用消耗一次「每日对话配额」，三维度计数：
+    - 设备维度：带设备指纹（X-Client-Id）时按「一台电脑」计数；
+    - IP 维度：始终按「一个 IP」计数，作为总量兜底（防无痕/清数据换指纹绕行）；
+    - 全局维度：整个后台每天对话总数，最后一道总闸。
+    任一维度超过上限即返回 429。
     """
     if settings.quota_enabled:
         quota = get_quota()
+        ip_quota = get_ip_quota()
+        global_quota = get_global_quota()
         key = _client_key(request)
-        allowed, _ = quota.try_consume(key)
-        if not allowed:
+        if key.startswith("cid:"):
+            device_ok, _ = quota.try_consume(key)
+            if not device_ok:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"今日对话次数已达上限（{quota.limit} 次），请明天再试",
+                )
+            ip_ok, _ = ip_quota.try_consume(f"ip:{_client_ip(request)}")
+            if not ip_ok:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"今日该网络地址对话次数已达上限（{ip_quota.limit} 次），请明天再试",
+                )
+        else:
+            # 未携带设备指纹时仅按 IP 计数（key 本身即 ip:{ip}）
+            ip_ok, _ = ip_quota.try_consume(key)
+            if not ip_ok:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"今日该网络地址对话次数已达上限（{ip_quota.limit} 次），请明天再试",
+                )
+        # 全局总闸：整个后台每天对话总数（固定 key 不分客户端）
+        global_ok, _ = global_quota.try_consume("total")
+        if not global_ok:
             raise HTTPException(
                 status_code=429,
-                detail=f"今日对话次数已达上限（{quota.limit} 次），请明天再试",
+                detail=f"今日后台服务对话总次数已达上限（{global_quota.limit} 次），请明天再试",
             )
     runner = get_runner()
     sessions = get_sessions()
