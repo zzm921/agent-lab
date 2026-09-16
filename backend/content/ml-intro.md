@@ -225,10 +225,8 @@ experience: false
 
 ## 配套代码
 
-本系列的可运行代码：[zzm921/machine-learning](https://github.com/zzm921/machine-learning)（NumPy 手写实现，非调库）
-仓库结构：`01_numpy/` `02_pandas/` `03_matplotlib/` → `04_linear_regression/` → `05_logistic_regression/`
+对应仓库代码：[zzm921/machine-learning](https://github.com/zzm921/machine-learning)
 
-> 学习路径与进度看板：[[学习总览]]
 
 > 课程 1 · 第 1 周
 <!-- ml-nav -->

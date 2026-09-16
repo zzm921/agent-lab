@@ -288,9 +288,8 @@ x_scaled = (x − μ) / σ
 
 ## 配套代码
 
-梯度下降与代价曲线的完整实现（含收敛曲线、迭代数对比）：[zzm921/machine-learning · `04_linear_regression/`](https://github.com/zzm921/machine-learning/tree/main/04_linear_regression)
+对应仓库代码：[zzm921/machine-learning · `04_linear_regression/`](https://github.com/zzm921/machine-learning/tree/master/04_linear_regression)
 
-> 实测：1500 次迭代代价 32.0727 → 4.4770，全程单调下降（最大上升步 −4.4e−14）。
 
 > 课程 1 · 第 1-2 周
 <!-- ml-nav -->

@@ -327,10 +327,8 @@ b  := b  - α · (1/m)·Σᵢ (f⁽ⁱ⁾-y⁽ⁱ⁾)          （b 不参与惩
 
 ## 配套代码
 
-从零实现 + 正则化版本（多项式特征、λ=0/1/100 对比）：[zzm921/machine-learning · `05_logistic_regression/`](https://github.com/zzm921/machine-learning/tree/main/05_logistic_regression)
+对应仓库代码：[zzm921/machine-learning · `05_logistic_regression/`](https://github.com/zzm921/machine-learning/tree/master/05_logistic_regression)
 
-> **验收数据（服务器实跑，2026-09-16）**：解析梯度与有限差分最大差 **3.27e−11**（推导无误）；训练集准确率 **0.9000**（课程参考 ≈ 0.89）。
-> 已知待改进：优化未完全收敛（最优处梯度范数 6.75e−02），加大迭代数或调步长可再降一个量级。
 
 > 课程 1 · 第 3 周
 <!-- ml-nav -->

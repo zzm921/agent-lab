@@ -270,10 +270,8 @@ f(x) = w₁x + w₂·(新特征) + w₃·(新特征²) + b
 
 ## 配套代码
 
-从零实现（NumPy 手写，含课程数据集与 .ipynb）：[zzm921/machine-learning · `04_linear_regression/`](https://github.com/zzm921/machine-learning/tree/main/04_linear_regression)
+对应仓库代码：[zzm921/machine-learning · `04_linear_regression/`](https://github.com/zzm921/machine-learning/tree/master/04_linear_regression)
 
-> **验收数据（服务器实跑，2026-09-16）**：梯度下降解 θ `[5.839133, 4.593040]` 与正规方程解析解最大差 **1.66e−06**；最终代价 **4.47697138**（与解析解逐位一致）；1500 次迭代损失单调下降。
-> 特征缩放实测收益：α=0.005 时未标准化需 2292 次迭代、标准化仅需 707 次；未标准化 α=0.05 直接发散。
 
 > 课程 1 · 第 1 周
 <!-- ml-nav -->
