@@ -279,17 +279,6 @@ x_scaled = (x − μ) / σ
 | 迭代终止条件    | 提前终止会欠拟合，无限迭代纯属浪费；用 J 的变化量设定停止条件        |
 
 ---
-
-## 导航
-
-- ← 上一篇：[[2_线性回归模型|线性回归模型]]
-- 索引：[[机器学习-地图]]
-- 下一篇 → [[4_分类与逻辑回归|分类与逻辑回归]]
-
 ## 配套代码
 
 对应仓库代码：[zzm921/machine-learning · `04_linear_regression/`](https://github.com/zzm921/machine-learning/tree/master/04_linear_regression)
-
-
-> 课程 1 · 第 1-2 周
-<!-- ml-nav -->

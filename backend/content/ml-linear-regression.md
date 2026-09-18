@@ -261,17 +261,6 @@ f(x) = w₁x + w₂·(新特征) + w₃·(新特征²) + b
 | 单位的陷阱       | 权重的数值大小依赖特征单位，跨数据集比较权重前需先统一单位或做缩放                     |
 
 ---
-
-## 导航
-
-- ← 上一篇：[[1_机器学习导论|机器学习导论]]
-- 索引：[[机器学习-地图]]
-- 下一篇 → [[3_梯度下降|梯度下降]]
-
 ## 配套代码
 
 对应仓库代码：[zzm921/machine-learning · `04_linear_regression/`](https://github.com/zzm921/machine-learning/tree/master/04_linear_regression)
-
-
-> 课程 1 · 第 1 周
-<!-- ml-nav -->
